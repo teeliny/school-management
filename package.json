@@ -1,0 +1,31 @@
+{
+  "name": "school-management",
+  "private": true,
+  "version": "0.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.17.0+sha512.cca3cea332ad254bb84145f966d19f4879615210346fc92c79a047f23a0d7b3cca3c3792f0076ba1f1831d277efbcf0a9119b31a9a60eca7fb3d6231f331ef72",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev:api": "pnpm --filter=@school/api dev",
+    "dev:worker": "pnpm --filter=@school/worker dev",
+    "dev:web": "pnpm --filter=@school/web dev",
+    "dev:scheduling-engine": "apps/scheduling-engine/.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/scheduling-engine",
+    "setup:scheduling-engine": "python3 -m venv apps/scheduling-engine/.venv && apps/scheduling-engine/.venv/bin/pip install -r apps/scheduling-engine/requirements.txt",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0",
+    "prisma": "^5.22.0"
+  }
+}
