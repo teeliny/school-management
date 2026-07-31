@@ -1,6 +1,6 @@
 // One schema, one database, one school (PRD §2.2, ARCHITECTURE.md §4).
-// Phase 0: intentionally empty of models — real tables arrive per-phase,
-// starting with Identity in Phase 1 (BUILD_PLAN.md §3).
+// Phase 1: Identity & Access + School/Academic Structure (BUILD_PLAN.md §3).
+// Everything else (profiles, subjects, assessment, fees, ...) arrives per-phase.
 
 generator client {
   provider = "prisma-client-js"
@@ -9,4 +9,200 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 3.1 Core Identity Tables (PRD §3.1)
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  invited
+  active
+  suspended
+  archived
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  STAFF
+  PARENT
+  STUDENT
+}
+
+// NOTE: PRD specifies `email citext, unique` for case-insensitive login.
+// Rather than enabling the Postgres citext extension (an extra migration
+// dependency for one column), email is normalized to lowercase at the
+// application layer on every write and lookup (UserService) — functionally
+// equivalent for the actual use case, with no extension to manage.
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  phone        String?
+  passwordHash String?
+  firstName    String
+  lastName     String
+  middleName   String?
+  gender       Gender?
+  dateOfBirth  DateTime?  @db.Date
+  avatarUrl    String?
+  status       UserStatus @default(invited)
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  roles           UserRole[]
+  sentInvitations Invitation[] @relation("InvitationSender")
+
+  @@map("users")
+}
+
+// Singleton SUPER_ADMIN enforced via a partial unique index added by hand in
+// the generated migration (Prisma has no `@@unique(where:)` syntax) — see
+// prisma/migrations/*/migration.sql.
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("user_roles")
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+// Prefill for STAFF invites (PRD §3.1). Lives here (not just on StaffProfile,
+// which doesn't exist until Phase 2) because Invitation needs it now.
+enum StaffCategory {
+  TEACHING
+  NON_TEACHING
+}
+
+model Invitation {
+  id              String            @id @default(uuid())
+  email           String
+  invitedRole     Role
+  staffCategory   StaffCategory?
+  invitedByUserId String?
+  invitedBy       User?             @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+  tokenHash       String            @unique
+  status          InvitationStatus  @default(PENDING)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime          @default(now())
+
+  @@map("invitations")
+}
+
+// ---------------------------------------------------------------------------
+// 3.2 School & Academic Structure (PRD §3.2)
+// ---------------------------------------------------------------------------
+
+// Singleton — exactly one row, created once by `pnpm setup:school`
+// (ARCHITECTURE.md §6.1). Enforced at the application layer (SchoolProfileService
+// checks for an existing row before creating).
+model SchoolProfile {
+  id           String   @id @default(uuid())
+  name         String
+  address      String?
+  logoUrl      String?
+  contactEmail String?
+  contactPhone String?
+  currency     String   @default("NGN")
+  timezone     String   @default("Africa/Lagos")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("school_profiles")
+}
+
+model AcademicSession {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  terms     Term[]
+  classArms ClassArm[]
+
+  @@map("academic_sessions")
+}
+
+model Term {
+  id                String          @id @default(uuid())
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  name              String
+  startDate         DateTime        @db.Date
+  endDate           DateTime        @db.Date
+  isCurrent         Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+
+  @@unique([academicSessionId, name])
+  @@map("terms")
+}
+
+enum ClassLevelCategory {
+  CRECHE
+  NURSERY
+  PRIMARY
+  JSS
+  SSS
+}
+
+model ClassLevel {
+  id        String             @id @default(uuid())
+  name      String             @unique
+  order     Int
+  category  ClassLevelCategory
+  createdAt DateTime           @default(now())
+
+  classArms ClassArm[]
+
+  @@map("class_levels")
+}
+
+model ClassArm {
+  id                String          @id @default(uuid())
+  classLevelId      String
+  classLevel        ClassLevel      @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+  name              String
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  capacity          Int?
+  createdAt         DateTime        @default(now())
+
+  @@unique([classLevelId, academicSessionId, name])
+  @@map("class_arms")
+}
+
+enum DepartmentName {
+  SCIENCE
+  COMMERCIAL
+  ART
+}
+
+model Department {
+  id          String         @id @default(uuid())
+  name        DepartmentName @unique
+  description String?
+  createdAt   DateTime       @default(now())
+
+  @@map("departments")
 }

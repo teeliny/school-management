@@ -19,9 +19,13 @@
     "setup:scheduling-engine": "python3 -m venv apps/scheduling-engine/.venv && apps/scheduling-engine/.venv/bin/pip install -r apps/scheduling-engine/requirements.txt",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
+    "setup:school": "pnpm --filter=@school/api run setup:school --",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

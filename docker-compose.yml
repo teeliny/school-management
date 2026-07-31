@@ -76,6 +76,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/scheduling-engine.Dockerfile
+    env_file: .env
     ports:
       - "8000:8000"
 
