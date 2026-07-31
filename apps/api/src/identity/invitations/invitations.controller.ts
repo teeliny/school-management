@@ -81,7 +81,6 @@ export class InvitationsController {
   /** Public: lets the accept-invite page show who/what the invite is for before the user sets a password. */
   @Get(":token")
   async peek(@Param("token") token: string) {
-    console.log(token, "rawToken");
     const invitation = await this.invitations.findByRawToken(token);
     if (!invitation) throw new NotFoundException("Invitation not found");
     return {
