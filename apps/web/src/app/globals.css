@@ -48,3 +48,10 @@ body {
     radial-gradient(ellipse 1100px 800px at 50% 38%, rgb(var(--glow-warm) / 0.07), transparent 60%);
   background-repeat: no-repeat;
 }
+
+/* Windows (Edge/IE) injects its own reveal/clear icon into password inputs,
+   which collides with components/molecules/password-input.tsx's own toggle. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}

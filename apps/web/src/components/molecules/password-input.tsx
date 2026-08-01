@@ -12,8 +12,8 @@ export const PasswordInput = React.forwardRef<
   const [visible, setVisible] = React.useState(false);
 
   return (
-    <div className="relative">
-      <Input ref={ref} type={visible ? "text" : "password"} className={cn("pr-10", className)} {...props} />
+    <div className={cn("relative", className)}>
+      <Input ref={ref} type={visible ? "text" : "password"} className="pr-10" {...props} />
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
