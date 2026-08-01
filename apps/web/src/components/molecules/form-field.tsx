@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Label } from "../atoms/label";
 import { Input } from "../atoms/input";
+import { PasswordInput } from "./password-input";
 import { cn } from "../../lib/cn";
 
 export interface FormFieldProps extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -9,10 +10,14 @@ export interface FormFieldProps extends React.InputHTMLAttributes<HTMLInputEleme
 }
 
 export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
-  ({ label, id, className, ...props }, ref) => (
+  ({ label, id, className, type, ...props }, ref) => (
     <div>
       <Label htmlFor={id}>{label}</Label>
-      <Input ref={ref} id={id} className={cn("mt-1", className)} {...props} />
+      {type === "password" ? (
+        <PasswordInput ref={ref} id={id} className={cn("mt-1", className)} {...props} />
+      ) : (
+        <Input ref={ref} id={id} type={type} className={cn("mt-1", className)} {...props} />
+      )}
     </div>
   ),
 );
