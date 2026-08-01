@@ -1,3 +1,51 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Light/dark theme tokens (dark toggled via a `.dark` class on <html>, set
+ * by next-themes — see components/theme-provider.tsx). The two brand colors
+ * (#001B3A navy, #f5eed4 cream) invert between themes: light mode is cream
+ * background/navy text with navy buttons, dark mode is navy background/cream
+ * text with cream buttons — so a button is never the same color as the page
+ * behind it.
+ *
+ * Values are space-separated RGB channels (not hex) so Tailwind's opacity
+ * modifiers work (`bg-background/40`, etc.) — see tailwind.config.ts, which
+ * wraps each one in `rgb(... / <alpha-value>)`.
+ */
+:root {
+  --background: 245 238 212; /* #f5eed4 */
+  --foreground: 0 27 58; /* #001b3a */
+  --primary: 0 27 58;
+  --primary-foreground: 245 238 212;
+  --border: 221 208 168; /* #ddd0a8 */
+  --muted: 92 107 122; /* #5c6b7a */
+}
+
+.dark {
+  --background: 0 27 58; /* #001b3a */
+  --foreground: 245 238 212; /* #f5eed4 */
+  --primary: 245 238 212;
+  --primary-foreground: 0 27 58;
+  --border: 22 52 92; /* #16345c */
+  --muted: 159 176 194; /* #9fb0c2 */
+
+  /* Dark-mode-only background glow, both derived from the two brand colors
+     rather than introducing new hues — a cool lightened-navy glow upper-left,
+     a faint warm cream glow behind the page center. */
+  --glow-cool: 30 64 122;
+  --glow-warm: 245 238 212;
+}
+
+body {
+  background-color: rgb(var(--background));
+  color: rgb(var(--foreground));
+}
+
+.dark body {
+  background-image:
+    radial-gradient(ellipse 900px 700px at 16% 8%, rgb(var(--glow-cool) / 0.35), transparent 60%),
+    radial-gradient(ellipse 1100px 800px at 50% 38%, rgb(var(--glow-warm) / 0.07), transparent 60%);
+  background-repeat: no-repeat;
+}

@@ -41,7 +41,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-gray-500">Loading…</p>
+        <p className="text-sm text-muted">Loading…</p>
       </main>
     );
   }
@@ -54,14 +54,14 @@ export default function DashboardPage() {
         <h1 className="text-xl font-semibold">
           Welcome, {me.firstName} {me.lastName}
         </h1>
-        <button onClick={handleLogout} className="rounded border px-3 py-1 text-sm">
+        <button onClick={handleLogout} className="rounded border border-border px-3 py-1 text-sm">
           Log out
         </button>
       </div>
-      <p className="mt-2 text-sm text-gray-600">
+      <p className="mt-2 text-sm text-muted">
         {me.email} — {me.roles.join(", ")}
       </p>
-      <p className="mt-8 text-sm text-gray-400">
+      <p className="mt-8 text-sm text-muted">
         This is Phase 1&apos;s empty dashboard shell (BUILD_PLAN.md §3) — Subjects, Assessment, and
         everything else arrive in later phases.
       </p>
