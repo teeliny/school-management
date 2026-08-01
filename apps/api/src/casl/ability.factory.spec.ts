@@ -25,11 +25,40 @@ describe("AbilityFactory", () => {
     expect(ability.can("invite", subject("Invitation", { invitedRole: "ADMIN" }))).toBe(false);
   });
 
+  it("ADMIN can manage people profiles and most StaffAssignments, but not Bursar/Registrar", () => {
+    const ability = factory.createForUser(userWith("ADMIN"));
+    expect(ability.can("manage", "StaffProfile")).toBe(true);
+    expect(ability.can("manage", "ParentProfile")).toBe(true);
+    expect(ability.can("manage", "StudentProfile")).toBe(true);
+    expect(
+      ability.can("manage", subject("StaffAssignment", { assignmentType: "CLASS_TEACHER" })),
+    ).toBe(true);
+    // PRD FR3.1/§5: Bursar and Registrar report to Super-Admin, not Admin.
+    expect(
+      ability.can("manage", subject("StaffAssignment", { assignmentType: "BURSAR" })),
+    ).toBe(false);
+    expect(
+      ability.can("manage", subject("StaffAssignment", { assignmentType: "REGISTRAR" })),
+    ).toBe(false);
+  });
+
+  it("SUPER_ADMIN can manage Bursar/Registrar assignments", () => {
+    const ability = factory.createForUser(userWith("SUPER_ADMIN"));
+    expect(
+      ability.can("manage", subject("StaffAssignment", { assignmentType: "BURSAR" })),
+    ).toBe(true);
+    expect(
+      ability.can("manage", subject("StaffAssignment", { assignmentType: "REGISTRAR" })),
+    ).toBe(true);
+  });
+
   it("STAFF/PARENT/STUDENT have no Phase 1 permissions", () => {
     for (const role of ["STAFF", "PARENT", "STUDENT"]) {
       const ability = factory.createForUser(userWith(role));
       expect(ability.can("manage", "AcademicStructure")).toBe(false);
       expect(ability.can("invite", "Invitation")).toBe(false);
+      expect(ability.can("manage", "StaffAssignment")).toBe(false);
+      expect(ability.can("manage", "StudentProfile")).toBe(false);
     }
   });
 

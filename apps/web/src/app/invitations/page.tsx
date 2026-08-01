@@ -1,30 +1,29 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiFetch, tokenStorage } from "../../lib/api";
 import { DashboardHeader } from "../../components/organisms/dashboard-header";
+import { InvitePersonForm } from "../../components/organisms/invite-person-form";
+import { PendingInvitationsList } from "../../components/organisms/pending-invitations-list";
 
 interface Me {
-  id: string;
-  email: string;
   firstName: string;
   lastName: string;
   roles: string[];
 }
 
-export default function DashboardPage() {
+export default function InvitationsPage() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!tokenStorage.accessToken) {
       router.replace("/login");
       return;
     }
-
     apiFetch<Me>("/auth/me", { auth: true })
       .then(setMe)
       .catch(() => router.replace("/login"))
@@ -47,38 +46,26 @@ export default function DashboardPage() {
       </main>
     );
   }
-
   if (!me) return null;
 
-  const canManageStaff = me.roles.includes("SUPER_ADMIN") || me.roles.includes("ADMIN");
+  const isSuperAdmin = me.roles.includes("SUPER_ADMIN");
+  const canInvite = isSuperAdmin || me.roles.includes("ADMIN");
 
   return (
-    <main className="mx-auto max-w-2xl p-6">
+    <main className="mx-auto max-w-4xl space-y-8 p-6">
       <DashboardHeader firstName={me.firstName} lastName={me.lastName} onLogout={handleLogout} />
-      <p className="mt-2 text-sm text-muted">
-        {me.email} — {me.roles.join(", ")}
-      </p>
 
-      <nav className="mt-6 flex gap-4 text-sm">
-        <Link href="/students" className="underline hover:no-underline">
-          Students
-        </Link>
-        {canManageStaff && (
-          <>
-            <Link href="/staff" className="underline hover:no-underline">
-              Staff assignments
-            </Link>
-            <Link href="/invitations" className="underline hover:no-underline">
-              Invitations
-            </Link>
-          </>
-        )}
-      </nav>
-
-      <p className="mt-8 text-sm text-muted">
-        Phase 2 (People, BUILD_PLAN.md §4) is live — Subjects, Assessment, and everything else
-        arrive in later phases.
-      </p>
+      {canInvite ? (
+        <>
+          <InvitePersonForm isSuperAdmin={isSuperAdmin} onInvited={() => setRefreshKey((k) => k + 1)} />
+          <section>
+            <h2 className="mb-3 text-lg font-semibold">Pending invitations</h2>
+            <PendingInvitationsList refreshKey={refreshKey} />
+          </section>
+        </>
+      ) : (
+        <p className="text-sm text-muted">You don&apos;t have permission to invite people.</p>
+      )}
     </main>
   );
 }

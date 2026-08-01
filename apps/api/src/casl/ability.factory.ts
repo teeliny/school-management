@@ -12,9 +12,19 @@ import type { RequestUser } from "../auth/jwt.strategy";
  * Academic Structure need); every later phase adds rules here rather than
  * inventing its own ad-hoc auth pattern.
  */
-export type Action = "manage" | "invite";
-export type Subject = "all" | "AcademicStructure" | "Invitation";
-export type AppAbility = MongoAbility<[Action, Subject | { invitedRole: string }]>;
+export type Action = "manage" | "invite" | "read";
+export type Subject =
+  | "all"
+  | "AcademicStructure"
+  | "Invitation"
+  | "AdminProfile"
+  | "StaffProfile"
+  | "ParentProfile"
+  | "StudentProfile"
+  | "StaffAssignment";
+export type AppAbility = MongoAbility<
+  [Action, Subject | { invitedRole: string } | { assignmentType: string }]
+>;
 
 @Injectable()
 export class AbilityFactory {
@@ -28,6 +38,14 @@ export class AbilityFactory {
       can("invite", "Invitation");
       // PRD FR1.2: appointing an Admin is an owner-only action.
       cannot("invite", "Invitation", { invitedRole: "ADMIN" });
+
+      // PRD §5: Admin can view/manage every user type and create/edit
+      // students, but Bursar/Registrar assignments report to Super-Admin
+      // only (FR3.1) — everything else about StaffAssignment is Admin's.
+      can("manage", ["AdminProfile", "StaffProfile", "ParentProfile", "StudentProfile"]);
+      can("manage", "StaffAssignment");
+      cannot("manage", "StaffAssignment", { assignmentType: "BURSAR" });
+      cannot("manage", "StaffAssignment", { assignmentType: "REGISTRAR" });
     }
 
     return build();

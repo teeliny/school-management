@@ -9,6 +9,7 @@ import { CaslModule } from "./casl/casl.module";
 import { IdentityModule } from "./identity/identity.module";
 import { AuthModule } from "./auth/auth.module";
 import { AcademicStructureModule } from "./academic-structure/academic-structure.module";
+import { StaffAssignmentsModule } from "./staff-assignments/staff-assignments.module";
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AcademicStructureModule } from "./academic-structure/academic-structure
     IdentityModule,
     AuthModule,
     AcademicStructureModule,
+    StaffAssignmentsModule,
     HealthModule,
   ],
 })

@@ -8,7 +8,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +58,11 @@ model User {
   deletedAt    DateTime?
 
   roles           UserRole[]
-  sentInvitations Invitation[] @relation("InvitationSender")
+  sentInvitations Invitation[]    @relation("InvitationSender")
+  adminProfile    AdminProfile?
+  staffProfile    StaffProfile?
+  parentProfile   ParentProfile?
+  studentProfile  StudentProfile?
 
   @@map("users")
 }
@@ -93,17 +96,17 @@ enum StaffCategory {
 }
 
 model Invitation {
-  id              String            @id @default(uuid())
+  id              String           @id @default(uuid())
   email           String
   invitedRole     Role
   staffCategory   StaffCategory?
   invitedByUserId String?
-  invitedBy       User?             @relation("InvitationSender", fields: [invitedByUserId], references: [id])
-  tokenHash       String            @unique
-  status          InvitationStatus  @default(PENDING)
+  invitedBy       User?            @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+  tokenHash       String           @unique
+  status          InvitationStatus @default(PENDING)
   expiresAt       DateTime
   acceptedAt      DateTime?
-  createdAt       DateTime          @default(now())
+  createdAt       DateTime         @default(now())
 
   @@map("invitations")
 }
@@ -138,8 +141,10 @@ model AcademicSession {
   isCurrent Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  terms     Term[]
-  classArms ClassArm[]
+  terms            Term[]
+  classArms        ClassArm[]
+  staffAssignments StaffAssignment[]
+  studentPositions StudentPosition[]
 
   @@map("academic_sessions")
 }
@@ -188,6 +193,10 @@ model ClassArm {
   capacity          Int?
   createdAt         DateTime        @default(now())
 
+  students         StudentProfile[]
+  staffAssignments StaffAssignment[]
+  studentPositions StudentPosition[]
+
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
 }
@@ -205,4 +214,173 @@ model Department {
   createdAt   DateTime       @default(now())
 
   @@map("departments")
+}
+
+// ---------------------------------------------------------------------------
+// 3.1 / 3.4 / 3.5 People: role-specific profiles, guardianship, staff
+// assignments, student positions (PRD §3.1, §3.4, §3.5; BUILD_PLAN.md §4).
+// ---------------------------------------------------------------------------
+
+// AdminProfile backs both the SUPER_ADMIN (Proprietor) and ADMIN roles —
+// there's no separate SuperAdminProfile table (PRD §4 entity summary: one
+// profile type per UserRole).
+model AdminProfile {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String?
+  employeeId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("admin_profiles")
+}
+
+enum StaffStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+model StaffProfile {
+  id             String         @id @default(uuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId     String?
+  staffCategory  StaffCategory?
+  department     String?
+  employmentDate DateTime?      @db.Date
+  qualification  String?
+  // Denormalized from active StaffAssignment(CLASS_TEACHER) rows — PRD §3.1.
+  isClassTeacher Boolean        @default(false)
+  status         StaffStatus    @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  assignments StaffAssignment[]
+
+  @@map("staff_profiles")
+}
+
+model ParentProfile {
+  id                           String                @id @default(uuid())
+  userId                       String                @unique
+  user                         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  occupation                   String?
+  address                      String?
+  relationshipToStudentDefault GuardianRelationship?
+  createdAt                    DateTime              @default(now())
+  updatedAt                    DateTime              @updatedAt
+
+  wards StudentGuardian[]
+
+  @@map("parent_profiles")
+}
+
+enum StudentStatus {
+  ACTIVE
+  GRADUATED
+  WITHDRAWN
+  SUSPENDED
+}
+
+model StudentProfile {
+  id              String        @id @default(uuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admissionNumber String        @unique
+  admissionDate   DateTime      @db.Date
+  currentClassId  String?
+  currentClass    ClassArm?     @relation(fields: [currentClassId], references: [id])
+  studentTitle    String?
+  bloodGroup      String?
+  medicalNotes    String?
+  status          StudentStatus @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  guardians StudentGuardian[]
+  positions StudentPosition[]
+
+  @@map("student_profiles")
+}
+
+enum GuardianRelationship {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
+// PRD §3.1: a StudentProfile can never exist without >=1 StudentGuardian —
+// enforced here at the app layer (transactional create) and, as
+// defense-in-depth, by a deferred constraint trigger hand-added to the
+// migration SQL (Prisma's DSL can't express cross-table existence checks).
+model StudentGuardian {
+  id                 String               @id @default(uuid())
+  studentId          String
+  student            StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId           String
+  parent             ParentProfile        @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  relationship       GuardianRelationship
+  isPrimaryContact   Boolean              @default(false)
+  isEmergencyContact Boolean              @default(false)
+  createdAt          DateTime             @default(now())
+
+  @@unique([studentId, parentId])
+  @@map("student_guardians")
+}
+
+enum AssignmentType {
+  SUBJECT_TEACHER
+  CLASS_TEACHER
+  BURSAR
+  REGISTRAR
+  PRINCIPAL
+  VICE_PRINCIPAL
+  HEADTEACHER
+  OTHER
+}
+
+// No DB-level uniqueness for "one active class teacher per class arm" — FR3.3
+// (PRD §6.3) is explicit this is a service-layer validation, not a hard
+// constraint, so Admin can deliberately override for co-teaching.
+model StaffAssignment {
+  id                String          @id @default(uuid())
+  staffId           String
+  staff             StaffProfile    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  assignmentType    AssignmentType
+  classArmId        String?
+  classArm          ClassArm?       @relation(fields: [classArmId], references: [id])
+  subjectId         String?
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  startDate         DateTime?       @db.Date
+  endDate           DateTime?       @db.Date
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  @@map("staff_assignments")
+}
+
+enum PositionScope {
+  SCHOOL
+  CLASS
+}
+
+// PRD §3.5: recommended over a single studentTitle enum column, so a student
+// can hold multiple concurrent titles (e.g. Head Boy + Prefect).
+model StudentPosition {
+  id                String          @id @default(uuid())
+  studentId         String
+  student           StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  positionName      String
+  scope             PositionScope
+  classArmId        String?
+  classArm          ClassArm?       @relation(fields: [classArmId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  createdAt         DateTime        @default(now())
+
+  @@map("student_positions")
 }

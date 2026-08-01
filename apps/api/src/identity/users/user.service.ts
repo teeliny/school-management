@@ -47,13 +47,16 @@ export class UserService {
    * Grants a role, reactivating an existing inactive row for the same role
    * rather than accumulating duplicates. One person can hold several roles
    * at once (e.g. STAFF + PARENT, PRD FR1.5) — each role is its own row.
+   * Accepts an optional transaction client so callers composing a larger
+   * atomic operation (StudentService's guardian linking, ownership
+   * transfer) can call this within their own `$transaction`.
    */
-  async grantRole(userId: string, role: Role) {
-    const existing = await this.prisma.userRole.findFirst({ where: { userId, role } });
+  async grantRole(userId: string, role: Role, client: Prisma.TransactionClient | PrismaService = this.prisma) {
+    const existing = await client.userRole.findFirst({ where: { userId, role } });
     if (existing) {
       if (existing.isActive) return existing;
-      return this.prisma.userRole.update({ where: { id: existing.id }, data: { isActive: true } });
+      return client.userRole.update({ where: { id: existing.id }, data: { isActive: true } });
     }
-    return this.prisma.userRole.create({ data: { userId, role } });
+    return client.userRole.create({ data: { userId, role } });
   }
 }

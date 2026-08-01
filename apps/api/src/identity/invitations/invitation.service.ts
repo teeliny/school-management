@@ -7,6 +7,7 @@ import { ConfigService } from "@nestjs/config";
 import {
   Invitation,
   InvitationStatus,
+  Prisma,
   Role,
   StaffCategory,
 } from "@prisma/client";
@@ -18,6 +19,8 @@ import { UserService } from "../users/user.service";
 
 const DEFAULT_EXPIRY_DAYS = 7;
 
+type Tx = Prisma.TransactionClient;
+
 export interface CreateInvitationInput {
   email: string;
   firstName: string;
@@ -25,6 +28,12 @@ export interface CreateInvitationInput {
   invitedRole: Role;
   staffCategory?: StaffCategory;
   invitedByUserId?: string | null;
+}
+
+export interface CreateInvitationResult {
+  invitation: Invitation;
+  rawToken: string;
+  userId: string;
 }
 
 @Injectable()
@@ -43,34 +52,88 @@ export class InvitationService {
    * exists to be the sender (PRD §3.1a).
    */
   async create(input: CreateInvitationInput): Promise<Invitation> {
+    const { invitation, rawToken } = await this.prisma.$transaction((tx) =>
+      this.createInTx(tx, input),
+    );
+    await this.sendInviteEmail(invitation.email, rawToken);
+    return invitation;
+  }
+
+  /**
+   * The transaction-composable core of invite creation: User + Invitation +
+   * a role-appropriate profile shell (Admin/Staff/ParentProfile), all in the
+   * caller's transaction. Split out from `create()` so `StudentService` can
+   * inline-invite a new parent (PRD FR1.3) inside its own atomic
+   * student-creation transaction instead of nesting `$transaction` calls.
+   * Callers own sending the email (via `sendInviteEmail`) after their
+   * transaction commits — email failure shouldn't roll back a real DB write.
+   */
+  async createInTx(tx: Tx, input: CreateInvitationInput): Promise<CreateInvitationResult> {
     const email = UserService.normalizeEmail(input.email);
     const rawToken = generateRawToken();
     const expiresAt = new Date(
       Date.now() + DEFAULT_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
     );
 
-    const invitation = await this.prisma.$transaction(async (tx) => {
-      const existingUser = await tx.user.findUnique({ where: { email } });
-      if (!existingUser) {
-        await tx.user.create({
-          data: { email, firstName: input.firstName, lastName: input.lastName },
-        });
-      }
-
-      return tx.invitation.create({
-        data: {
-          email,
-          invitedRole: input.invitedRole,
-          staffCategory: input.staffCategory,
-          invitedByUserId: input.invitedByUserId ?? null,
-          tokenHash: hashToken(rawToken),
-          expiresAt,
-        },
+    let user = await tx.user.findUnique({ where: { email } });
+    if (!user) {
+      user = await tx.user.create({
+        data: { email, firstName: input.firstName, lastName: input.lastName },
       });
+    }
+
+    await this.ensureProfileShell(tx, user.id, input.invitedRole, input.staffCategory);
+
+    const invitation = await tx.invitation.create({
+      data: {
+        email,
+        invitedRole: input.invitedRole,
+        staffCategory: input.staffCategory,
+        invitedByUserId: input.invitedByUserId ?? null,
+        tokenHash: hashToken(rawToken),
+        expiresAt,
+      },
     });
 
-    await this.sendInviteEmail(email, rawToken);
-    return invitation;
+    return { invitation, rawToken, userId: user.id };
+  }
+
+  /**
+   * Role-shell profile rows are created at invite time, not accept time —
+   * required so e.g. a StudentGuardian row (FK -> ParentProfile) can link to
+   * an inline-invited parent immediately, before they've accepted anything
+   * (PRD FR1.3). AdminProfile backs both SUPER_ADMIN and ADMIN — there's no
+   * separate SuperAdminProfile table (PRD §4: one profile type per UserRole).
+   * No-op if the profile already exists (re-invite, or a user gaining an
+   * additional role per FR1.5).
+   */
+  private async ensureProfileShell(
+    tx: Tx,
+    userId: string,
+    role: Role,
+    staffCategory?: StaffCategory,
+  ): Promise<void> {
+    switch (role) {
+      case Role.SUPER_ADMIN:
+      case Role.ADMIN: {
+        const existing = await tx.adminProfile.findUnique({ where: { userId } });
+        if (!existing) await tx.adminProfile.create({ data: { userId } });
+        return;
+      }
+      case Role.STAFF: {
+        const existing = await tx.staffProfile.findUnique({ where: { userId } });
+        if (!existing) await tx.staffProfile.create({ data: { userId, staffCategory } });
+        return;
+      }
+      case Role.PARENT: {
+        const existing = await tx.parentProfile.findUnique({ where: { userId } });
+        if (!existing) await tx.parentProfile.create({ data: { userId } });
+        return;
+      }
+      case Role.STUDENT:
+        // Students are never invited (PRD FR1.3) — nothing to seed here.
+        return;
+    }
   }
 
   /** Public lookup for the accept-invite page — no auth, since the caller isn't logged in yet. */
@@ -191,7 +254,8 @@ export class InvitationService {
     });
   }
 
-  private async sendInviteEmail(email: string, rawToken: string) {
+  /** Public so callers composing their own transaction (e.g. StudentService's inline parent invite) can send post-commit. */
+  async sendInviteEmail(email: string, rawToken: string) {
     const webBaseUrl =
       this.config.get<string>("WEB_BASE_URL") ?? "http://localhost:3000";
     const acceptUrl = `${webBaseUrl}/accept-invite?token=${rawToken}`;
