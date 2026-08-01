@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ridgeview — School Management System</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --background: 255 255 255;
+    --foreground: 0 27 58;
+    --primary: 0 27 58;
+    --primary-foreground: 245 238 212;
+    --border: 221 208 168;
+    --muted: 92 107 122;
+    --card: 255 255 255;
+    --card-inset: 250 248 240;
+
+    --success: 45 107 76;      --success-bg: 227 237 231;
+    --warning: 168 116 30;     --warning-bg: 246 235 214;
+    --danger: 155 46 46;       --danger-bg: 243 224 224;
+    --info: 33 84 143;         --info-bg: 224 233 242;
+  }
+  .dark{
+    --background: 0 27 58;
+    --foreground: 245 238 212;
+    --primary: 245 238 212;
+    --primary-foreground: 0 27 58;
+    --border: 22 52 92;
+    --muted: 159 176 194;
+    --card: 5 36 71;
+    --card-inset: 8 42 79;
+
+    --glow-cool: 30 64 122;
+    --glow-warm: 245 238 212;
+
+    --success: 122 189 154;    --success-bg: 20 51 42;
+    --warning: 214 173 99;     --warning-bg: 54 44 20;
+    --danger: 214 130 130;     --danger-bg: 58 26 26;
+    --info: 130 176 219;       --info-bg: 20 40 63;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:rgb(var(--background));
+    color:rgb(var(--foreground));
+    font-family:'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing:antialiased;
+    transition:background .25s ease, color .25s ease;
+    position:relative;
+  }
+  .dark body{ }
+  body.dark::before{
+    content:"";
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(700px 500px at -5% -10%, rgb(var(--glow-cool) / 0.35), transparent 60%),
+      radial-gradient(900px 700px at 60% 40%, rgb(var(--glow-warm) / 0.05), transparent 65%);
+  }
+  .display{font-family:'Fraunces', serif;}
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  a{color:inherit;}
+
+  /* ---------- Shell ---------- */
+  .shell{
+    display:grid;
+    grid-template-columns:246px 1fr;
+    min-height:100vh;
+    position:relative; z-index:1;
+  }
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{
+    background:rgb(var(--primary));
+    color:rgb(var(--primary-foreground));
+    padding:24px 16px;
+    display:flex;
+    flex-direction:column;
+    gap:22px;
+    border-right:1px solid rgb(var(--border));
+  }
+  .crest{display:flex; align-items:center; gap:11px;}
+  .crest-badge{
+    width:38px;height:38px;border-radius:50%;
+    border:1.5px solid rgb(var(--primary-foreground) / 0.55);
+    display:flex;align-items:center;justify-content:center;
+    position:relative; flex:none;
+  }
+  .crest-badge::before{
+    content:"";
+    position:absolute; inset:4px;
+    border:1px solid rgb(var(--primary-foreground) / 0.35);
+    border-radius:50%;
+  }
+  .crest-badge span{font-family:'Fraunces',serif; font-weight:600; font-size:14px;}
+  .crest-name{font-family:'Fraunces',serif; font-weight:600; font-size:16px; line-height:1.15;}
+  .crest-sub{font-size:9.5px; letter-spacing:0.14em; text-transform:uppercase; opacity:0.6; margin-top:2px;}
+
+  nav.primary{display:flex; flex-direction:column; gap:2px;}
+  .nav-eyebrow{
+    font-size:10px; text-transform:uppercase; letter-spacing:0.11em;
+    opacity:0.5; margin:14px 10px 7px;
+  }
+  .nav-item{
+    display:flex; align-items:center; gap:10px;
+    padding:9px 10px; border-radius:7px;
+    font-size:13.5px; cursor:pointer;
+    color:rgb(var(--primary-foreground) / 0.82);
+    transition:background .15s ease, color .15s ease;
+  }
+  .nav-item svg{flex:none; opacity:0.8;}
+  .nav-item:hover{background:rgb(var(--primary-foreground) / 0.08); color:rgb(var(--primary-foreground));}
+  .nav-item.active{background:rgb(var(--primary-foreground) / 0.14); color:rgb(var(--primary-foreground)); font-weight:500;}
+  .nav-count{
+    margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:10px;
+    background:rgb(var(--primary-foreground) / 0.14); padding:1px 6px; border-radius:20px;
+  }
+  .sidebar-foot{margin-top:auto; border-top:1px solid rgb(var(--primary-foreground) / 0.16); padding-top:14px; font-size:11px; opacity:0.55; line-height:1.5;}
+
+  /* ---------- Main ---------- */
+  .main{padding:22px 32px 60px; max-width:1180px;}
+  .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; gap:16px;}
+  .search{flex:1; max-width:360px; position:relative;}
+  .search input{
+    width:100%; padding:8px 13px 8px 32px; border-radius:8px;
+    border:1px solid rgb(var(--border)); background:rgb(var(--card));
+    color:rgb(var(--foreground)); font-family:'IBM Plex Sans',sans-serif; font-size:13px;
+  }
+  .search input::placeholder{color:rgb(var(--muted));}
+  .search input:focus{outline:2px solid rgb(var(--muted)); outline-offset:1px;}
+  .search svg{position:absolute; left:10px; top:50%; transform:translateY(-50%); opacity:0.5; color:rgb(var(--muted));}
+  .topbar-right{display:flex; align-items:center; gap:12px;}
+  .icon-btn{
+    width:34px;height:34px;border-radius:8px; border:1px solid rgb(var(--border));
+    background:rgb(var(--card)); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; color:rgb(var(--foreground));
+  }
+  .icon-btn:hover{background:rgb(var(--card-inset));}
+  .role-select{
+    font-family:'IBM Plex Mono',monospace; font-size:11.5px;
+    border:1px solid rgb(var(--border)); background:rgb(var(--card));
+    color:rgb(var(--foreground)); padding:7px 10px; border-radius:8px; cursor:pointer;
+  }
+  .avatar{
+    width:34px;height:34px;border-radius:50%; background:rgb(var(--card-inset));
+    border:1px solid rgb(var(--border));
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Fraunces',serif; font-weight:600; font-size:12.5px;
+  }
+
+  /* letterhead */
+  .letterhead{margin-bottom:22px;}
+  .letterhead-eyebrow{font-size:10.5px; text-transform:uppercase; letter-spacing:0.11em; color:rgb(var(--muted));}
+  .letterhead h1{font-size:24px; font-weight:600; margin:4px 0 10px;}
+  .letterhead-rule{height:0; border-top:2px solid rgb(var(--foreground)); position:relative; margin-bottom:2px;}
+  .letterhead-rule::after{content:""; display:block; height:0; border-top:1px solid rgb(var(--border)); margin-top:3px;}
+
+  /* generic bits */
+  .panel{display:none;}
+  .panel.active{display:block;}
+  .grid{display:grid; gap:16px;}
+  .grid-2{grid-template-columns:1.4fr 1fr;}
+  .grid-3{grid-template-columns:repeat(3,1fr);}
+  .card{
+    background:rgb(var(--card)); border:1px solid rgb(var(--border)); border-radius:14px;
+    padding:19px 20px 17px;
+  }
+  .card-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; gap:10px;}
+  .card-title{font-family:'Fraunces',serif; font-size:15.5px; font-weight:600; margin:0;}
+  .card-sub{font-size:11.5px; color:rgb(var(--muted)); margin-top:2px;}
+  .link{font-size:11.5px; color:rgb(var(--muted)); text-decoration:none; font-weight:500;}
+  .link:hover{text-decoration:underline; color:rgb(var(--foreground));}
+
+  .btn{
+    font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; font-weight:500;
+    padding:8px 15px; border-radius:8px; border:1px solid rgb(var(--border));
+    background:rgb(var(--card)); color:rgb(var(--foreground)); cursor:pointer;
+    display:inline-flex; align-items:center; gap:7px;
+  }
+  .btn:hover{background:rgb(var(--card-inset));}
+  .btn-primary{background:rgb(var(--primary)); color:rgb(var(--primary-foreground)); border-color:rgb(var(--primary));}
+  .btn-primary:hover{opacity:0.9;}
+  .btn-sm{padding:5px 10px; font-size:11.5px;}
+
+  .badge{
+    font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600;
+    padding:3px 9px; border-radius:20px; text-transform:uppercase; letter-spacing:0.03em;
+    display:inline-flex; align-items:center; gap:5px;
+  }
+  .badge::before{content:""; width:6px; height:6px; border-radius:50%; background:currentColor;}
+  .badge-success{background:rgb(var(--success-bg)); color:rgb(var(--success));}
+  .badge-warning{background:rgb(var(--warning-bg)); color:rgb(var(--warning));}
+  .badge-danger{background:rgb(var(--danger-bg)); color:rgb(var(--danger));}
+  .badge-info{background:rgb(var(--info-bg)); color:rgb(var(--info));}
+  .badge-muted{background:rgb(var(--card-inset)); color:rgb(var(--muted));}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th{
+    text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;
+    color:rgb(var(--muted)); font-weight:500; padding:0 10px 8px 0; border-bottom:1px solid rgb(var(--border));
+  }
+  td{padding:10px 10px 10px 0; border-bottom:1px solid rgb(var(--border) / 0.6); vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  .cell-name{font-weight:500;}
+  .cell-mono{font-family:'IBM Plex Mono',monospace; color:rgb(var(--muted)); font-size:11.5px;}
+
+  /* Dashboard hero: bell schedule ruler */
+  .hero{background:rgb(var(--card)); border:1px solid rgb(var(--border)); border-radius:14px; padding:20px 22px 18px; margin-bottom:18px;}
+  .hero-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px;}
+  .hero-eyebrow{font-size:10.5px; text-transform:uppercase; letter-spacing:0.1em; color:rgb(var(--muted));}
+  .hero-title{font-family:'Fraunces',serif; font-size:17.5px; font-weight:600; margin:3px 0 0;}
+  .ruler-track{display:flex; border-top:2px solid rgb(var(--foreground)); padding-top:9px;}
+  .period{flex:1; padding:0 10px 6px 0; border-right:1px dashed rgb(var(--border)); position:relative;}
+  .period:last-child{border-right:none;}
+  .period-time{font-family:'IBM Plex Mono',monospace; font-size:10px; color:rgb(var(--muted));}
+  .period-name{font-size:12.5px; font-weight:500; margin-top:3px;}
+  .period.now .period-name{color:rgb(var(--warning));}
+  .now-flag{position:absolute; top:-18px; font-family:'IBM Plex Mono',monospace; font-size:9px; background:rgb(var(--foreground)); color:rgb(var(--background)); padding:2px 6px; border-radius:4px;}
+
+  /* Roll call */
+  .roll-summary{display:flex; gap:16px; margin-bottom:14px;}
+  .roll-num{font-family:'IBM Plex Mono',monospace; font-size:20px; font-weight:600;}
+  .roll-label{font-size:10px; color:rgb(var(--muted)); text-transform:uppercase; letter-spacing:0.05em;}
+  .roll-list{display:flex; flex-direction:column; gap:2px;}
+  .roll-row{display:flex; align-items:center; gap:10px; padding:8px 4px; border-radius:8px;}
+  .roll-row:hover{background:rgb(var(--card-inset));}
+  .roll-avatar{width:28px;height:28px;border-radius:50%; background:rgb(var(--card-inset)); border:1px solid rgb(var(--border)); display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono',monospace; font-size:10px; flex:none;}
+  .roll-name{flex:1; font-size:12.5px; font-weight:500;}
+  .status-toggle{display:flex; gap:4px;}
+  .status-btn{
+    width:26px; height:26px; border-radius:6px; border:1px solid rgb(var(--border));
+    background:rgb(var(--card)); font-family:'IBM Plex Mono',monospace; font-size:10px; cursor:pointer; color:rgb(var(--muted));
+  }
+  .status-btn.p.on{background:rgb(var(--success-bg)); color:rgb(var(--success)); border-color:rgb(var(--success));}
+  .status-btn.l.on{background:rgb(var(--warning-bg)); color:rgb(var(--warning)); border-color:rgb(var(--warning));}
+  .status-btn.a.on{background:rgb(var(--danger-bg)); color:rgb(var(--danger)); border-color:rgb(var(--danger));}
+
+  /* Gradebook */
+  .gradebook-scroll{overflow-x:auto;}
+  .score-cell{width:44px; text-align:center; font-family:'IBM Plex Mono',monospace;}
+  .score-input{
+    width:38px; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:12px;
+    border:1px solid rgb(var(--border)); border-radius:5px; padding:4px 2px;
+    background:rgb(var(--card-inset)); color:rgb(var(--foreground));
+  }
+  .score-input:focus{outline:2px solid rgb(var(--muted)); outline-offset:0;}
+  .grade-pill{font-family:'IBM Plex Mono',monospace; font-size:10.5px; font-weight:600; padding:2px 7px; border-radius:5px;}
+
+  /* Stepper (exam scheduling) */
+  .stepper{display:flex; align-items:center; margin:6px 0 22px;}
+  .step{display:flex; flex-direction:column; align-items:center; gap:7px; flex:1; position:relative;}
+  .step-dot{width:30px;height:30px;border-radius:50%; border:2px solid rgb(var(--border)); display:flex; align-items:center; justify-content:center; font-family:'IBM Plex Mono',monospace; font-size:11px; background:rgb(var(--card)); z-index:1;}
+  .step.done .step-dot{background:rgb(var(--success)); border-color:rgb(var(--success)); color:rgb(var(--card));}
+  .step.active .step-dot{border-color:rgb(var(--warning)); color:rgb(var(--warning)); animation:pulse 1.6s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgb(var(--warning) / 0.35);} 50%{box-shadow:0 0 0 6px rgb(var(--warning) / 0);}}
+  .step-label{font-size:11px; color:rgb(var(--muted)); text-align:center;}
+  .step.active .step-label, .step.done .step-label{color:rgb(var(--foreground)); font-weight:500;}
+  .step-line{position:absolute; top:15px; left:calc(-50% + 15px); width:calc(100% - 30px); height:2px; background:rgb(var(--border)); z-index:0;}
+  .step:first-child .step-line{display:none;}
+  .step.done .step-line, .step.active .step-line{background:rgb(var(--success));}
+
+  .constraint-tag{
+    display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+    background:rgb(var(--card-inset)); border:1px solid rgb(var(--border)); border-radius:20px; padding:5px 11px; margin:3px 4px 3px 0;
+  }
+
+  /* Fees */
+  .invoice-row{display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid rgb(var(--border) / 0.6);}
+  .invoice-row:last-child{border-bottom:none;}
+  .invoice-icon{width:34px;height:34px;border-radius:8px; background:rgb(var(--card-inset)); border:1px solid rgb(var(--border)); display:flex; align-items:center; justify-content:center; flex:none;}
+  .invoice-name{font-weight:500; font-size:13px;}
+  .invoice-meta{font-size:11px; color:rgb(var(--muted)); font-family:'IBM Plex Mono',monospace;}
+  .invoice-amt{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13.5px; margin-left:auto; margin-right:12px;}
+
+  .checkout-card{border:1.5px dashed rgb(var(--border)); border-radius:14px; padding:22px; text-align:center;}
+  .checkout-amt{font-family:'Fraunces',serif; font-size:32px; font-weight:600; margin:8px 0 2px;}
+  .paydot-row{display:flex; justify-content:center; gap:10px; margin:16px 0; flex-wrap:wrap;}
+  .paydot{font-size:11px; padding:6px 12px; border:1px solid rgb(var(--border)); border-radius:8px; font-family:'IBM Plex Mono',monospace;}
+
+  /* Notifications */
+  .notif-row{display:flex; gap:12px; padding:12px 0; border-bottom:1px solid rgb(var(--border) / 0.6);}
+  .notif-row:last-child{border-bottom:none;}
+  .notif-dot{width:8px;height:8px;border-radius:50%; margin-top:5px; flex:none;}
+  .notif-title{font-size:13px; font-weight:500;}
+  .notif-body{font-size:12px; color:rgb(var(--muted)); margin-top:2px;}
+  .notif-time{font-size:10.5px; color:rgb(var(--muted)); font-family:'IBM Plex Mono',monospace; white-space:nowrap;}
+
+  /* Audit log */
+  .audit-row{display:flex; gap:12px; padding:10px 0; border-bottom:1px solid rgb(var(--border) / 0.6); font-size:12px;}
+  .audit-time{font-family:'IBM Plex Mono',monospace; color:rgb(var(--muted)); width:132px; flex:none;}
+  .audit-actor{font-weight:500; width:120px; flex:none;}
+  .audit-action{color:rgb(var(--muted));}
+  .audit-diff{font-family:'IBM Plex Mono',monospace; font-size:11px; color:rgb(var(--info)); background:rgb(var(--info-bg)); padding:1px 6px; border-radius:4px;}
+
+  /* Login screen */
+  .login-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; position:relative; z-index:1;}
+  .login-card{width:380px; background:rgb(var(--card)); border:1px solid rgb(var(--border)); border-radius:16px; padding:32px 30px 26px; text-align:center;}
+  .login-card .crest-badge{width:52px;height:52px; margin:0 auto 14px; background:rgb(var(--primary)); color:rgb(var(--primary-foreground)); border-color:rgb(var(--primary));}
+  .login-card .crest-badge span{font-size:19px;}
+  .field{text-align:left; margin-bottom:14px;}
+  .field label{display:block; font-size:11px; color:rgb(var(--muted)); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.05em;}
+  .field input{width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgb(var(--border)); background:rgb(var(--card-inset)); color:rgb(var(--foreground)); font-size:13px;}
+  .field input:focus{outline:2px solid rgb(var(--muted)); outline-offset:1px;}
+  .invite-note{font-size:11.5px; color:rgb(var(--muted)); background:rgb(var(--card-inset)); border-radius:8px; padding:9px 12px; margin-top:16px; line-height:1.5;}
+
+  @media (max-width:980px){
+    .shell{grid-template-columns:1fr;}
+    .sidebar{display:none;}
+    .grid-2, .grid-3{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============= LOGIN SCREEN (toggle with #loginScreen) ============= -->
+<div class="login-wrap" id="loginScreen">
+  <div class="login-card">
+    <div class="crest-badge"><span>R</span></div>
+    <h1 class="display" style="font-size:19px; font-weight:600; margin:0 0 3px;">Ridgeview Academy</h1>
+    <div style="font-size:11.5px; color:rgb(var(--muted)); margin-bottom:22px;">Staff, parent & student sign in</div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" placeholder="you@ridgeview.edu.ng">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" placeholder="••••••••••">
+    </div>
+    <button class="btn btn-primary" style="width:100%; justify-content:center; padding:10px;" onclick="enterApp()">Sign in</button>
+    <div class="invite-note">This account was created by invitation. Accounts aren't self-registered — ask your school admin for access.</div>
+  </div>
+</div>
+
+<!-- ============= APP SHELL ============= -->
+<div class="shell" id="appShell" style="display:none;">
+
+  <aside class="sidebar">
+    <div class="crest">
+      <div class="crest-badge"><span>R</span></div>
+      <div>
+        <div class="crest-name">Ridgeview<br>Academy</div>
+      </div>
+    </div>
+
+    <nav class="primary" id="navList">
+      <div class="nav-eyebrow">Overview</div>
+      <div class="nav-item active" data-panel="dashboard">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Dashboard
+      </div>
+      <div class="nav-item" data-panel="attendance">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        Attendance
+      </div>
+      <div class="nav-item" data-panel="gradebook">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        Gradebook
+      </div>
+      <div class="nav-item" data-panel="scheduling">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        Exam Scheduling
+        <span class="nav-count">AI</span>
+      </div>
+      <div class="nav-item" data-panel="fees">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+        Fees
+      </div>
+      <div class="nav-eyebrow">Connect</div>
+      <div class="nav-item" data-panel="notifications">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
+        Notifications
+        <span class="nav-count">4</span>
+      </div>
+      <div class="nav-item" data-panel="audit" data-admin-only>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><circle cx="12" cy="12" r="9"/></svg>
+        Audit Log
+      </div>
+    </nav>
+
+    <div class="sidebar-foot">
+      Single-tenant deployment<br>
+      ridgeview.schoolapp.ng
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <div class="topbar">
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" placeholder="Search students, classes, invoices…">
+      </div>
+      <div class="topbar-right">
+        <select class="role-select" id="roleSelect" onchange="setRole(this.value)">
+          <option value="admin">Admin</option>
+          <option value="staff">Staff</option>
+          <option value="parent">Parent</option>
+          <option value="student">Student</option>
+        </select>
+        <button class="icon-btn" id="themeToggle" title="Toggle theme" onclick="toggleTheme()">
+          <svg id="themeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        </button>
+        <div class="avatar">AO</div>
+      </div>
+    </div>
+
+    <!-- ============= DASHBOARD ============= -->
+    <section class="panel active" id="panel-dashboard">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Term 1 · Week 6</div>
+        <h1 class="display">Good afternoon, Adaeze.</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+
+      <div class="hero">
+        <div class="hero-head">
+          <div>
+            <div class="hero-eyebrow">Today's bell schedule</div>
+            <h2 class="hero-title">Wednesday · In session</h2>
+          </div>
+          <span class="badge badge-warning">In session</span>
+        </div>
+        <div class="ruler-track">
+          <div class="period"><div class="period-time">8:00</div><div class="period-name">Homeroom</div></div>
+          <div class="period"><div class="period-time">8:55</div><div class="period-name">Mathematics</div></div>
+          <div class="period"><div class="period-time">9:50</div><div class="period-name">English</div></div>
+          <div class="period now"><div class="now-flag">NOW</div><div class="period-time">10:45</div><div class="period-name">Physics Lab</div></div>
+          <div class="period"><div class="period-time">11:40</div><div class="period-name">Lunch</div></div>
+          <div class="period"><div class="period-time">12:35</div><div class="period-name">History</div></div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-head">
+            <div><h3 class="card-title">Attendance snapshot</h3><div class="card-sub">School-wide · today</div></div>
+            <a class="link" onclick="showPanel('attendance')">Open register →</a>
+          </div>
+          <div class="roll-summary">
+            <div><div class="roll-num" style="color:rgb(var(--success))">612</div><div class="roll-label">Present</div></div>
+            <div><div class="roll-num" style="color:rgb(var(--warning))">18</div><div class="roll-label">Late</div></div>
+            <div><div class="roll-num" style="color:rgb(var(--danger))">9</div><div class="roll-label">Absent</div></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div><h3 class="card-title">Fee collection</h3><div class="card-sub">Term deadline · Aug 15</div></div>
+            <a class="link" onclick="showPanel('fees')">Ledger →</a>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600;">₦48.2M <span style="font-size:11px; font-weight:400; color:rgb(var(--muted));">collected</span></div>
+          <div style="height:8px; background:rgb(var(--card-inset)); border-radius:20px; margin:10px 0 6px; overflow:hidden;"><div style="width:82%; height:100%; background:rgb(var(--success));"></div></div>
+          <div style="font-size:11.5px; color:rgb(var(--muted));">82% of Term 1 invoices settled</div>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="margin-top:16px;">
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Recent notifications</h3><a class="link" onclick="showPanel('notifications')">View all →</a></div>
+          <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--info))"></div><div><div class="notif-title">Exam schedule ready for review</div><div class="notif-body">Term 1 midterms — 42 slots generated</div></div></div>
+          <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--success))"></div><div><div class="notif-title">Payment received — Tobi Kalu</div><div class="notif-body">₦75,000 · Invoice INV-2291</div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Exam scheduling</h3><a class="link" onclick="showPanel('scheduling')">Open →</a></div>
+          <div class="step" style="align-items:flex-start; flex-direction:row; gap:8px;">
+            <span class="badge badge-warning">Solving</span>
+            <span style="font-size:11.5px; color:rgb(var(--muted));">Constraint solver running — draft ready in ~2 min</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= ATTENDANCE ============= -->
+    <section class="panel" id="panel-attendance">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Attendance · Grade 9B · Physics Lab</div>
+        <h1 class="display">Attendance register</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-head">
+            <div><h3 class="card-title">Roll call — Period 4</h3><div class="card-sub">Session opened 10:45am · 24 students</div></div>
+            <button class="btn btn-sm">Mark all present</button>
+          </div>
+          <div class="roll-list">
+            <div class="roll-row"><div class="roll-avatar">TK</div><div class="roll-name">Tobi Kalu</div><div class="status-toggle"><button class="status-btn p on">P</button><button class="status-btn l">L</button><button class="status-btn a">A</button></div></div>
+            <div class="roll-row"><div class="roll-avatar">FN</div><div class="roll-name">Funke Nwosu</div><div class="status-toggle"><button class="status-btn p">P</button><button class="status-btn l on">L</button><button class="status-btn a">A</button></div></div>
+            <div class="roll-row"><div class="roll-avatar">DE</div><div class="roll-name">David Eze</div><div class="status-toggle"><button class="status-btn p">P</button><button class="status-btn l">L</button><button class="status-btn a on">A</button></div></div>
+            <div class="roll-row"><div class="roll-avatar">CJ</div><div class="roll-name">Chioma James</div><div class="status-toggle"><button class="status-btn p on">P</button><button class="status-btn l">L</button><button class="status-btn a">A</button></div></div>
+            <div class="roll-row"><div class="roll-avatar">SR</div><div class="roll-name">Sade Rasaki</div><div class="status-toggle"><button class="status-btn p on">P</button><button class="status-btn l">L</button><button class="status-btn a">A</button></div></div>
+          </div>
+          <button class="btn btn-primary" style="width:100%; justify-content:center; margin-top:14px;">Save register</button>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Term attendance</h3><div class="card-sub">Grade 9B trend</div></div>
+          <table>
+            <tr><th>Week</th><th>Present %</th><th>Notes</th></tr>
+            <tr><td class="cell-mono">Wk 4</td><td>96%</td><td><span class="badge badge-success">Above target</span></td></tr>
+            <tr><td class="cell-mono">Wk 5</td><td>91%</td><td><span class="badge badge-success">Above target</span></td></tr>
+            <tr><td class="cell-mono">Wk 6</td><td>83%</td><td><span class="badge badge-warning">Watch</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= GRADEBOOK ============= -->
+    <section class="panel" id="panel-gradebook">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Assessment · Grade 9B · Mathematics</div>
+        <h1 class="display">Gradebook — Term 1</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div><h3 class="card-title">Score entry</h3><div class="card-sub">CA1 · CA2 · Exam — auto-totals to term result</div></div>
+          <button class="btn btn-primary btn-sm">Generate report cards</button>
+        </div>
+        <div class="gradebook-scroll">
+          <table>
+            <tr><th>Student</th><th class="score-cell">CA1 /20</th><th class="score-cell">CA2 /20</th><th class="score-cell">Exam /60</th><th>Total</th><th>Grade</th></tr>
+            <tr><td class="cell-name">Tobi Kalu</td><td class="score-cell"><input class="score-input" value="17"></td><td class="score-cell"><input class="score-input" value="18"></td><td class="score-cell"><input class="score-input" value="52"></td><td class="cell-mono">87</td><td><span class="grade-pill" style="background:rgb(var(--success-bg)); color:rgb(var(--success));">A</span></td></tr>
+            <tr><td class="cell-name">Funke Nwosu</td><td class="score-cell"><input class="score-input" value="14"></td><td class="score-cell"><input class="score-input" value="15"></td><td class="score-cell"><input class="score-input" value="41"></td><td class="cell-mono">70</td><td><span class="grade-pill" style="background:rgb(var(--info-bg)); color:rgb(var(--info));">B</span></td></tr>
+            <tr><td class="cell-name">David Eze</td><td class="score-cell"><input class="score-input" value="11"></td><td class="score-cell"><input class="score-input" value="12"></td><td class="score-cell"><input class="score-input" value="33"></td><td class="cell-mono">56</td><td><span class="grade-pill" style="background:rgb(var(--warning-bg)); color:rgb(var(--warning));">C</span></td></tr>
+            <tr><td class="cell-name">Chioma James</td><td class="score-cell"><input class="score-input" value="19"></td><td class="score-cell"><input class="score-input" value="19"></td><td class="score-cell"><input class="score-input" value="57"></td><td class="cell-mono">95</td><td><span class="grade-pill" style="background:rgb(var(--success-bg)); color:rgb(var(--success));">A</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= EXAM SCHEDULING (AI) ============= -->
+    <section class="panel" id="panel-scheduling">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Exam Scheduling · AI-assisted</div>
+        <h1 class="display">Term 1 midterm schedule</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-head">
+          <div><h3 class="card-title">Generation request</h3><div class="card-sub">Constraint solver runs asynchronously — you'll be notified when a draft is ready</div></div>
+          <span class="badge badge-warning">Solving</span>
+        </div>
+        <div class="stepper">
+          <div class="step done"><div class="step-line"></div><div class="step-dot">✓</div><div class="step-label">Queued</div></div>
+          <div class="step active"><div class="step-line"></div><div class="step-dot">2</div><div class="step-label">Solving</div></div>
+          <div class="step"><div class="step-line"></div><div class="step-dot">3</div><div class="step-label">Review draft</div></div>
+          <div class="step"><div class="step-line"></div><div class="step-dot">4</div><div class="step-label">Published</div></div>
+        </div>
+        <div class="card-sub" style="margin-bottom:8px;">Constraints applied</div>
+        <div>
+          <span class="constraint-tag">No student double-booked</span>
+          <span class="constraint-tag">2 invigilators / room</span>
+          <span class="constraint-tag">Max 2 exams / day / student</span>
+          <span class="constraint-tag">Hall capacity ≤ 40</span>
+          <span class="constraint-tag">Staff availability respected</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Last published draft</h3><span class="badge badge-info">Pending review</span></div>
+        <table>
+          <tr><th>Subject</th><th>Date</th><th>Hall</th><th>Invigilator</th><th></th></tr>
+          <tr><td class="cell-name">Mathematics</td><td class="cell-mono">Aug 6, 9:00am</td><td>Hall A</td><td>Mr. Adeyemi</td><td><button class="btn btn-sm">Edit</button></td></tr>
+          <tr><td class="cell-name">English</td><td class="cell-mono">Aug 6, 12:00pm</td><td>Hall B</td><td>Mrs. Okoro</td><td><button class="btn btn-sm">Edit</button></td></tr>
+          <tr><td class="cell-name">Physics</td><td class="cell-mono">Aug 7, 9:00am</td><td>Lab 2</td><td>Mr. Bello</td><td><button class="btn btn-sm">Edit</button></td></tr>
+        </table>
+        <button class="btn btn-primary" style="margin-top:14px;">Approve & publish</button>
+      </div>
+    </section>
+
+    <!-- ============= FEES ============= -->
+    <section class="panel" id="panel-fees">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Fees & Payments · Monnify</div>
+        <h1 class="display">Invoices</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Invoices — Tobi Kalu</h3><div class="card-sub">Grade 9B</div></div>
+          <div class="invoice-row">
+            <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
+            <div><div class="invoice-name">Term 1 tuition</div><div class="invoice-meta">INV-2291 · due Aug 15</div></div>
+            <div class="invoice-amt">₦75,000</div>
+            <span class="badge badge-warning">Pending</span>
+          </div>
+          <div class="invoice-row">
+            <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
+            <div><div class="invoice-name">Sports day levy</div><div class="invoice-meta">INV-2278 · paid Jul 20</div></div>
+            <div class="invoice-amt">₦5,000</div>
+            <span class="badge badge-success">Paid</span>
+          </div>
+          <div class="invoice-row">
+            <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
+            <div><div class="invoice-name">Term 2 tuition</div><div class="invoice-meta">INV-2340 · not yet due</div></div>
+            <div class="invoice-amt">₦75,000</div>
+            <span class="badge badge-muted">Upcoming</span>
+          </div>
+        </div>
+        <div class="checkout-card">
+          <div class="card-sub">PAY INVOICE INV-2291</div>
+          <div class="checkout-amt">₦75,000</div>
+          <div style="font-size:11.5px; color:rgb(var(--muted));">Term 1 tuition · due Aug 15</div>
+          <div class="paydot-row">
+            <span class="paydot">Card</span><span class="paydot">Bank transfer</span><span class="paydot">USSD</span>
+          </div>
+          <button class="btn btn-primary" style="width:100%; justify-content:center;">Pay with Monnify</button>
+          <div style="font-size:10.5px; color:rgb(var(--muted)); margin-top:10px;">Redirects to Monnify's secure hosted checkout</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= NOTIFICATIONS ============= -->
+    <section class="panel" id="panel-notifications">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Notifications</div>
+        <h1 class="display">All activity</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+      <div class="card">
+        <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--info))"></div><div style="flex:1;"><div class="notif-title">Exam schedule ready for review</div><div class="notif-body">Term 1 midterm draft generated — 42 slots across 5 halls</div></div><div class="notif-time">2m ago</div></div>
+        <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--success))"></div><div style="flex:1;"><div class="notif-title">Payment received — Tobi Kalu</div><div class="notif-body">₦75,000 confirmed via Monnify · receipt sent</div></div><div class="notif-time">1h ago</div></div>
+        <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--warning))"></div><div style="flex:1;"><div class="notif-title">Attendance below target — Grade 9B</div><div class="notif-body">83% present this week, down from 91%</div></div><div class="notif-time">3h ago</div></div>
+        <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--muted))"></div><div style="flex:1;"><div class="notif-title">Invitation accepted</div><div class="notif-body">Mrs. Okoro (Staff) set her password and logged in</div></div><div class="notif-time">Yesterday</div></div>
+      </div>
+    </section>
+
+    <!-- ============= AUDIT LOG ============= -->
+    <section class="panel" id="panel-audit">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Audit Log · Admin only</div>
+        <h1 class="display">Who changed what</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+      <div class="card">
+        <div class="audit-row"><div class="audit-time">Aug 1, 11:52am</div><div class="audit-actor">Mr. Adeyemi</div><div class="audit-action">updated ScoreEntry for Tobi Kalu</div><div class="audit-diff">72 → 87</div></div>
+        <div class="audit-row"><div class="audit-time">Aug 1, 10:14am</div><div class="audit-actor">Adaeze (Admin)</div><div class="audit-action">approved ExamSchedule draft #114</div><div class="audit-diff">PENDING → APPROVED</div></div>
+        <div class="audit-row"><div class="audit-time">Aug 1, 9:02am</div><div class="audit-actor">System</div><div class="audit-action">reconciled Payment INV-2278</div><div class="audit-diff">PENDING → PAID</div></div>
+        <div class="audit-row"><div class="audit-time">Jul 31, 4:41pm</div><div class="audit-actor">Adaeze (Admin)</div><div class="audit-action">sent Invitation to okoro@ridgeview.edu.ng</div><div class="audit-diff">role: STAFF</div></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  function enterApp(){
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('appShell').style.display = 'grid';
+  }
+
+  document.querySelectorAll('.nav-item[data-panel]').forEach(item=>{
+    item.addEventListener('click', ()=> showPanel(item.dataset.panel));
+  });
+  function showPanel(name){
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    document.getElementById('panel-'+name).classList.add('active');
+    document.querySelectorAll('.nav-item[data-panel]').forEach(n=>n.classList.toggle('active', n.dataset.panel===name));
+  }
+
+  function toggleTheme(){
+    document.documentElement.classList.toggle('dark');
+    const isDark = document.documentElement.classList.contains('dark');
+    document.getElementById('themeIcon').innerHTML = isDark
+      ? '<path d="M21 12.5A9 9 0 1111.5 3 7 7 0 0021 12.5z"/>'
+      : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+  }
+
+  const statusBtns = document.querySelectorAll('.status-btn');
+  statusBtns.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const row = btn.closest('.status-toggle');
+      row.querySelectorAll('.status-btn').forEach(b=>b.classList.remove('on'));
+      btn.classList.add('on');
+    });
+  });
+
+  function setRole(role){
+    const adminOnly = document.querySelectorAll('[data-admin-only]');
+    adminOnly.forEach(el => el.style.display = (role==='admin') ? '' : 'none');
+    if(role!=='admin' && document.getElementById('panel-audit').classList.contains('active')){
+      showPanel('dashboard');
+    }
+  }
+  setRole('admin');
+</script>
+</body>
+</html>
