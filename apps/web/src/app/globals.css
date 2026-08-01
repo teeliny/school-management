@@ -20,6 +20,17 @@
   --primary-foreground: 245 238 212;
   --border: 221 208 168; /* #ddd0a8 */
   --muted: 92 107 122; /* #5c6b7a */
+  --card: 255 255 255;
+  --card-inset: 250 248 240;
+
+  --success: 45 107 76;
+  --success-bg: 227 237 231;
+  --warning: 168 116 30;
+  --warning-bg: 246 235 214;
+  --danger: 155 46 46;
+  --danger-bg: 243 224 224;
+  --info: 33 84 143;
+  --info-bg: 224 233 242;
 }
 
 .dark {
@@ -29,17 +40,29 @@
   --primary-foreground: 0 27 58;
   --border: 22 52 92; /* #16345c */
   --muted: 159 176 194; /* #9fb0c2 */
+  --card: 5 36 71;
+  --card-inset: 8 42 79;
 
   /* Dark-mode-only background glow, both derived from the two brand colors
      rather than introducing new hues — a cool lightened-navy glow upper-left,
      a faint warm cream glow behind the page center. */
   --glow-cool: 30 64 122;
   --glow-warm: 245 238 212;
+
+  --success: 122 189 154;
+  --success-bg: 20 51 42;
+  --warning: 214 173 99;
+  --warning-bg: 54 44 20;
+  --danger: 214 130 130;
+  --danger-bg: 58 26 26;
+  --info: 130 176 219;
+  --info-bg: 20 40 63;
 }
 
 body {
   background-color: rgb(var(--background));
   color: rgb(var(--foreground));
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
 .dark body {

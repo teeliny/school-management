@@ -117,9 +117,8 @@ export function StaffAssignmentForm({
 
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
-      <h2 className="text-lg font-semibold">Assign staff</h2>
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-      {success && <p className="text-sm text-green-600 dark:text-green-400">{success}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {success && <p className="text-sm text-success">{success}</p>}
 
       <div>
         <Label htmlFor="assignment-staff">Staff member</Label>

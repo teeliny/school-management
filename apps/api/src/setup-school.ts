@@ -103,7 +103,6 @@ async function main() {
     });
 
     if (pendingInvite) {
-      console.log("top of pendingInvite check");
       await invitations.resend(pendingInvite.id);
       logger.log(
         `A pending Super-Admin invitation for ${email} already existed — resent it.`,

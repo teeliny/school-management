@@ -18,7 +18,7 @@ export function AlertDialogContent({
       <AlertDialogPrimitive.Content
         className={cn(
           "fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2",
-          "rounded border border-border bg-background p-6 text-foreground shadow-md",
+          "rounded-card border border-border bg-card p-6 text-foreground shadow-md",
           className,
         )}
         {...props}

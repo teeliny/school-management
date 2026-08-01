@@ -1,43 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiFetch, tokenStorage } from "../../lib/api";
-import { DashboardHeader } from "../../components/organisms/dashboard-header";
+import { useState } from "react";
+import { useCurrentUser } from "../../lib/use-current-user";
+import { AppShell } from "../../components/templates/app-shell";
+import { Letterhead } from "../../components/molecules/letterhead";
+import { Card, CardHeader } from "../../components/molecules/card";
 import { InvitePersonForm } from "../../components/organisms/invite-person-form";
 import { PendingInvitationsList } from "../../components/organisms/pending-invitations-list";
 
-interface Me {
-  firstName: string;
-  lastName: string;
-  roles: string[];
-}
-
 export default function InvitationsPage() {
-  const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, loading, logout } = useCurrentUser();
   const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    if (!tokenStorage.accessToken) {
-      router.replace("/login");
-      return;
-    }
-    apiFetch<Me>("/auth/me", { auth: true })
-      .then(setMe)
-      .catch(() => router.replace("/login"))
-      .finally(() => setLoading(false));
-  }, [router]);
-
-  async function handleLogout() {
-    const refreshToken = tokenStorage.refreshToken;
-    tokenStorage.clear();
-    if (refreshToken) {
-      await apiFetch("/auth/logout", { method: "POST", body: { refreshToken } }).catch(() => {});
-    }
-    router.push("/login");
-  }
 
   if (loading) {
     return (
@@ -46,26 +19,31 @@ export default function InvitationsPage() {
       </main>
     );
   }
-  if (!me) return null;
+  if (!user) return null;
 
-  const isSuperAdmin = me.roles.includes("SUPER_ADMIN");
-  const canInvite = isSuperAdmin || me.roles.includes("ADMIN");
+  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
+  const canInvite = isSuperAdmin || user.roles.includes("ADMIN");
 
   return (
-    <main className="mx-auto max-w-4xl space-y-8 p-6">
-      <DashboardHeader firstName={me.firstName} lastName={me.lastName} onLogout={handleLogout} />
+    <AppShell user={user} onLogout={logout}>
+      <Letterhead eyebrow="People · Invitations" title="Invitations" />
 
       {canInvite ? (
-        <>
-          <InvitePersonForm isSuperAdmin={isSuperAdmin} onInvited={() => setRefreshKey((k) => k + 1)} />
-          <section>
-            <h2 className="mb-3 text-lg font-semibold">Pending invitations</h2>
+        <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
+          <Card>
+            <CardHeader title="Pending invitations" />
             <PendingInvitationsList refreshKey={refreshKey} />
-          </section>
-        </>
+          </Card>
+          <Card>
+            <CardHeader title="Invite a person" />
+            <InvitePersonForm isSuperAdmin={isSuperAdmin} onInvited={() => setRefreshKey((k) => k + 1)} />
+          </Card>
+        </div>
       ) : (
-        <p className="text-sm text-muted">You don&apos;t have permission to invite people.</p>
+        <Card>
+          <p className="text-sm text-muted">You don&apos;t have permission to invite people.</p>
+        </Card>
       )}
-    </main>
+    </AppShell>
   );
 }

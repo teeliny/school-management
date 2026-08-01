@@ -1,43 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiFetch, tokenStorage } from "../../lib/api";
-import { DashboardHeader } from "../../components/organisms/dashboard-header";
+import { useState } from "react";
+import { useCurrentUser } from "../../lib/use-current-user";
+import { AppShell } from "../../components/templates/app-shell";
+import { Letterhead } from "../../components/molecules/letterhead";
+import { Card, CardHeader } from "../../components/molecules/card";
 import { CreateStudentForm } from "../../components/organisms/create-student-form";
 import { PeopleList } from "../../components/organisms/people-list";
 
-interface Me {
-  firstName: string;
-  lastName: string;
-  roles: string[];
-}
-
 export default function StudentsPage() {
-  const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, loading, logout } = useCurrentUser();
   const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    if (!tokenStorage.accessToken) {
-      router.replace("/login");
-      return;
-    }
-    apiFetch<Me>("/auth/me", { auth: true })
-      .then(setMe)
-      .catch(() => router.replace("/login"))
-      .finally(() => setLoading(false));
-  }, [router]);
-
-  async function handleLogout() {
-    const refreshToken = tokenStorage.refreshToken;
-    tokenStorage.clear();
-    if (refreshToken) {
-      await apiFetch("/auth/logout", { method: "POST", body: { refreshToken } }).catch(() => {});
-    }
-    router.push("/login");
-  }
 
   if (loading) {
     return (
@@ -46,22 +19,27 @@ export default function StudentsPage() {
       </main>
     );
   }
-  if (!me) return null;
+  if (!user) return null;
 
-  const canCreate = me.roles.includes("SUPER_ADMIN") || me.roles.includes("ADMIN");
+  const canCreate = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
 
   return (
-    <main className="mx-auto max-w-4xl space-y-8 p-6">
-      <DashboardHeader firstName={me.firstName} lastName={me.lastName} onLogout={handleLogout} />
+    <AppShell user={user} onLogout={logout}>
+      <Letterhead eyebrow="People · Students" title="Students" />
 
-      {canCreate && (
-        <CreateStudentForm onCreated={() => setRefreshKey((k) => k + 1)} />
-      )}
+      <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
+        <Card>
+          <CardHeader title="Students" sub="Scoped to what your role can see" />
+          <PeopleList refreshKey={refreshKey} />
+        </Card>
 
-      <section>
-        <h2 className="mb-3 text-lg font-semibold">Students</h2>
-        <PeopleList refreshKey={refreshKey} />
-      </section>
-    </main>
+        {canCreate && (
+          <Card>
+            <CardHeader title="Enroll a student" />
+            <CreateStudentForm onCreated={() => setRefreshKey((k) => k + 1)} />
+          </Card>
+        )}
+      </div>
+    </AppShell>
   );
 }

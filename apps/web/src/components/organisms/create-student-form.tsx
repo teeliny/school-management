@@ -97,9 +97,8 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-xl space-y-4">
-      <h2 className="text-lg font-semibold">Enroll a student</h2>
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-      {success && <p className="text-sm text-green-600 dark:text-green-400">{success}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {success && <p className="text-sm text-success">{success}</p>}
 
       <div className="grid grid-cols-2 gap-4">
         <FormField
@@ -154,13 +153,13 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
           <h3 className="text-sm font-medium">
             Guardians <span className="text-muted">(at least one required — PRD §3.1)</span>
           </h3>
-          <Button type="button" variant="outline" className="px-2 py-1 text-xs" onClick={addGuardian}>
+          <Button type="button" variant="outline" size="sm" onClick={addGuardian}>
             Add guardian
           </Button>
         </div>
 
         {guardians.map((guardian, index) => (
-          <div key={index} className="space-y-3 rounded border border-border p-3">
+          <div key={index} className="space-y-3 rounded-lg border border-border p-3">
             <div className="grid grid-cols-2 gap-3">
               <FormField
                 label="Guardian first name"
@@ -208,12 +207,7 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
                 </Select>
               </div>
               {guardians.length > 1 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="px-2 py-1 text-xs"
-                  onClick={() => removeGuardian(index)}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={() => removeGuardian(index)}>
                   Remove
                 </Button>
               )}

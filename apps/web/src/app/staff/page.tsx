@@ -1,44 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiFetch, tokenStorage } from "../../lib/api";
-import { DashboardHeader } from "../../components/organisms/dashboard-header";
+import { useState } from "react";
+import { useCurrentUser } from "../../lib/use-current-user";
+import { AppShell } from "../../components/templates/app-shell";
+import { Letterhead } from "../../components/molecules/letterhead";
+import { Card, CardHeader } from "../../components/molecules/card";
 import { StaffAssignmentForm } from "../../components/organisms/staff-assignment-form";
 import { StaffAssignmentList } from "../../components/organisms/staff-assignment-list";
 import { OwnershipTransferAction } from "../../components/organisms/ownership-transfer-action";
 
-interface Me {
-  firstName: string;
-  lastName: string;
-  roles: string[];
-}
-
 export default function StaffPage() {
-  const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, loading, logout } = useCurrentUser();
   const [refreshKey, setRefreshKey] = useState(0);
-
-  useEffect(() => {
-    if (!tokenStorage.accessToken) {
-      router.replace("/login");
-      return;
-    }
-    apiFetch<Me>("/auth/me", { auth: true })
-      .then(setMe)
-      .catch(() => router.replace("/login"))
-      .finally(() => setLoading(false));
-  }, [router]);
-
-  async function handleLogout() {
-    const refreshToken = tokenStorage.refreshToken;
-    tokenStorage.clear();
-    if (refreshToken) {
-      await apiFetch("/auth/logout", { method: "POST", body: { refreshToken } }).catch(() => {});
-    }
-    router.push("/login");
-  }
 
   if (loading) {
     return (
@@ -47,34 +20,43 @@ export default function StaffPage() {
       </main>
     );
   }
-  if (!me) return null;
+  if (!user) return null;
 
-  const isSuperAdmin = me.roles.includes("SUPER_ADMIN");
-  const canManage = isSuperAdmin || me.roles.includes("ADMIN");
+  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
+  const canManage = isSuperAdmin || user.roles.includes("ADMIN");
 
   return (
-    <main className="mx-auto max-w-4xl space-y-8 p-6">
-      <DashboardHeader firstName={me.firstName} lastName={me.lastName} onLogout={handleLogout} />
+    <AppShell user={user} onLogout={logout}>
+      <Letterhead eyebrow="People · Staff" title="Staff assignments" />
 
       {canManage ? (
-        <>
-          <StaffAssignmentForm
-            isSuperAdmin={isSuperAdmin}
-            onAssigned={() => setRefreshKey((k) => k + 1)}
-          />
-          <section>
-            <h2 className="mb-3 text-lg font-semibold">Staff assignments</h2>
-            <StaffAssignmentList refreshKey={refreshKey} />
-          </section>
+        <div className="space-y-4">
+          <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
+            <Card>
+              <CardHeader title="Assignments" />
+              <StaffAssignmentList refreshKey={refreshKey} />
+            </Card>
+            <Card>
+              <CardHeader title="Assign staff" />
+              <StaffAssignmentForm
+                isSuperAdmin={isSuperAdmin}
+                onAssigned={() => setRefreshKey((k) => k + 1)}
+              />
+            </Card>
+          </div>
+
           {isSuperAdmin && (
-            <section className="border-t border-border pt-6">
+            <Card>
+              <CardHeader title="Transfer ownership" sub="Super-Admin only, cannot be undone" />
               <OwnershipTransferAction />
-            </section>
+            </Card>
           )}
-        </>
+        </div>
       ) : (
-        <p className="text-sm text-muted">You don&apos;t have permission to manage staff assignments.</p>
+        <Card>
+          <p className="text-sm text-muted">You don&apos;t have permission to manage staff assignments.</p>
+        </Card>
       )}
-    </main>
+    </AppShell>
   );
 }

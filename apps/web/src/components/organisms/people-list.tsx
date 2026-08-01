@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
+import { Badge, type BadgeVariant } from "../atoms/badge";
 
 interface StudentListItem {
   id: string;
@@ -10,6 +11,13 @@ interface StudentListItem {
   currentClassId: string | null;
   user: { firstName: string; lastName: string };
 }
+
+const STATUS_VARIANT: Record<string, BadgeVariant> = {
+  ACTIVE: "success",
+  GRADUATED: "info",
+  WITHDRAWN: "muted",
+  SUSPENDED: "danger",
+};
 
 /**
  * Renders whatever `GET /students` returns — the API already applies PRD §5's
@@ -31,30 +39,34 @@ export function PeopleList({ refreshKey }: { refreshKey?: unknown }) {
     load();
   }, [load, refreshKey]);
 
-  if (error) return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
+  if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!students) return <p className="text-sm text-muted">Loading…</p>;
   if (students.length === 0) return <p className="text-sm text-muted">No students visible to you yet.</p>;
 
   return (
-    <table className="w-full text-left text-sm">
-      <thead>
-        <tr className="border-b border-border text-muted">
-          <th className="py-2 pr-4 font-medium">Admission #</th>
-          <th className="py-2 pr-4 font-medium">Name</th>
-          <th className="py-2 font-medium">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {students.map((student) => (
-          <tr key={student.id} className="border-b border-border">
-            <td className="py-2 pr-4">{student.admissionNumber}</td>
-            <td className="py-2 pr-4">
-              {student.user.firstName} {student.user.lastName}
-            </td>
-            <td className="py-2">{student.status}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-[12.5px]">
+        <thead>
+          <tr className="border-b border-border text-muted">
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Admission #</th>
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Name</th>
+            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Status</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {students.map((student) => (
+            <tr key={student.id} className="border-b border-border/60 last:border-none">
+              <td className="py-2.5 pr-4 font-mono text-muted">{student.admissionNumber}</td>
+              <td className="py-2.5 pr-4 font-medium">
+                {student.user.firstName} {student.user.lastName}
+              </td>
+              <td className="py-2.5">
+                <Badge variant={STATUS_VARIANT[student.status] ?? "muted"}>{student.status}</Badge>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

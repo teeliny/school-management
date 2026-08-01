@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
+import { Badge } from "../atoms/badge";
 
 interface StaffAssignment {
   id: string;
@@ -39,39 +40,45 @@ export function StaffAssignmentList({ refreshKey }: { refreshKey?: unknown }) {
     }
   }
 
-  if (error) return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
+  if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!assignments) return <p className="text-sm text-muted">Loading…</p>;
   if (assignments.length === 0) return <p className="text-sm text-muted">No assignments yet.</p>;
 
   return (
-    <table className="w-full text-left text-sm">
-      <thead>
-        <tr className="border-b border-border text-muted">
-          <th className="py-2 pr-4 font-medium">Type</th>
-          <th className="py-2 pr-4 font-medium">Status</th>
-          <th className="py-2 font-medium">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {assignments.map((assignment) => (
-          <tr key={assignment.id} className="border-b border-border">
-            <td className="py-2 pr-4">{assignment.assignmentType}</td>
-            <td className="py-2 pr-4">{assignment.isActive ? "Active" : "Revoked"}</td>
-            <td className="py-2">
-              {assignment.isActive && (
-                <Button
-                  variant="outline"
-                  className="px-2 py-1 text-xs"
-                  disabled={revokingId === assignment.id}
-                  onClick={() => handleRevoke(assignment.id)}
-                >
-                  Revoke
-                </Button>
-              )}
-            </td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-[12.5px]">
+        <thead>
+          <tr className="border-b border-border text-muted">
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Type</th>
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
+            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Actions</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {assignments.map((assignment) => (
+            <tr key={assignment.id} className="border-b border-border/60 last:border-none">
+              <td className="py-2.5 pr-4 font-medium">{assignment.assignmentType}</td>
+              <td className="py-2.5 pr-4">
+                <Badge variant={assignment.isActive ? "success" : "muted"}>
+                  {assignment.isActive ? "Active" : "Revoked"}
+                </Badge>
+              </td>
+              <td className="py-2.5">
+                {assignment.isActive && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={revokingId === assignment.id}
+                    onClick={() => handleRevoke(assignment.id)}
+                  >
+                    Revoke
+                  </Button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

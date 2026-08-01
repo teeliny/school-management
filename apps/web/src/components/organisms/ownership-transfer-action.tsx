@@ -45,8 +45,7 @@ export function OwnershipTransferAction() {
 
   return (
     <div className="space-y-2">
-      <h2 className="text-lg font-semibold">Transfer ownership</h2>
-      {success && <p className="text-sm text-green-600 dark:text-green-400">{success}</p>}
+      {success && <p className="text-sm text-success">{success}</p>}
       <FormField
         label="Target user ID"
         id="ownership-target-user-id"
@@ -66,7 +65,7 @@ export function OwnershipTransferAction() {
             You will be demoted to Admin and this user will become the new Super-Admin. This
             cannot be undone from here.
           </AlertDialogDescription>
-          {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
+          {error && <p className="mt-2 text-sm text-danger">{error}</p>}
           <div className="mt-4 flex justify-end gap-2">
             <AlertDialogCancel asChild>
               <Button variant="outline">Cancel</Button>

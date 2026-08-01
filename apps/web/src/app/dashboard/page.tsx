@@ -1,44 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { apiFetch, tokenStorage } from "../../lib/api";
-import { DashboardHeader } from "../../components/organisms/dashboard-header";
-
-interface Me {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  roles: string[];
-}
+import { useCurrentUser } from "../../lib/use-current-user";
+import { AppShell } from "../../components/templates/app-shell";
+import { Letterhead } from "../../components/molecules/letterhead";
+import { Card, CardHeader } from "../../components/molecules/card";
 
 export default function DashboardPage() {
-  const router = useRouter();
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!tokenStorage.accessToken) {
-      router.replace("/login");
-      return;
-    }
-
-    apiFetch<Me>("/auth/me", { auth: true })
-      .then(setMe)
-      .catch(() => router.replace("/login"))
-      .finally(() => setLoading(false));
-  }, [router]);
-
-  async function handleLogout() {
-    const refreshToken = tokenStorage.refreshToken;
-    tokenStorage.clear();
-    if (refreshToken) {
-      await apiFetch("/auth/logout", { method: "POST", body: { refreshToken } }).catch(() => {});
-    }
-    router.push("/login");
-  }
+  const { user, loading, logout } = useCurrentUser();
 
   if (loading) {
     return (
@@ -47,38 +16,36 @@ export default function DashboardPage() {
       </main>
     );
   }
+  if (!user) return null;
 
-  if (!me) return null;
-
-  const canManageStaff = me.roles.includes("SUPER_ADMIN") || me.roles.includes("ADMIN");
+  const canManageStaff = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
 
   return (
-    <main className="mx-auto max-w-2xl p-6">
-      <DashboardHeader firstName={me.firstName} lastName={me.lastName} onLogout={handleLogout} />
-      <p className="mt-2 text-sm text-muted">
-        {me.email} — {me.roles.join(", ")}
-      </p>
+    <AppShell user={user} onLogout={logout}>
+      <Letterhead eyebrow={user.roles.join(" · ")} title={`Good to see you, ${user.firstName}.`} />
 
-      <nav className="mt-6 flex gap-4 text-sm">
-        <Link href="/students" className="underline hover:no-underline">
-          Students
-        </Link>
-        {canManageStaff && (
-          <>
-            <Link href="/staff" className="underline hover:no-underline">
-              Staff assignments
-            </Link>
-            <Link href="/invitations" className="underline hover:no-underline">
-              Invitations
-            </Link>
-          </>
-        )}
-      </nav>
-
-      <p className="mt-8 text-sm text-muted">
-        Phase 2 (People, BUILD_PLAN.md §4) is live — Subjects, Assessment, and everything else
-        arrive in later phases.
-      </p>
-    </main>
+      <Card>
+        <CardHeader title="Your account" sub={user.email} />
+        <nav className="flex flex-wrap gap-4 text-sm">
+          <Link href="/students" className="font-medium underline hover:no-underline">
+            Students
+          </Link>
+          {canManageStaff && (
+            <>
+              <Link href="/staff" className="font-medium underline hover:no-underline">
+                Staff assignments
+              </Link>
+              <Link href="/invitations" className="font-medium underline hover:no-underline">
+                Invitations
+              </Link>
+            </>
+          )}
+        </nav>
+        <p className="mt-4 text-[11.5px] text-muted">
+          Phase 2 (People, BUILD_PLAN.md §4) is live — Subjects, Assessment, and everything else
+          arrive in later phases.
+        </p>
+      </Card>
+    </AppShell>
   );
 }

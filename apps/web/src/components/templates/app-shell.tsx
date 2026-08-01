@@ -1,0 +1,134 @@
+"use client";
+
+import type { ReactNode } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { LayoutDashboard, GraduationCap, Users, Mail, LogOut, type LucideIcon } from "lucide-react";
+import { CrestBadge } from "../atoms/crest-badge";
+import { ThemeToggle } from "../molecules/theme-toggle";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../molecules/dropdown-menu";
+import { cn } from "../../lib/cn";
+import type { CurrentUser } from "../../lib/use-current-user";
+
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+}
+
+const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
+  {
+    eyebrow: "Overview",
+    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+  },
+  {
+    eyebrow: "People",
+    items: [
+      { href: "/students", label: "Students", icon: GraduationCap },
+      { href: "/staff", label: "Staff assignments", icon: Users, adminOnly: true },
+      { href: "/invitations", label: "Invitations", icon: Mail, adminOnly: true },
+    ],
+  },
+];
+
+export function AppShell({
+  user,
+  onLogout,
+  children,
+}: {
+  user: CurrentUser;
+  onLogout: () => void;
+  children: ReactNode;
+}) {
+  const pathname = usePathname();
+  const isAdmin = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
+  const initials = `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
+
+  return (
+    <div className="min-h-screen">
+      {/* Collapsed to an icon rail by default, on every breakpoint — hovering
+          expands it as a fixed overlay (doesn't push `main`, which always
+          reserves just the collapsed width). Label text fades in via
+          `group-hover`; `overflow-hidden` clips it while collapsed and
+          mid-transition, so no separate width animation is needed on the
+          labels themselves. */}
+      <aside className="group fixed inset-y-0 left-0 z-40 flex w-[72px] flex-col gap-5 overflow-hidden border-r border-[rgb(var(--primary-foreground)/0.16)] bg-primary px-4 py-6 text-primary-foreground transition-[width] duration-200 ease-out hover:w-[246px] hover:shadow-[4px_0_28px_rgba(0,0,0,0.18)]">
+        <div className="flex items-center gap-2.5">
+          <CrestBadge letter="S" variant="outline" />
+          <div className="font-display whitespace-nowrap text-base font-semibold leading-tight opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+            School Management
+          </div>
+        </div>
+
+        <nav className="flex flex-col gap-0.5">
+          {NAV_SECTIONS.map((section) => {
+            const items = section.items.filter((item) => !item.adminOnly || isAdmin);
+            if (items.length === 0) return null;
+            return (
+              <div key={section.eyebrow}>
+                <div className="mb-1.5 mt-3.5 whitespace-nowrap px-2.5 text-[10px] uppercase tracking-wide opacity-0 transition-opacity duration-150 first:mt-0 group-hover:opacity-50">
+                  {section.eyebrow}
+                </div>
+                {items.map((item) => {
+                  const active = pathname === item.href;
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13.5px] text-primary-foreground/80 transition-colors",
+                        "hover:bg-primary-foreground/10 hover:text-primary-foreground",
+                        active && "bg-primary-foreground/15 font-medium text-primary-foreground",
+                      )}
+                    >
+                      <Icon className="h-4 w-4 flex-none opacity-80" />
+                      <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                        {item.label}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </nav>
+
+        <div className="mt-auto whitespace-nowrap border-t border-primary-foreground/15 pt-3.5 text-[11px] leading-relaxed opacity-0 transition-opacity duration-150 group-hover:opacity-55">
+          Single-tenant deployment
+        </div>
+      </aside>
+
+      <main className="ml-[72px] max-w-[1180px] px-5 pb-14 pt-5 sm:px-8 sm:pt-6">
+        <div className="mb-5 flex items-center justify-end gap-3">
+          <ThemeToggle />
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex h-[34px] w-[34px] items-center justify-center rounded-full border border-border bg-card-inset font-display text-xs font-semibold outline-none">
+              {initials}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <div className="px-2 py-1.5 text-xs text-muted">
+                {user.firstName} {user.lastName}
+                <div className="mt-0.5">{user.roles.join(", ")}</div>
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={onLogout} className="flex items-center gap-2">
+                <LogOut className="h-3.5 w-3.5" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {children}
+      </main>
+    </div>
+  );
+}

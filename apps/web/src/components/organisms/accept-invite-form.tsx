@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
+import { CrestBadge } from "../atoms/crest-badge";
 
 interface InvitationPeek {
   email: string;
@@ -47,7 +48,7 @@ export function AcceptInviteForm() {
   }
 
   if (loadError) {
-    return <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p>;
+    return <p className="text-sm text-danger">{loadError}</p>;
   }
 
   if (!invitation) {
@@ -63,24 +64,28 @@ export function AcceptInviteForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4 p-6">
-      <h1 className="text-xl font-semibold">Set up your account</h1>
-      <p className="text-sm text-muted">
-        Accepting invitation for <strong>{invitation.email}</strong> as {invitation.invitedRole}.
+    <div className="w-[380px] max-w-full rounded-card border border-border bg-card px-8 py-8 text-center">
+      <CrestBadge letter="S" variant="solid" size="lg" className="mx-auto mb-3.5" />
+      <h1 className="font-display mb-1 text-lg font-semibold">Set up your account</h1>
+      <p className="mb-5 text-[11.5px] text-muted">
+        Accepting invitation for <strong>{invitation.email}</strong> as {invitation.invitedRole}
       </p>
-      {submitError && <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>}
-      <FormField
-        label="Choose a password"
-        id="password"
-        type="password"
-        required
-        minLength={8}
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      <Button type="submit" disabled={submitting} className="w-full">
-        {submitting ? "Setting up…" : "Accept invitation"}
-      </Button>
-    </form>
+
+      <form onSubmit={handleSubmit} className="space-y-3.5 text-left">
+        {submitError && <p className="text-sm text-danger">{submitError}</p>}
+        <FormField
+          label="Choose a password"
+          id="password"
+          type="password"
+          required
+          minLength={8}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <Button type="submit" disabled={submitting} className="w-full justify-center">
+          {submitting ? "Setting up…" : "Accept invitation"}
+        </Button>
+      </form>
+    </div>
   );
 }

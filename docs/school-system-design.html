@@ -66,14 +66,23 @@
 
   /* ---------- Shell ---------- */
   .shell{
-    display:grid;
-    grid-template-columns:246px 1fr;
-    min-height:100vh;
     position:relative; z-index:1;
+    min-height:100vh;
   }
 
-  /* ---------- Sidebar ---------- */
+  /* ---------- Sidebar ----------
+     Collapsed to an icon rail (--sidebar-w-collapsed) by default, on every
+     breakpoint — it no longer disappears on small screens. Hovering expands
+     it to --sidebar-w-expanded as a fixed overlay (doesn't push .main, which
+     always reserves just the collapsed width). Text content fades in via
+     opacity; the sidebar's own overflow:hidden clips it while collapsed and
+     mid-transition, so no separate width/max-width animation is needed on
+     the labels themselves. */
+  :root{ --sidebar-w-collapsed: 72px; --sidebar-w-expanded: 246px; }
   .sidebar{
+    position:fixed; top:0; left:0; bottom:0; z-index:40;
+    width:var(--sidebar-w-collapsed);
+    overflow:hidden;
     background:rgb(var(--primary));
     color:rgb(var(--primary-foreground));
     padding:24px 16px;
@@ -81,7 +90,18 @@
     flex-direction:column;
     gap:22px;
     border-right:1px solid rgb(var(--border));
+    transition:width .18s ease, box-shadow .18s ease;
   }
+  .sidebar:hover{
+    width:var(--sidebar-w-expanded);
+    box-shadow:4px 0 28px rgb(0 0 0 / 0.18);
+  }
+  .sidebar .fade-label{
+    opacity:0; white-space:nowrap;
+    transition:opacity .15s ease;
+  }
+  .sidebar:hover .fade-label{ opacity:1; }
+
   .crest{display:flex; align-items:center; gap:11px;}
   .crest-badge{
     width:38px;height:38px;border-radius:50%;
@@ -121,7 +141,7 @@
   .sidebar-foot{margin-top:auto; border-top:1px solid rgb(var(--primary-foreground) / 0.16); padding-top:14px; font-size:11px; opacity:0.55; line-height:1.5;}
 
   /* ---------- Main ---------- */
-  .main{padding:22px 32px 60px; max-width:1180px;}
+  .main{margin-left:var(--sidebar-w-collapsed); padding:22px 32px 60px; max-width:1180px;}
   .topbar{display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; gap:16px;}
   .search{flex:1; max-width:360px; position:relative;}
   .search input{
@@ -161,9 +181,15 @@
   /* generic bits */
   .panel{display:none;}
   .panel.active{display:block;}
+  /* min-width:0 overrides the browser default (min-width:auto) that grid/flex
+     items get automatically — without it, a track like `1fr` still refuses to
+     shrink past its content's min-content width, which is what was causing
+     horizontal page scroll on narrow viewports. */
   .grid{display:grid; gap:16px;}
+  .grid > *{min-width:0;}
   .grid-2{grid-template-columns:1.4fr 1fr;}
   .grid-3{grid-template-columns:repeat(3,1fr);}
+  .scroll-x{overflow-x:auto;}
   .card{
     background:rgb(var(--card)); border:1px solid rgb(var(--border)); border-radius:14px;
     padding:19px 20px 17px;
@@ -212,7 +238,7 @@
   .hero-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:14px;}
   .hero-eyebrow{font-size:10.5px; text-transform:uppercase; letter-spacing:0.1em; color:rgb(var(--muted));}
   .hero-title{font-family:'Fraunces',serif; font-size:17.5px; font-weight:600; margin:3px 0 0;}
-  .ruler-track{display:flex; border-top:2px solid rgb(var(--foreground)); padding-top:9px;}
+  .ruler-track{display:flex; border-top:2px solid rgb(var(--foreground)); padding-top:9px; overflow-x:auto;}
   .period{flex:1; padding:0 10px 6px 0; border-right:1px dashed rgb(var(--border)); position:relative;}
   .period:last-child{border-right:none;}
   .period-time{font-family:'IBM Plex Mono',monospace; font-size:10px; color:rgb(var(--muted));}
@@ -271,8 +297,9 @@
   .invoice-row{display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid rgb(var(--border) / 0.6);}
   .invoice-row:last-child{border-bottom:none;}
   .invoice-icon{width:34px;height:34px;border-radius:8px; background:rgb(var(--card-inset)); border:1px solid rgb(var(--border)); display:flex; align-items:center; justify-content:center; flex:none;}
+  .invoice-info{min-width:0;}
   .invoice-name{font-weight:500; font-size:13px;}
-  .invoice-meta{font-size:11px; color:rgb(var(--muted)); font-family:'IBM Plex Mono',monospace;}
+  .invoice-meta{font-size:11px; color:rgb(var(--muted)); font-family:'IBM Plex Mono',monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .invoice-amt{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13.5px; margin-left:auto; margin-right:12px;}
 
   .checkout-card{border:1.5px dashed rgb(var(--border)); border-radius:14px; padding:22px; text-align:center;}
@@ -307,8 +334,8 @@
   .invite-note{font-size:11.5px; color:rgb(var(--muted)); background:rgb(var(--card-inset)); border-radius:8px; padding:9px 12px; margin-top:16px; line-height:1.5;}
 
   @media (max-width:980px){
-    .shell{grid-template-columns:1fr;}
-    .sidebar{display:none;}
+    /* Sidebar stays as the collapsed icon rail (see .sidebar above) instead
+       of disappearing — same hover-to-expand behavior as desktop. */
     .grid-2, .grid-3{grid-template-columns:1fr;}
   }
 </style>
@@ -341,46 +368,46 @@
     <div class="crest">
       <div class="crest-badge"><span>R</span></div>
       <div>
-        <div class="crest-name">Ridgeview<br>Academy</div>
+        <div class="crest-name fade-label">Ridgeview<br>Academy</div>
       </div>
     </div>
 
     <nav class="primary" id="navList">
-      <div class="nav-eyebrow">Overview</div>
+      <div class="nav-eyebrow fade-label">Overview</div>
       <div class="nav-item active" data-panel="dashboard">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-        Dashboard
+        <span class="fade-label">Dashboard</span>
       </div>
       <div class="nav-item" data-panel="attendance">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-        Attendance
+        <span class="fade-label">Attendance</span>
       </div>
       <div class="nav-item" data-panel="gradebook">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-        Gradebook
+        <span class="fade-label">Gradebook</span>
       </div>
       <div class="nav-item" data-panel="scheduling">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
-        Exam Scheduling
-        <span class="nav-count">AI</span>
+        <span class="fade-label">Exam Scheduling</span>
+        <span class="nav-count fade-label">AI</span>
       </div>
       <div class="nav-item" data-panel="fees">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
-        Fees
+        <span class="fade-label">Fees</span>
       </div>
-      <div class="nav-eyebrow">Connect</div>
+      <div class="nav-eyebrow fade-label">Connect</div>
       <div class="nav-item" data-panel="notifications">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>
-        Notifications
-        <span class="nav-count">4</span>
+        <span class="fade-label">Notifications</span>
+        <span class="nav-count fade-label">4</span>
       </div>
       <div class="nav-item" data-panel="audit" data-admin-only>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><circle cx="12" cy="12" r="9"/></svg>
-        Audit Log
+        <span class="fade-label">Audit Log</span>
       </div>
     </nav>
 
-    <div class="sidebar-foot">
+    <div class="sidebar-foot fade-label">
       Single-tenant deployment<br>
       ridgeview.schoolapp.ng
     </div>
@@ -561,12 +588,14 @@
 
       <div class="card">
         <div class="card-head"><h3 class="card-title">Last published draft</h3><span class="badge badge-info">Pending review</span></div>
-        <table>
-          <tr><th>Subject</th><th>Date</th><th>Hall</th><th>Invigilator</th><th></th></tr>
-          <tr><td class="cell-name">Mathematics</td><td class="cell-mono">Aug 6, 9:00am</td><td>Hall A</td><td>Mr. Adeyemi</td><td><button class="btn btn-sm">Edit</button></td></tr>
-          <tr><td class="cell-name">English</td><td class="cell-mono">Aug 6, 12:00pm</td><td>Hall B</td><td>Mrs. Okoro</td><td><button class="btn btn-sm">Edit</button></td></tr>
-          <tr><td class="cell-name">Physics</td><td class="cell-mono">Aug 7, 9:00am</td><td>Lab 2</td><td>Mr. Bello</td><td><button class="btn btn-sm">Edit</button></td></tr>
-        </table>
+        <div class="scroll-x">
+          <table>
+            <tr><th>Subject</th><th>Date</th><th>Hall</th><th>Invigilator</th><th></th></tr>
+            <tr><td class="cell-name">Mathematics</td><td class="cell-mono">Aug 6, 9:00am</td><td>Hall A</td><td>Mr. Adeyemi</td><td><button class="btn btn-sm">Edit</button></td></tr>
+            <tr><td class="cell-name">English</td><td class="cell-mono">Aug 6, 12:00pm</td><td>Hall B</td><td>Mrs. Okoro</td><td><button class="btn btn-sm">Edit</button></td></tr>
+            <tr><td class="cell-name">Physics</td><td class="cell-mono">Aug 7, 9:00am</td><td>Lab 2</td><td>Mr. Bello</td><td><button class="btn btn-sm">Edit</button></td></tr>
+          </table>
+        </div>
         <button class="btn btn-primary" style="margin-top:14px;">Approve & publish</button>
       </div>
     </section>
@@ -583,19 +612,19 @@
           <div class="card-head"><h3 class="card-title">Invoices — Tobi Kalu</h3><div class="card-sub">Grade 9B</div></div>
           <div class="invoice-row">
             <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
-            <div><div class="invoice-name">Term 1 tuition</div><div class="invoice-meta">INV-2291 · due Aug 15</div></div>
+            <div class="invoice-info"><div class="invoice-name">Term 1 tuition</div><div class="invoice-meta">INV-2291 · due Aug 15</div></div>
             <div class="invoice-amt">₦75,000</div>
             <span class="badge badge-warning">Pending</span>
           </div>
           <div class="invoice-row">
             <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
-            <div><div class="invoice-name">Sports day levy</div><div class="invoice-meta">INV-2278 · paid Jul 20</div></div>
+            <div class="invoice-info"><div class="invoice-name">Sports day levy</div><div class="invoice-meta">INV-2278 · paid Jul 20</div></div>
             <div class="invoice-amt">₦5,000</div>
             <span class="badge badge-success">Paid</span>
           </div>
           <div class="invoice-row">
             <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
-            <div><div class="invoice-name">Term 2 tuition</div><div class="invoice-meta">INV-2340 · not yet due</div></div>
+            <div class="invoice-info"><div class="invoice-name">Term 2 tuition</div><div class="invoice-meta">INV-2340 · not yet due</div></div>
             <div class="invoice-amt">₦75,000</div>
             <span class="badge badge-muted">Upcoming</span>
           </div>
@@ -635,7 +664,7 @@
         <h1 class="display">Who changed what</h1>
         <div class="letterhead-rule"></div>
       </div>
-      <div class="card">
+      <div class="card scroll-x">
         <div class="audit-row"><div class="audit-time">Aug 1, 11:52am</div><div class="audit-actor">Mr. Adeyemi</div><div class="audit-action">updated ScoreEntry for Tobi Kalu</div><div class="audit-diff">72 → 87</div></div>
         <div class="audit-row"><div class="audit-time">Aug 1, 10:14am</div><div class="audit-actor">Adaeze (Admin)</div><div class="audit-action">approved ExamSchedule draft #114</div><div class="audit-diff">PENDING → APPROVED</div></div>
         <div class="audit-row"><div class="audit-time">Aug 1, 9:02am</div><div class="audit-actor">System</div><div class="audit-action">reconciled Payment INV-2278</div><div class="audit-diff">PENDING → PAID</div></div>
@@ -649,7 +678,7 @@
 <script>
   function enterApp(){
     document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('appShell').style.display = 'grid';
+    document.getElementById('appShell').style.display = 'block';
   }
 
   document.querySelectorAll('.nav-item[data-panel]').forEach(item=>{
