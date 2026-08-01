@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { ThemeProvider } from "../components/theme-provider";
-import { ThemeToggle } from "../components/theme-toggle";
+import { ThemeProvider } from "../components/providers/theme-provider";
+import { ThemeToggle } from "../components/molecules/theme-toggle";
 
 export const metadata: Metadata = {
   title: "School Management",

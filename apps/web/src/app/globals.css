@@ -4,18 +4,17 @@
 
 /*
  * Light/dark theme tokens (dark toggled via a `.dark` class on <html>, set
- * by next-themes — see components/theme-provider.tsx). The two brand colors
- * (#001B3A navy, #f5eed4 cream) invert between themes: light mode is cream
- * background/navy text with navy buttons, dark mode is navy background/cream
- * text with cream buttons — so a button is never the same color as the page
- * behind it.
+ * by next-themes — see components/theme-provider.tsx). Light mode is a white
+ * background with navy text/buttons; dark mode is a navy background with
+ * cream text/buttons (#001B3A navy, #f5eed4 cream) — so a button is never the
+ * same color as the page behind it.
  *
  * Values are space-separated RGB channels (not hex) so Tailwind's opacity
- * modifiers work (`bg-background/40`, etc.) — see tailwind.config.ts, which
+ * modifiers work (`bg-background`, etc.) — see tailwind.config.ts, which
  * wraps each one in `rgb(... / <alpha-value>)`.
  */
 :root {
-  --background: 245 238 212; /* #f5eed4 */
+  --background: 255 255 255; /* #ffffff */
   --foreground: 0 27 58; /* #001b3a */
   --primary: 0 27 58;
   --primary-foreground: 245 238 212;
@@ -25,7 +24,7 @@
 
 .dark {
   --background: 0 27 58; /* #001b3a */
-  --foreground: 245 238 212; /* #f5eed4 */
+  --foreground: 245 238 212; /* #ffffff */
   --primary: 245 238 212;
   --primary-foreground: 0 27 58;
   --border: 22 52 92; /* #16345c */

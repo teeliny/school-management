@@ -9,6 +9,7 @@ Single-tenant school management platform (Nigerian-model schools). NestJS API + 
 **Read `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/BUILD_PLAN.md` before making non-trivial changes.** They are the source of truth for what/why/build-order and are kept up to date — check `BUILD_PLAN.md` for current phase status before assuming a feature doesn't exist yet. `README.md` has full setup/run instructions; don't duplicate that here.
 
 Critical framing decisions already made (don't relitigate without asking):
+
 - **Single-tenant** — this repo is deployed once per school, not a multi-tenant SaaS. See ARCHITECTURE.md §2.2.
 - **Super-Admin = the school's Proprietor**, not a platform-level role. It's a singleton (enforced by a partial unique index, see below).
 - **Invitation-only auth** — there is no public sign-up. The first account (Super-Admin) is created via `pnpm setup:school`; everyone else is invited.
@@ -27,7 +28,7 @@ Run `pnpm typecheck` and `pnpm lint` (scoped to the app you touched, e.g. `pnpm 
 
 ## Repo layout
 
-```
+```text
 apps/api/                 NestJS — HTTP entrypoint, port 3001
 apps/worker/               NestJS — BullMQ consumers, port 3002
 apps/web/                  Next.js App Router, port 3000
@@ -52,9 +53,16 @@ infra/docker/              Per-app Dockerfiles
 
 ## Frontend conventions (apps/web)
 
+- **Component architecture is Atomic Design**, under `apps/web/src/components/`:
+  - `atoms/` — smallest styled primitives, one DOM concern each (`Button`, `Input`, `Label`, `Textarea`). Plain native elements unless the interaction is complex enough to need Radix (`Button` uses `@radix-ui/react-slot` for `asChild`; `Input`/`Textarea` are plain styled `<input>`/`<textarea>` — no Radix primitive exists for those).
+  - `molecules/` — small compositions of atoms/Radix primitives: `FormField` (`Label` + `Input`), `Select`, `DropdownMenu`, `ThemeToggle` (Radix `ToggleGroup`).
+  - `organisms/` — feature-level compositions with their own state/data-fetching, e.g. `LoginForm`, `AcceptInviteForm`, `DashboardHeader`. These map ~1:1 to what used to live directly in `app/*/page.tsx`.
+  - `templates/` — page-level layout shells with no business logic, e.g. `AuthLayout` (centers content in a `min-h-screen` viewport). Compose templates + organisms in `app/*/page.tsx`; keep those page files thin.
+  - `providers/` — non-visual context wrappers (`ThemeProvider`). Not part of the atomic hierarchy.
+  - When adding a new UI piece, place it by composition level, not by feature — e.g. a new form goes in `organisms/`, not a new top-level folder per page.
+- **Everything Radix-first**: any interactive primitive (toggle, select, dropdown, dialog, etc.) should wrap a `@radix-ui/react-*` package rather than being hand-rolled, styled via the same CSS-variable tokens and the `cn()` helper (`clsx` + `tailwind-merge`) in `src/lib/cn.ts`.
 - **Theming**: `next-themes`, class-based (`darkMode: "class"` in Tailwind), colors as CSS custom properties in RGB-channel format in `globals.css` (e.g. `--background: 245 238 212`) so Tailwind can apply opacity via `rgb(var(--x) / <alpha-value>)`. Brand colors: navy `#001B3A` / cream `#f5eed4`, inverted between light and dark.
 - **The dark-mode gradient background (`globals.css`, `.dark body { background-image: ... }`) is currently dark-mode only** — there's no light-mode equivalent yet. Know this before "fixing" a report that the gradient isn't visible; check which theme is active first.
-- **UI primitives**: `apps/web/src/components/ui/*` wraps Radix primitives (`@radix-ui/react-*`) styled with the same CSS-variable tokens, combined via the `cn()` helper (`clsx` + `tailwind-merge`) in `src/lib/cn.ts`. Use these (`Label`, `Input`, `Textarea`, `Select`, `DropdownMenu`, theme toggle's `ToggleGroup`) instead of raw HTML form elements or a different component library.
 - **Icons**: `lucide-react`.
 
 ## Docker / infra gotchas

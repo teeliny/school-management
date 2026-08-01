@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch, tokenStorage } from "../../lib/api";
+import { DashboardHeader } from "../../components/organisms/dashboard-header";
 
 interface Me {
   id: string;
@@ -50,14 +51,7 @@ export default function DashboardPage() {
 
   return (
     <main className="mx-auto max-w-2xl p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">
-          Welcome, {me.firstName} {me.lastName}
-        </h1>
-        <button onClick={handleLogout} className="rounded border border-border px-3 py-1 text-sm">
-          Log out
-        </button>
-      </div>
+      <DashboardHeader firstName={me.firstName} lastName={me.lastName} onLogout={handleLogout} />
       <p className="mt-2 text-sm text-muted">
         {me.email} — {me.roles.join(", ")}
       </p>

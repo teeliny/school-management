@@ -1,0 +1,19 @@
+import * as React from "react";
+import { Label } from "../atoms/label";
+import { Input } from "../atoms/input";
+import { cn } from "../../lib/cn";
+
+export interface FormFieldProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label: string;
+  id: string;
+}
+
+export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
+  ({ label, id, className, ...props }, ref) => (
+    <div>
+      <Label htmlFor={id}>{label}</Label>
+      <Input ref={ref} id={id} className={cn("mt-1", className)} {...props} />
+    </div>
+  ),
+);
+FormField.displayName = "FormField";
