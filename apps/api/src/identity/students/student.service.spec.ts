@@ -31,6 +31,7 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
   let prisma: { $transaction: jest.Mock };
   let userService: { grantRole: jest.Mock };
   let invitationService: { createInTx: jest.Mock; sendInviteEmail: jest.Mock };
+  let enrollmentService: { syncCompulsoryEnrollmentsOnClassAssignment: jest.Mock };
   let service: StudentService;
 
   beforeEach(() => {
@@ -38,6 +39,7 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
     prisma = { $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(tx)) };
     userService = { grantRole: jest.fn() };
     invitationService = { createInTx: jest.fn(), sendInviteEmail: jest.fn() };
+    enrollmentService = { syncCompulsoryEnrollmentsOnClassAssignment: jest.fn() };
 
     tx.user.create.mockResolvedValue({ id: "student-user-1" });
     tx.studentProfile.create.mockResolvedValue({ id: "student-1" });
@@ -46,6 +48,7 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
       prisma as never,
       userService as never,
       invitationService as never,
+      enrollmentService as never,
     );
   });
 

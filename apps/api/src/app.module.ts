@@ -10,6 +10,8 @@ import { IdentityModule } from "./identity/identity.module";
 import { AuthModule } from "./auth/auth.module";
 import { AcademicStructureModule } from "./academic-structure/academic-structure.module";
 import { StaffAssignmentsModule } from "./staff-assignments/staff-assignments.module";
+import { SubjectModule } from "./subjects/subject.module";
+import { TimetableModule } from "./timetable/timetable.module";
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { StaffAssignmentsModule } from "./staff-assignments/staff-assignments.mo
     AuthModule,
     AcademicStructureModule,
     StaffAssignmentsModule,
+    SubjectModule,
+    TimetableModule,
     HealthModule,
   ],
 })

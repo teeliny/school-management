@@ -78,15 +78,19 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 ## 6. Phase 4 — Assessment
 
-*(maps to PRD §9 Phase 4)*
+*(maps to PRD §9 Phase 4, PRD §3.6, §3.11)*
 
-1. `AssessmentWindow` with open/close gating (score entry rejected outside an open window, Admin override).
-2. `ScoreEntry` with assignment-scoped write permission (only the `SUBJECT_TEACHER` assigned to that subject+class, or Admin override).
-3. `SubjectTermResult` aggregation job — including grouped-subject weighting via `SubjectGroupWeight` (child scores roll up into the parent's grade).
-4. `GradeScale`, `ReportComment` (role-scoped: subject teacher / class teacher / principal comment types).
-5. `TermReportCard` generation (async PDF job, PRD §6.4 FR4.6) + publish gate (checks required comments present before allowing publish).
+1. `AssessmentComponent` CRUD (Admin-only) with the per-(term, classLevel) structure-completeness validation (components must sum to 100 before any can open) and the three-date scheduling model (inputOpensAt/inputClosesAt/publishAt) — plus a scheduled sweep (BullMQ, same shape as the Monnify reconciliation / scheduling-timeout-sweep pattern in ARCHITECTURE.md §8–§10) that transitions status off those dates, with Admin override always available regardless of schedule.
+2. `ScoreEntry` with assignment-scoped write permission (only the `SUBJECT_TEACHER` assigned to that subject+class, or Admin override), gated on the parent component's `OPEN` status.
+3. `SubjectTermResult` aggregation job — including grouped-subject weighting via `SubjectGroupWeight` (child scores roll up into the parent's grade) — triggered when a class level's components for a term all close.
+4. `GradeScale`.
+5. `SkillAssessmentItem` admin config (Admin/Super-Admin, per academic session), including the default-from-previous-session copy behavior on first access for a new session.
+6. `ReportWindow` CRUD (Admin-only, per term+class level) gating `SkillRating` entry and `CLASS_TEACHER` `ReportComment` writes — same schedule/override shape as `AssessmentComponent`.
+7. `ReportComment` (role-scoped: subject teacher / class teacher / principal comment types).
+8. `TermReportCard` generation (async PDF job, PRD FR4.8) + publish gate checking subject results + skill ratings + both required comments are present before allowing publish.
+9. `GET /calendar` read-aggregation endpoint (PRD §3.11) across `Term`, `AssessmentComponent`, `ReportWindow` dates, plus a basic calendar UI.
 
-**Done when:** a full term cycle runs start to finish in a test environment — window opens, subject teachers score (including a grouped subject), window closes, aggregation computes grades correctly, comments are added by the right roles, a report card generates and publishes, and the parent sees it (published-only visibility enforced).
+**Done when:** a full term cycle runs start to finish in a test environment for at least two class levels with *different* component structures (e.g. one with a single 20-point CA, another with two 10-point CAs) — components open/close/publish on schedule and via Admin override, subject teachers score within their windows, aggregation computes correct totals for both structures, the skill list defaults correctly from a prior session (and can be built from scratch when there is none), class teachers rate skills and comment within their window, principal comments, a report card generates and publishes only once every required piece is present, the parent sees it (published-only visibility enforced), and every scheduled date involved shows up correctly on `GET /calendar`.
 
 ---
 
@@ -121,7 +125,7 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 ## 9. Phase 7 — AI Scheduling
 
-*(maps to PRD §9 Phase 7)* — deliberately last, since it depends on `Subject.requiresCalculation` (Phase 3), `StaffAssignment` (Phase 2), and `AssessmentWindow` (Phase 4) all already existing.
+*(maps to PRD §9 Phase 7)* — deliberately last, since it depends on `Subject.requiresCalculation` (Phase 3), `StaffAssignment` (Phase 2), and `AssessmentComponent` (Phase 4) all already existing.
 
 1. **Async plumbing first, solver logic second**: `ScheduleGenerationRequest` (PRD §3.8) + BullMQ dispatch job + callback endpoint with per-request `callbackToken` + timeout sweep (ARCHITECTURE §9). If Phase 5's Monnify reconciliation already established this generic async pattern, this step is mostly reuse, not new design.
 2. `scheduling-engine` service (Python/FastAPI + OR-Tools CP-SAT): class timetable model — subject/day/period assignment honoring `SchedulingConstraint` rows, `requiresCalculation` morning-placement and spread rules.

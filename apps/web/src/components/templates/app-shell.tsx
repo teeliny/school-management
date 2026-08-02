@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, GraduationCap, Users, Mail, LogOut, type LucideIcon } from "lucide-react";
+import { LayoutDashboard, GraduationCap, Users, Mail, BookOpen, CalendarClock, Building2, LogOut, type LucideIcon } from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
 import { ThemeToggle } from "../molecules/theme-toggle";
 import {
@@ -16,11 +16,19 @@ import {
 import { cn } from "../../lib/cn";
 import type { CurrentUser } from "../../lib/use-current-user";
 
+interface NavContext {
+  isAdmin: boolean;
+  user: CurrentUser;
+}
+
 interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
   adminOnly?: boolean;
+  // For rules broader than "admin only" (e.g. Admin or an active Registrar
+  // assignment) — checked in addition to adminOnly, not instead of it.
+  visible?: (ctx: NavContext) => boolean;
 }
 
 const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
@@ -34,6 +42,19 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
       { href: "/students", label: "Students", icon: GraduationCap },
       { href: "/staff", label: "Staff assignments", icon: Users, adminOnly: true },
       { href: "/invitations", label: "Invitations", icon: Mail, adminOnly: true },
+    ],
+  },
+  {
+    eyebrow: "Academics",
+    items: [
+      { href: "/academic-structure", label: "Academic structure", icon: Building2, adminOnly: true },
+      { href: "/subjects", label: "Subjects", icon: BookOpen, adminOnly: true },
+      {
+        href: "/timetable",
+        label: "Timetable",
+        icon: CalendarClock,
+        visible: ({ isAdmin, user }) => isAdmin || user.assignmentTypes.includes("REGISTRAR"),
+      },
     ],
   },
 ];
@@ -69,7 +90,11 @@ export function AppShell({
 
         <nav className="flex flex-col gap-0.5">
           {NAV_SECTIONS.map((section) => {
-            const items = section.items.filter((item) => !item.adminOnly || isAdmin);
+            const items = section.items.filter((item) => {
+              if (item.adminOnly && !isAdmin) return false;
+              if (item.visible && !item.visible({ isAdmin, user })) return false;
+              return true;
+            });
             if (items.length === 0) return null;
             return (
               <div key={section.eyebrow}>

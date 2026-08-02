@@ -21,7 +21,13 @@ export type Subject =
   | "StaffProfile"
   | "ParentProfile"
   | "StudentProfile"
-  | "StaffAssignment";
+  | "StaffAssignment"
+  | "Subject"
+  | "ClassSubject"
+  | "SubjectGroupWeight"
+  | "StudentSubjectEnrollment"
+  | "StudentDepartment"
+  | "TimetableSlot";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string }]
 >;
@@ -46,6 +52,26 @@ export class AbilityFactory {
       can("manage", "StaffAssignment");
       cannot("manage", "StaffAssignment", { assignmentType: "BURSAR" });
       cannot("manage", "StaffAssignment", { assignmentType: "REGISTRAR" });
+
+      // PRD §3.3/§5: subject catalogue + manual class timetable are both
+      // Admin-manageable.
+      can("manage", [
+        "Subject",
+        "ClassSubject",
+        "SubjectGroupWeight",
+        "StudentSubjectEnrollment",
+        "StudentDepartment",
+        "TimetableSlot",
+      ]);
+    }
+
+    // PRD §5: Registrar manages the class timetable even though it's not a
+    // Role — it's a StaffAssignment.assignmentType, so this check is
+    // additive on top of whatever the role branches above already granted,
+    // not exclusive with them (a STAFF user who's also Registrar gets
+    // exactly this one extra permission, nothing else).
+    if (user.assignmentTypes?.includes("REGISTRAR")) {
+      can("manage", "TimetableSlot");
     }
 
     return build();

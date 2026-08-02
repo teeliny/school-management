@@ -10,6 +10,7 @@ export interface CurrentUser {
   firstName: string;
   lastName: string;
   roles: string[];
+  assignmentTypes: string[];
 }
 
 /**

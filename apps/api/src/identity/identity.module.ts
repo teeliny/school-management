@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { SubjectModule } from "../subjects/subject.module";
 import { UserService } from "./users/user.service";
 import { InvitationService } from "./invitations/invitation.service";
 import { InvitationsController } from "./invitations/invitations.controller";
@@ -9,6 +10,7 @@ import { StudentController, StudentService } from "./students/student";
 import { OwnershipTransferController, OwnershipTransferService } from "./ownership-transfer";
 
 @Module({
+  imports: [SubjectModule],
   controllers: [
     InvitationsController,
     AdminProfileController,

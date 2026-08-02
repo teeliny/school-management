@@ -5,6 +5,7 @@ import * as argon2 from "argon2";
 import type Redis from "ioredis";
 import { REDIS_CLIENT } from "../redis/redis.module";
 import { generateRawToken, hashToken } from "../common/crypto/token";
+import { PrismaService } from "../prisma/prisma.service";
 import { UserService } from "../identity/users/user.service";
 
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
@@ -27,6 +28,7 @@ export class AuthService {
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -41,9 +43,29 @@ export class AuthService {
   }
 
   async issueTokens(userId: string, roles: string[]): Promise<AuthTokens> {
-    const accessToken = await this.jwtService.signAsync({ sub: userId, roles });
+    const assignmentTypes = await this.activeAssignmentTypes(userId);
+    const accessToken = await this.jwtService.signAsync({ sub: userId, roles, assignmentTypes });
     const refreshToken = await this.storeNewRefreshToken(userId);
     return { accessToken, refreshToken };
+  }
+
+  /**
+   * PRD §5: some permissions (e.g. Registrar-managed timetable) key off an
+   * active StaffAssignment.assignmentType, not a Role. Embedded in the JWT
+   * alongside `roles` — same staleness profile roles already has, no new
+   * async surface for CASL's AbilityFactory.createForUser (called
+   * synchronously in ~10 places).
+   */
+  async activeAssignmentTypes(userId: string): Promise<string[]> {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    if (!staffProfile) return [];
+
+    const assignments = await this.prisma.staffAssignment.findMany({
+      where: { staffId: staffProfile.id, isActive: true },
+      select: { assignmentType: true },
+      distinct: ["assignmentType"],
+    });
+    return assignments.map((a) => a.assignmentType);
   }
 
   /** Rotates the refresh token: the presented one is invalidated whether or not this call succeeds past that point. */

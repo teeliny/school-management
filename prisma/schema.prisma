@@ -64,6 +64,8 @@ model User {
   parentProfile   ParentProfile?
   studentProfile  StudentProfile?
 
+  approvedTimetableSlots TimetableSlot[]
+
   @@map("users")
 }
 
@@ -141,10 +143,14 @@ model AcademicSession {
   isCurrent Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  terms            Term[]
-  classArms        ClassArm[]
-  staffAssignments StaffAssignment[]
-  studentPositions StudentPosition[]
+  terms                     Term[]
+  classArms                 ClassArm[]
+  staffAssignments          StaffAssignment[]
+  studentPositions          StudentPosition[]
+  studentDepartments        StudentDepartment[]
+  classSubjects             ClassSubject[]
+  studentSubjectEnrollments StudentSubjectEnrollment[]
+  timetableSlots            TimetableSlot[]
 
   @@map("academic_sessions")
 }
@@ -158,6 +164,9 @@ model Term {
   endDate           DateTime        @db.Date
   isCurrent         Boolean         @default(false)
   createdAt         DateTime        @default(now())
+
+  subjectEnrollments StudentSubjectEnrollment[]
+  timetableSlots     TimetableSlot[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -178,7 +187,8 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms ClassArm[]
+  classArms     ClassArm[]
+  classSubjects ClassSubject[]
 
   @@map("class_levels")
 }
@@ -193,9 +203,11 @@ model ClassArm {
   capacity          Int?
   createdAt         DateTime        @default(now())
 
-  students         StudentProfile[]
-  staffAssignments StaffAssignment[]
-  studentPositions StudentPosition[]
+  students           StudentProfile[]
+  staffAssignments   StaffAssignment[]
+  studentPositions   StudentPosition[]
+  subjectEnrollments StudentSubjectEnrollment[]
+  timetableSlots     TimetableSlot[]
 
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
@@ -213,7 +225,28 @@ model Department {
   description String?
   createdAt   DateTime       @default(now())
 
+  studentDepartments StudentDepartment[]
+  subjects           Subject[]
+
   @@map("departments")
+}
+
+// PRD §3.2/§3.3: assigns a student to a department for a session — only
+// valid when the student's current ClassLevel.category = SSS. Gating is a
+// service-layer check (same "not a DB constraint" precedent as the
+// class-teacher-duplicate rule in staff-assignment.ts), not enforced here.
+model StudentDepartment {
+  id                String          @id @default(uuid())
+  studentId         String
+  student           StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  departmentId      String
+  department        Department      @relation(fields: [departmentId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  createdAt         DateTime        @default(now())
+
+  @@unique([studentId, academicSessionId])
+  @@map("student_departments")
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +290,8 @@ model StaffProfile {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  assignments StaffAssignment[]
+  assignments    StaffAssignment[]
+  timetableSlots TimetableSlot[]
 
   @@map("staff_profiles")
 }
@@ -299,8 +333,10 @@ model StudentProfile {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  guardians StudentGuardian[]
-  positions StudentPosition[]
+  guardians          StudentGuardian[]
+  positions          StudentPosition[]
+  departmentHistory  StudentDepartment[]
+  subjectEnrollments StudentSubjectEnrollment[]
 
   @@map("student_profiles")
 }
@@ -353,6 +389,7 @@ model StaffAssignment {
   classArmId        String?
   classArm          ClassArm?       @relation(fields: [classArmId], references: [id])
   subjectId         String?
+  subject           Subject?        @relation(fields: [subjectId], references: [id])
   academicSessionId String
   academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
   startDate         DateTime?       @db.Date
@@ -383,4 +420,167 @@ model StudentPosition {
   createdAt         DateTime        @default(now())
 
   @@map("student_positions")
+}
+
+// ---------------------------------------------------------------------------
+// 3.3 Subject Management (PRD §3.3; BUILD_PLAN.md §5)
+// ---------------------------------------------------------------------------
+
+enum SubjectType {
+  COMPULSORY
+  GENERAL
+  DEPARTMENT
+}
+
+model Subject {
+  id                  String      @id @default(uuid())
+  name                String
+  code                String      @unique
+  type                SubjectType
+  departmentId        String?
+  department          Department? @relation(fields: [departmentId], references: [id])
+  isGroup             Boolean     @default(false)
+  parentSubjectId     String?
+  parentSubject       Subject?    @relation("SubjectGroup", fields: [parentSubjectId], references: [id])
+  childSubjects       Subject[]   @relation("SubjectGroup")
+  // Phase 7 data flag only (PRD §3.3/§3.8) — no scheduling behavior yet.
+  requiresCalculation Boolean     @default(false)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  classSubjects       ClassSubject[]
+  enrollments         StudentSubjectEnrollment[]
+  groupWeightsAsGroup SubjectGroupWeight[]       @relation("GroupWeightGroup")
+  groupWeightAsChild  SubjectGroupWeight[]       @relation("GroupWeightChild")
+  staffAssignments    StaffAssignment[]
+  timetableSlots      TimetableSlot[]
+
+  @@map("subjects")
+}
+
+// Source of truth for "which subjects exist for which class this session"
+// (PRD §3.3). @@unique below is what prevents assigning the same subject to
+// the same class level twice in a session — no service-layer re-check needed.
+model ClassSubject {
+  id                   String          @id @default(uuid())
+  classLevelId         String
+  classLevel           ClassLevel      @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+  subjectId            String
+  subject              Subject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  academicSessionId    String
+  academicSession      AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  // Admin override of Subject.type's default applicability for this class
+  // this session — null means "use Subject.type as-is" (PRD §3.3).
+  isCompulsoryOverride Boolean?
+  createdAt            DateTime        @default(now())
+
+  @@unique([classLevelId, subjectId, academicSessionId])
+  @@map("class_subjects")
+}
+
+// Defines how a grouped subject's independently-scored children aggregate
+// into the parent's reported grade (PRD §3.3 — the "Basic Science and
+// Technology" example). Aggregation logic itself arrives in Phase 4.
+model SubjectGroupWeight {
+  id             String   @id @default(uuid())
+  groupSubjectId String
+  groupSubject   Subject  @relation("GroupWeightGroup", fields: [groupSubjectId], references: [id], onDelete: Cascade)
+  childSubjectId String
+  childSubject   Subject  @relation("GroupWeightChild", fields: [childSubjectId], references: [id], onDelete: Cascade)
+  weight         Decimal  @db.Decimal(5, 2)
+  createdAt      DateTime @default(now())
+
+  @@unique([groupSubjectId, childSubjectId])
+  @@map("subject_group_weights")
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  DROPPED
+}
+
+// Auto-created for COMPULSORY subjects on class assignment; explicit for
+// GENERAL/DEPARTMENT opt-in (PRD §3.3 applicability rules).
+model StudentSubjectEnrollment {
+  id                String           @id @default(uuid())
+  studentId         String
+  student           StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId         String
+  subject           Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classArmId        String
+  classArm          ClassArm         @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  academicSessionId String
+  academicSession   AcademicSession  @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  termId            String
+  term              Term             @relation(fields: [termId], references: [id], onDelete: Cascade)
+  status            EnrollmentStatus @default(ACTIVE)
+  createdAt         DateTime         @default(now())
+
+  @@unique([studentId, subjectId, academicSessionId, termId])
+  @@map("student_subject_enrollments")
+}
+
+// ---------------------------------------------------------------------------
+// 3.8 Timetable — manual-only slice (PRD §3.8; BUILD_PLAN.md §5). AI
+// generation, approval workflow, and ExamSchedule/InvigilationAssignment
+// arrive in Phase 7 — generatedBy/approvalStatus columns exist now so that
+// phase doesn't need a migration to add them later.
+// ---------------------------------------------------------------------------
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
+
+enum TimetableGeneratedBy {
+  MANUAL
+  AI
+}
+
+enum TimetableApprovalStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+// No unique constraint for conflicts — overlap is a range comparison, not an
+// equality match, so it's a service-layer check (PRD §3.8: "regardless of
+// origin"), same precedent as the class-teacher-duplicate rule. The indexes
+// below just make that check's WHERE clauses efficient.
+model TimetableSlot {
+  id                String                  @id @default(uuid())
+  classArmId        String
+  classArm          ClassArm                @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId         String
+  subject           Subject                 @relation(fields: [subjectId], references: [id])
+  staffId           String
+  staff             StaffProfile            @relation(fields: [staffId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession         @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  termId            String
+  term              Term                    @relation(fields: [termId], references: [id], onDelete: Cascade)
+  dayOfWeek         DayOfWeek
+  // "HH:mm" 24-hour strings, not @db.Time/DateTime — pairs directly with
+  // <input type="time">, sidesteps the @db.Date/@IsDateString trap
+  // (CLAUDE.md backend conventions). Compared as minutes-since-midnight in
+  // the conflict-detection service, not lexicographically.
+  startTime         String
+  endTime           String
+  venue             String?
+  generatedBy       TimetableGeneratedBy    @default(MANUAL)
+  approvalStatus    TimetableApprovalStatus @default(APPROVED)
+  approvedByUserId  String?
+  approvedByUser    User?                   @relation(fields: [approvedByUserId], references: [id])
+  approvedAt        DateTime?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  @@index([staffId, dayOfWeek, academicSessionId, termId])
+  @@index([venue, dayOfWeek, academicSessionId, termId])
+  @@index([classArmId, dayOfWeek, academicSessionId, termId])
+  @@map("timetable_slots")
 }

@@ -84,7 +84,7 @@ These five roles are the only personas the application itself models. Deploying 
 3. **Subject Management** — subjects, subject groups, class-subject assignment, department restriction
 4. **Enrollment** — student-class-session enrollment, class assignment history
 5. **Staff Assignment** — staff-role assignments (class teacher, subject teacher, bursar, etc.)
-6. **Assessment & Reporting** — assessment windows, score entry, aggregation, report cards, comments
+6. **Assessment & Reporting** — assessment components, score entry, aggregation, report cards, comments
 7. **Attendance** — daily/per-period attendance for students and staff
 8. **Timetable & Exam Scheduling** — class/subject/teacher schedule, AI-assisted class & exam timetable generation, AI-assisted invigilation assignment, admin approval workflow
 9. **Fees & Billing** — fee structures, invoices, payments, receipts
@@ -222,15 +222,25 @@ Distinct from the base `UserRole = STAFF`, a staff member holds one or more **fu
 
 ### 3.6 Assessment & Reporting
 
-- **`AssessmentWindow`** — id, termId, name (e.g. "1st CA", "2nd CA", "Exam"), type (enum: CA, EXAM, PROJECT — configurable), maxScore, weight (% contribution to term total), openDate, closeDate, status (draft/open/closed). **Created/opened/closed by Admin only** — staff cannot enter scores outside an open window.
-- **`ScoreEntry`** — id, studentId, subjectId (child subject if grouped), assessmentWindowId, classArmId, score, enteredByStaffId, enteredAt, updatedAt. Unique per (studentId, subjectId, assessmentWindowId).
-  - Write permission: only the `SUBJECT_TEACHER` assigned to that subject+classArm for the current session (or Admin, as override).
-- **`SubjectTermResult`** — computed/materialized (via job or view): aggregates all `ScoreEntry` rows for a student+subject+term into a weighted total, grade letter (per `GradeScale`), and position-in-class (optional). For grouped subjects, aggregates child-subject `SubjectTermResult` rows using `SubjectGroupWeight` into the parent subject's result.
-- **`GradeScale`** — id, minScore, maxScore, grade (A1, B2, ... or A-F), remark, gradePoint (nullable, for GPA-style schools).
-- **`ReportComment`** — id, studentId, termId, commentType (enum: `SUBJECT` [per subject, by subject teacher], `CLASS_TEACHER`, `PRINCIPAL`/`HEADTEACHER`), subjectId (nullable, required when SUBJECT), authorStaffId, comment, createdAt/updatedAt. Only the assigned staff for the relevant scope may write (subject teacher for SUBJECT comments, class teacher for CLASS_TEACHER comments, principal/headteacher role for their comment).
-- **`TermReportCard`** — id, studentId, termId, generatedAt, generatedByUserId, pdfUrl (nullable, generated async via job), status (draft/published). Only published report cards are visible to parents/students.
+Scoring structure is **configurable per class level, per term** — different class levels (e.g. Primary vs. SSS) can run different CA splits in the same term. The system does not hardcode a 20/20/60 split; it enforces only that a class level's defined components for a term sum to 100. (Recommended default when Admin sets up a new term: one or two CA components summing to 20, one Mid-Term component of 20, one Exam component of 60 — but Admin can add/resize components freely as long as the total holds.)
 
-**Workflow:** Admin opens an `AssessmentWindow` → subject teachers enter `ScoreEntry` for their assigned subject/class → Admin closes window → aggregation job computes `SubjectTermResult` → class teacher and subject teachers add `ReportComment` → Admin (or automated job once all comments present) triggers `TermReportCard` generation → Admin publishes → parents/students notified.
+- **`AssessmentComponent`** — id, termId, classLevelId, type (enum: `CA`, `MID_TERM`, `EXAM`), name (e.g. "1st CA", "2nd CA", "Mid-Term Test", "Terminal Exam"), sequence (int — distinguishes multiple components of the same type, e.g. CA1 vs CA2), maxScore (decimal), inputOpensAt (timestamptz), inputClosesAt (timestamptz), publishAt (timestamptz — when scores under this component become visible to students/parents, distinct from `inputClosesAt`), status (enum: `DRAFT`, `OPEN`, `CLOSED`, `PUBLISHED`), createdByUserId. Unique per (termId, classLevelId, type, sequence). **Created/edited by Admin only.** Status transitions automatically off the three date fields (a scheduled sweep, mirroring the pattern in ARCHITECTURE.md §9/§10) but Admin can override any transition manually (force-open, force-close, force-publish/unpublish) — same "scheduled by default, Admin override always available" shape as the old `AssessmentWindow`.
+  - **Structure-completeness check**: before any component for a given (termId, classLevelId) can move to `OPEN`, the system validates that the full set of components defined for that pair sums to 100 — catches an incomplete setup (e.g. Exam defined but Mid-Term forgotten) before staff start entering scores against a structure that can't produce a valid total.
+- **`ScoreEntry`** — id, studentId, subjectId (child subject if grouped), assessmentComponentId, classArmId, score, enteredByStaffId, enteredAt, updatedAt. Unique per (studentId, subjectId, assessmentComponentId). Write permission: only the `SUBJECT_TEACHER` assigned to that subject+classArm for the current session, and only while the component's status is `OPEN` (or Admin, as override, any time).
+- **`SubjectTermResult`** — computed/materialized: sums a student's `ScoreEntry` rows across all of that term+class-level's `AssessmentComponent`s for a subject into a total (out of 100, by construction of the structure-completeness rule above), a grade letter (via `GradeScale`), and position-in-class (optional). For grouped subjects, aggregates child-subject `SubjectTermResult` rows using `SubjectGroupWeight` into the parent subject's result.
+- **`GradeScale`** — id, minScore, maxScore, grade (A1, B2, ... or A-F), remark, gradePoint (nullable, for GPA-style schools).
+
+**Psychomotor & Affective/Cognitive Skills** (class-teacher-completed, per student per term — two separate, admin-configurable lists, not graded subjects):
+- **`SkillAssessmentItem`** — id, academicSessionId, category (enum: `PSYCHOMOTOR`, `AFFECTIVE_COGNITIVE`), name (e.g. "Handwriting", "Sports/Games" under Psychomotor; "Punctuality", "Neatness", "Leadership" under Affective/Cognitive), order (int), isActive. Unique per (academicSessionId, category, name). **Admin/Super-Admin configures this list once per academic session.** When Admin first opens the config screen for a session with no items yet, the system defaults it from the most recent prior session's list (copied, not referenced — the new session gets its own editable rows); if there is no prior session with any items (first-ever session), Admin must build the list from scratch before it can be used.
+- **`SkillRating`** — id, studentId, termId, skillAssessmentItemId, rating (enum: `EXCELLENT`, `VERY_GOOD`, `GOOD`, `FAIR`, `POOR`), ratedByStaffId, createdAt/updatedAt. Unique per (studentId, termId, skillAssessmentItemId). Write permission: the `CLASS_TEACHER` of the student's class only (or Admin override), and only while the relevant `ReportWindow` (below) is `OPEN`.
+
+**Report input scheduling:**
+- **`ReportWindow`** — id, termId, classLevelId, inputOpensAt, inputClosesAt, status (enum: `DRAFT`, `OPEN`, `CLOSED`), createdByUserId. Unique per (termId, classLevelId). Governs **both** `SkillRating` entry and the `CLASS_TEACHER` `ReportComment` for that term+class level — both are end-of-term class-teacher tasks and share one schedule. Same auto-transition-with-override behavior as `AssessmentComponent`. `PRINCIPAL`/`HEADTEACHER` comments are **not** window-gated — they're role-scoped only, expected to happen after the class-teacher window closes as a matter of workflow, not enforced by a date.
+- **`ReportComment`** — id, studentId, termId, commentType (enum: `SUBJECT` [per subject, by subject teacher — not window-gated, follows the relevant `AssessmentComponent`'s own status instead], `CLASS_TEACHER` [gated by `ReportWindow`, see above], `PRINCIPAL`/`HEADTEACHER`), subjectId (nullable, required when `SUBJECT`), authorStaffId, comment, createdAt/updatedAt. Only the assigned staff for the relevant scope may write.
+
+**`TermReportCard`** — id, studentId, termId, generatedAt, generatedByUserId, pdfUrl (nullable, generated async via job), status (draft/published). **Publish gate** (extended from the original): before allowing publish, checks — a `SubjectTermResult` exists for every subject the student is actively enrolled in; a `SkillRating` exists for every active `SkillAssessmentItem` in both categories; a `CLASS_TEACHER` comment exists; a `PRINCIPAL`/`HEADTEACHER` comment exists. Strictness configurable, per the original design. Only published report cards are visible to parents/students.
+
+**Workflow:** Admin defines each class level's `AssessmentComponent`s for the term (validated to sum to 100) → components open on schedule (or Admin override) → subject teachers enter `ScoreEntry` while open → components close and later publish on schedule → aggregation job computes `SubjectTermResult` on close → in parallel, the term's `ReportWindow` opens for each class level → class teachers rate `SkillAssessmentItem`s and write their `CLASS_TEACHER` comment while it's open → window closes → subject teachers add `SUBJECT` comments, principal/headteacher adds their comment → Admin (or an automated job once all required pieces are present) triggers `TermReportCard` generation → Admin publishes → parents/students see it (published-only), scoped to what's been published per-component where partial visibility matters.
 
 ### 3.7 Attendance
 
@@ -241,7 +251,7 @@ Distinct from the base `UserRole = STAFF`, a staff member holds one or more **fu
 ### 3.8 Timetable, Exam Scheduling & Invigilation
 
 - **`TimetableSlot`** — id, classArmId, subjectId, staffId, academicSessionId, termId, dayOfWeek (enum), startTime, endTime, venue (nullable), generatedBy (enum: `MANUAL`, `AI`), approvalStatus (enum: `DRAFT`, `PENDING_REVIEW`, `APPROVED`, `REJECTED`), approvedByUserId (nullable), approvedAt (nullable). Admin/Registrar-managed CRUD, or produced by the AI scheduling engine (§6.6) and gated behind approval before it is visible to staff/students/parents. Validated for teacher/venue double-booking conflicts at the service layer regardless of origin.
-- **`ExamSchedule`** — id, assessmentWindowId (FK → `AssessmentWindow`), classArmId, subjectId, date, startTime, endTime, venue, generatedBy, approvalStatus, approvedByUserId, approvedAt. Exam slots are generated per assessment window (e.g. "Term 1 Exam") separately from `TimetableSlot`, since exam sequencing constraints (calculation-subject placement, spread across the exam period) differ from routine class periods.
+- **`ExamSchedule`** — id, assessmentComponentId (FK → `AssessmentComponent` — the `EXAM`-type component for that class level+term), classArmId, subjectId, date, startTime, endTime, venue, generatedBy, approvalStatus, approvedByUserId, approvedAt. Exam slots are generated per assessment component (e.g. the class level's "Terminal Exam" component) separately from `TimetableSlot`, since exam sequencing constraints (calculation-subject placement, spread across the exam period) differ from routine class periods.
 - **`InvigilationAssignment`** — id, examScheduleId FK → `ExamSchedule`, staffId, role (enum: `LEAD`, `ASSISTANT`), generatedBy, approvalStatus, approvedByUserId, approvedAt. Eligible staff pool excludes anyone holding an active `BURSAR`, `PRINCIPAL`, or `VICE_PRINCIPAL` `StaffAssignment` (§6.6).
 - **`SchedulingConstraint`** — id, scope (enum: `CLASS_TIMETABLE`, `EXAM_TIMETABLE`, `INVIGILATION`), key (e.g. `CALCULATION_SUBJECTS_MORNING`, `SPREAD_CALCULATION_SUBJECTS`, `MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS`, `MAX_INVIGILATIONS_PER_STAFF_PER_DAY`, `EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES`), value (jsonb), isActive. Lets Admin tune the AI generator's rules without a code change; seeded with sensible defaults (see §6.6) at initial setup, including `EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES = [BURSAR, PRINCIPAL, VICE_PRINCIPAL]`.
 - **`ScheduleGenerationRequest`** — id, scope (enum: `CLASS_TIMETABLE`, `EXAM_TIMETABLE`, `INVIGILATION`), classArmId (nullable, for class-timetable scope), assessmentWindowId (nullable, for exam/invigilation scope), status (enum: `QUEUED`, `SOLVING`, `COMPLETED`, `FAILED`, `TIMED_OUT`), requestedByUserId, requestedAt, completedAt (nullable), errorMessage (nullable). Tracks an **in-flight** AI generation run — the solver call is asynchronous (§6.6, ARCHITECTURE.md §9), so this row is what exists *before* any `TimetableSlot`/`ExamSchedule`/`InvigilationAssignment` rows are written, and is what a scheduled timeout sweep checks to catch a run that never got a callback.
@@ -263,6 +273,10 @@ Distinct from the base `UserRole = STAFF`, a staff member holds one or more **fu
 - **`EmailLog`** — id, recipientEmail, templateKey, resendMessageId, status (queued/sent/delivered/bounced/failed), error (nullable), sentAt.
 - **`NotificationPreference`** — id, userId, notificationType, inAppEnabled, emailEnabled (per-user opt-out for non-critical notification types; critical ones like report card publication are non-optional).
 
+### 3.11 Academic Calendar
+
+**No new source-of-truth table.** The calendar is a read-aggregation across dates that already live in their owning tables — `Term.startDate/endDate`, `AssessmentComponent.inputOpensAt/inputClosesAt/publishAt`, `ReportWindow.inputOpensAt/inputClosesAt`, and (once Phase 7 exists) `ExamSchedule.date`. Duplicating these into a separate calendar-events table would create a second source of truth that drifts from the real one; instead, a `GET /calendar` endpoint queries across the owning tables for a given date range and returns a unified, computed list of `{ type, title, date, endDate?, meta }` entries. Visibility is not sensitive — these are scheduling dates, not scores — so any authenticated user can read the calendar; what differs per role is which event types are relevant to show by default in the UI (e.g. a parent's calendar view emphasizes publish dates, a subject teacher's emphasizes their own input windows), which is a frontend filtering concern, not a backend authorization one.
+
 ---
 
 ## 4. Entity Relationship Summary (textual)
@@ -281,11 +295,13 @@ Subject *—* ClassLevel (via ClassSubject)
 StudentProfile *—* Subject (via StudentSubjectEnrollment)
 StaffProfile 1—* StaffAssignment
 StaffAssignment *—1 ClassArm (nullable) / *—1 Subject (nullable)
-AssessmentWindow 1—* ScoreEntry
+AssessmentComponent 1—* ScoreEntry
 ScoreEntry *—1 StudentProfile, *—1 Subject
+ReportWindow 1—* SkillRating, 1—* ReportComment (CLASS_TEACHER type)
+SkillAssessmentItem 1—* SkillRating
 StudentProfile 1—* TermReportCard (per term)
 ClassArm 1—* TimetableSlot
-AssessmentWindow 1—* ExamSchedule
+AssessmentComponent 1—* ExamSchedule
 ExamSchedule 1—* InvigilationAssignment
 StudentProfile 1—* Invoice 1—* Payment 1—1 Receipt
 (singleton) PaymentGatewayConfig
@@ -307,7 +323,7 @@ User 1—* Notification
 | View list of all user types | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | View own class students only | ✅ (all) | ✅ (all) | ✅ (own class only) | ✅ (own assigned classes only, for their subject) | ❌ | ❌ | ❌ |
 | View own wards | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ (self only) |
-| Open/close assessment windows | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Open/close assessment components | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Enter scores | ✅ (override) | ✅ (override) | ❌ (unless also subject teacher) | ✅ (own subject/class only) | ❌ | ❌ | ❌ |
 | Enter subject/class comments | ✅ (override) | ✅ (override) | ✅ (class comment, own class) | ✅ (subject comment, own subject/class) | ❌ | ❌ | ❌ |
 | Publish report cards | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -362,13 +378,16 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR3.3: System prevents assigning two active class teachers to the same `ClassArm` in the same session (validation, not hard DB constraint, to allow deliberate co-teaching overrides by Admin).
 
 ### 6.4 Assessment & Reporting
-- FR4.1: Admin creates/opens/closes `AssessmentWindow`s per term; score entry is rejected outside an open window (except Admin override).
-- FR4.2: Subject teacher enters scores only for students in their assigned class+subject; system validates assignment on every write.
+- FR4.1: Admin defines `AssessmentComponent`s per term per class level (type, name, sequence, maxScore, input-open/close, publish date); the full set for a given term+class level must sum to 100 before any component in it can open. Score entry is rejected outside an `OPEN` component (except Admin override).
+- FR4.2: Subject teacher enters scores only for students in their assigned class+subject, only while the relevant component is open; system validates assignment and component status on every write.
 - FR4.3: For grouped subjects, each child subject is scored independently; a background job recomputes the parent subject's aggregate whenever a child score changes.
-- FR4.4: System computes `SubjectTermResult` (weighted CA+Exam total, grade letter via `GradeScale`) automatically when relevant `AssessmentWindow`s close.
-- FR4.5: Class teachers, subject teachers, and Admin/Principal add role-scoped comments; report card generation checks required comments are present before allowing publish (configurable strictness).
-- FR4.6: Report card PDF generation runs as an async job (BullMQ); parent/student sees "generating" state until complete.
-- FR4.7: Published report cards trigger notification (in-app + email) to student and all linked guardians.
+- FR4.4: System computes `SubjectTermResult` (summed total across the term's components for that class level, grade letter via `GradeScale`) automatically when a class level's last open `AssessmentComponent` for the term closes.
+- FR4.5: Admin/Super-Admin configures the `SkillAssessmentItem` list (Psychomotor + Affective/Cognitive categories) once per academic session; the system defaults a new session's list from the most recent prior session's, editable from there; if no prior list exists, Admin must create one before it can be used.
+- FR4.6: Admin defines a `ReportWindow` per term per class level; while open, class teachers rate every active `SkillAssessmentItem` and write their `CLASS_TEACHER` comment for each student in their class.
+- FR4.7: Subject teachers, class teachers, and Admin/Principal add role-scoped `ReportComment`s; report card generation checks all required pieces are present (subject results, skill ratings, class-teacher comment, principal comment) before allowing publish (configurable strictness).
+- FR4.8: Report card PDF generation runs as an async job (BullMQ); parent/student sees "generating" state until complete.
+- FR4.9: Published report cards trigger notification (in-app + email) to student and all linked guardians.
+- FR4.10: All `AssessmentComponent`/`ReportWindow` dates are surfaced on the Academic Calendar (§3.11) as soon as Admin sets them, regardless of current status.
 
 ### 6.5 Attendance
 - FR5.1: Class teacher records daily attendance for her class; subject teachers may record per-period attendance for their subject/class slot.
@@ -378,7 +397,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 ### 6.6 Timetable, Exam Scheduling & Invigilation
 - FR6.1: Admin/Registrar can build timetable slots manually per class arm; system flags teacher/venue double-booking conflicts before save.
 - FR6.2: Admin/Registrar can instead trigger **AI-assisted class timetable generation** for a class arm or the whole school: the engine assigns subjects to day/period slots subject to active `SchedulingConstraint` rules, including — by default — placing `requiresCalculation` subjects in the earliest morning periods and spreading them across the week rather than clustering them on one or two days. Triggering generation creates a `ScheduleGenerationRequest` (status `QUEUED`) and returns immediately — the solve runs **asynchronously** (ARCHITECTURE.md §9), so the requester is not left waiting on a held-open request for however long the solve takes.
-- FR6.3: Super-Admin/Registrar (not Admin — §5) can trigger **AI-assisted exam timetable generation** per `AssessmentWindow`, asynchronously (same pattern as FR6.2): calculation subjects are scheduled first (earliest slots each exam day) and spread across the exam period with a minimum gap (configurable via `SchedulingConstraint`, default 1 day) between two calculation-subject exams for the same class, so students aren't hit with back-to-back demanding papers.
+- FR6.3: Super-Admin/Registrar (not Admin — §5) can trigger **AI-assisted exam timetable generation** per `AssessmentComponent` (the `EXAM`-type component for the relevant class level+term), asynchronously (same pattern as FR6.2): calculation subjects are scheduled first (earliest slots each exam day) and spread across the exam period with a minimum gap (configurable via `SchedulingConstraint`, default 1 day) between two calculation-subject exams for the same class, so students aren't hit with back-to-back demanding papers.
 - FR6.4: Super-Admin/Registrar (not Admin) can trigger **AI-assisted invigilation assignment** per `ExamSchedule`, asynchronously: the engine assigns LEAD/ASSISTANT invigilators from the pool of active staff, **excluding any staff member currently holding a `BURSAR`, `PRINCIPAL`, or `VICE_PRINCIPAL` `StaffAssignment`** (per the seeded `EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES` constraint), balancing load across the remaining eligible staff, preventing double-booking (no staff member invigilates two concurrent exams), and, where feasible, avoiding assigning a teacher to invigilate their own subject.
 - FR6.5: All AI-generated schedules are created in `PENDING_REVIEW` status and are **not visible to staff, students, or parents** until reviewed and set to `approvalStatus = APPROVED` (in bulk or per-slot). Class timetables can be approved by Admin or Super-Admin. **Exam timetables and invigilation rosters can only be approved by Admin** — even though Registrar's exam-scheduling work reports to Super-Admin (§5), final publish approval is treated as a day-to-day operational sign-off rather than an ownership matter, so Super-Admin does not approve these. Rejected or edited slots can be regenerated individually without discarding the rest of the schedule.
 - FR6.6: The system records which `SchedulingConstraint` rules and inputs were applied to a given generation run, for explainability and audit (see `AuditLog`, §7).
@@ -437,7 +456,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 | Phase 1 — Foundation | Application schema and migrations, standard single-connection Prisma client, invitation-based auth core (`Invitation` model, accept-invite flow, JWT), one-time deployment setup step (seeds defaults, creates the first `SUPER_ADMIN` invitation), Session/Term/Class/Department CRUD, Super-Admin (Proprietor) & Admin dashboard shell |
 | Phase 2 — People | Admin invitation flow (by Super-Admin), Staff/Parent invitation flows (invite, accept, resend, revoke), Student record creation with inline parent invite, StaffAssignment, StudentGuardian enforcement, ownership transfer, role-scoped list views |
 | Phase 3 — Academics | Subject management (incl. groups, department rules, calculation flag), enrollment, manual class timetable |
-| Phase 4 — Assessment | Assessment windows, score entry, aggregation, comments, report card generation/publishing |
+| Phase 4 — Assessment | Per-class-level assessment component structure (CA/Mid-Term/Exam, admin-configurable, schedule-gated with separate publish dates), score entry, aggregation, psychomotor/affective-cognitive skill ratings (session-configurable lists), scheduled class-teacher report input, subject/class-teacher/principal comments, report card generation/publishing, Academic Calendar |
 | Phase 5 — Operations | Attendance, fees/billing, receipts, Monnify integration (`PaymentGatewayConfig`, hosted checkout, webhook reconciliation + polling fallback) |
 | Phase 6 — Notifications & Polish | WebSocket in-app notifications, Resend email integration for all events, notification preferences, audit log, performance hardening |
 | Phase 7 — AI Scheduling | AI-assisted class & exam timetable generation (constraint-based: calculation-subject morning placement, spread rules), AI-assisted invigilation assignment (excluding Bursar/Principal/VP), `SchedulingConstraint` admin configuration UI, review & approval workflow for all AI-generated schedules (class timetables: Admin/Super-Admin; exam timetables & invigilation: Admin only) |

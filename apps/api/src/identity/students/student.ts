@@ -19,6 +19,7 @@ import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { UserService } from "../users/user.service";
 import { InvitationService } from "../invitations/invitation.service";
+import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
 import { CreateStudentDto, GuardianInputDto } from "./dto/create-student.dto";
 import { UpdateStudentDto } from "./dto/update-student.dto";
 
@@ -32,6 +33,7 @@ export class StudentService {
     private readonly prisma: PrismaService,
     private readonly userService: UserService,
     private readonly invitationService: InvitationService,
+    private readonly enrollmentService: StudentSubjectEnrollmentService,
   ) {}
 
   /**
@@ -91,6 +93,16 @@ export class StudentService {
             isPrimaryContact: guardian.isPrimaryContact ?? false,
             isEmergencyContact: guardian.isEmergencyContact ?? false,
           },
+        });
+      }
+
+      // PRD §3.3: COMPULSORY subjects auto-enroll on class assignment —
+      // same transaction, so a student is never left without their required
+      // subjects if anything downstream fails.
+      if (dto.classArmId) {
+        await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
+          studentId: studentProfile.id,
+          classArmId: dto.classArmId,
         });
       }
 
@@ -156,8 +168,22 @@ export class StudentService {
     return parentProfile.id;
   }
 
+  // PRD §3.3: reassigning a class arm re-syncs compulsory enrollment for the
+  // new class, same transaction. Known limitation, not silently fixed: this
+  // does not drop enrollments tied to the student's *previous* class arm.
   update(id: string, dto: UpdateStudentDto) {
-    return this.prisma.studentProfile.update({ where: { id }, data: dto });
+    if (!dto.classArmId) {
+      return this.prisma.studentProfile.update({ where: { id }, data: dto });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.studentProfile.update({ where: { id }, data: dto });
+      await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
+        studentId: id,
+        classArmId: dto.classArmId!,
+      });
+      return updated;
+    });
   }
 
   /**

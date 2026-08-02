@@ -47,6 +47,7 @@ export class AuthController {
       firstName: user.firstName,
       lastName: user.lastName,
       roles: user.roles.filter((r) => r.isActive).map((r) => r.role),
+      assignmentTypes: await this.authService.activeAssignmentTypes(user.id),
     };
   }
 }

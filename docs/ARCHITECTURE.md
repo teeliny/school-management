@@ -134,7 +134,8 @@ Each module below corresponds to a section of PRD §3. Arrows are compile-time d
 | `AcademicStructureModule` | `SchoolProfile`, `AcademicSession`, `Term`, `ClassLevel`, `ClassArm`, `Department`, `StudentDepartment` | `IdentityModule` |
 | `SubjectModule` | `Subject`, `ClassSubject`, `SubjectGroupWeight`, `StudentSubjectEnrollment` | `AcademicStructureModule` |
 | `StaffModule` | `StaffAssignment`, `StudentPosition` | `IdentityModule`, `AcademicStructureModule` |
-| `AssessmentModule` | `AssessmentWindow`, `ScoreEntry`, `SubjectTermResult`, `GradeScale`, `ReportComment`, `TermReportCard` | `SubjectModule`, `StaffModule` |
+| `AssessmentModule` | `AssessmentComponent`, `ScoreEntry`, `SubjectTermResult`, `GradeScale`, `SkillAssessmentItem`, `SkillRating`, `ReportWindow`, `ReportComment`, `TermReportCard` | `SubjectModule`, `StaffModule` |
+| `CalendarModule` | (no new tables — read-aggregation, PRD §3.11) | `AcademicStructureModule`, `AssessmentModule`, later `ExamSchedulingModule` |
 | `AttendanceModule` | `AttendanceSession`, `AttendanceRecord` | `StaffModule` |
 | `TimetableModule` | `TimetableSlot` | `SubjectModule`, `StaffModule` |
 | `ExamSchedulingModule` | `ExamSchedule`, `InvigilationAssignment`, `SchedulingConstraint`, `ScheduleGenerationRequest` | `AssessmentModule`, `StaffModule`, calls out to `scheduling-engine` (§9) |
@@ -204,7 +205,7 @@ flowchart TB
 ## 8. Real-Time & Background Jobs
 
 - **WebSocket Gateway** uses the Socket.IO Redis adapter so a notification emitted from any API or worker process instance reaches a client connected to *any* other instance — relevant as soon as this school's deployment runs more than one API process behind a load balancer. Rooms are scoped `user:{userId}` — no tenant prefix needed.
-- **BullMQ queues**, each with its own concurrency/retry policy: `email` (Resend sends, exponential backoff, max 3 attempts), `report-card-generation` (PDF rendering, CPU-heavier, lower concurrency), `payment-reconciliation` (§10), `scheduling-solve-dispatch` (hands a solve request to the scheduling-engine, §9), `scheduling-timeout-sweep` (catches a `ScheduleGenerationRequest` that never got a callback, §9). The scheduling callback itself (`POST /internal/scheduling-callback/:requestId`) is handled directly by a controller, not queued — it's a single quick write, not a job. All queued work runs in the `worker` process (§3), not the API process, so a burst of report-card generation never delays a login request.
+- **BullMQ queues**, each with its own concurrency/retry policy: `email` (Resend sends, exponential backoff, max 3 attempts), `report-card-generation` (PDF rendering, CPU-heavier, lower concurrency), `assessment-schedule-sweep` (transitions `AssessmentComponent`/`ReportWindow` status off their date fields, PRD §3.6 — same generic scheduled-sweep shape as `payment-reconciliation`/`scheduling-timeout-sweep` below, reused rather than redesigned per BUILD_PLAN §1's "plumbing before logic, where a pattern repeats" principle), `payment-reconciliation` (§10), `scheduling-solve-dispatch` (hands a solve request to the scheduling-engine, §9), `scheduling-timeout-sweep` (catches a `ScheduleGenerationRequest` that never got a callback, §9). The scheduling callback itself (`POST /internal/scheduling-callback/:requestId`) is handled directly by a controller, not queued — it's a single quick write, not a job. All queued work runs in the `worker` process (§3), not the API process, so a burst of report-card generation never delays a login request.
 
 ---
 
