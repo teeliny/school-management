@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { BullModule } from "@nestjs/bullmq";
 import { CommonModule } from "./common/common.module";
 import { HealthModule } from "./health/health.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -12,6 +13,8 @@ import { AcademicStructureModule } from "./academic-structure/academic-structure
 import { StaffAssignmentsModule } from "./staff-assignments/staff-assignments.module";
 import { SubjectModule } from "./subjects/subject.module";
 import { TimetableModule } from "./timetable/timetable.module";
+import { AssessmentsModule } from "./assessments/assessments.module";
+import { CalendarModule } from "./calendar/calendar.module";
 
 @Module({
   imports: [
@@ -22,6 +25,16 @@ import { TimetableModule } from "./timetable/timetable.module";
     CommonModule,
     PrismaModule,
     RedisModule,
+    // First producer-side BullMQ usage in apps/api (Phase 4 M4 — Admin-
+    // triggered FULL_TERM report generation). Connection config duplicated
+    // from apps/worker's own BullModule.forRootAsync, same REDIS_URL env var
+    // — same duplication-not-sharing precedent as parseCorsOrigins().
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: { url: config.getOrThrow<string>("REDIS_URL") },
+      }),
+    }),
     MailerModule,
     CaslModule,
     IdentityModule,
@@ -30,6 +43,8 @@ import { TimetableModule } from "./timetable/timetable.module";
     StaffAssignmentsModule,
     SubjectModule,
     TimetableModule,
+    AssessmentsModule,
+    CalendarModule,
     HealthModule,
   ],
 })

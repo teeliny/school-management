@@ -1,17 +1,31 @@
 import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
+import { ConfigModule, ConfigService } from "@nestjs/config";
+import { BullModule } from "@nestjs/bullmq";
 import { HealthModule } from "./health/health.module";
+import { PrismaModule } from "./prisma/prisma.module";
+import { StorageModule } from "./storage/storage.module";
+import { AssessmentSweepModule } from "./assessment-sweep/assessment-sweep.module";
+import { ReportCardModule } from "./report-card/report-card.module";
 
-// NOTE: this is the worker's own module tree for now. Once real BullMQ
-// consumer modules exist (Phase 1+ — email, report-card-generation, etc.,
-// docs/ARCHITECTURE.md §8), they should live in a shared internal lib imported by
-// both apps/api and apps/worker (docs/ARCHITECTURE.md §4), not duplicated here.
+// First real BullMQ consumer module (Phase 4, docs/ARCHITECTURE.md §8) — the
+// connection config is duplicated from apps/api/src/redis/redis.module.ts's
+// REDIS_URL env var rather than shared, same precedent as parseCorsOrigins().
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ["../../.env", ".env"],
     }),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: { url: config.getOrThrow<string>("REDIS_URL") },
+      }),
+    }),
+    PrismaModule,
+    StorageModule,
+    AssessmentSweepModule,
+    ReportCardModule,
     HealthModule,
   ],
 })

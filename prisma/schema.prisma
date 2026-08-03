@@ -64,7 +64,10 @@ model User {
   parentProfile   ParentProfile?
   studentProfile  StudentProfile?
 
-  approvedTimetableSlots TimetableSlot[]
+  approvedTimetableSlots      TimetableSlot[]
+  createdAssessmentComponents AssessmentComponent[]
+  generatedReportCards        TermReportCard[]
+  createdReportWindows        ReportWindow[]
 
   @@map("users")
 }
@@ -151,6 +154,7 @@ model AcademicSession {
   classSubjects             ClassSubject[]
   studentSubjectEnrollments StudentSubjectEnrollment[]
   timetableSlots            TimetableSlot[]
+  skillAssessmentItems      SkillAssessmentItem[]
 
   @@map("academic_sessions")
 }
@@ -165,8 +169,14 @@ model Term {
   isCurrent         Boolean         @default(false)
   createdAt         DateTime        @default(now())
 
-  subjectEnrollments StudentSubjectEnrollment[]
-  timetableSlots     TimetableSlot[]
+  subjectEnrollments   StudentSubjectEnrollment[]
+  timetableSlots       TimetableSlot[]
+  assessmentComponents AssessmentComponent[]
+  subjectTermResults   SubjectTermResult[]
+  termReportCards      TermReportCard[]
+  skillRatings         SkillRating[]
+  reportWindows        ReportWindow[]
+  reportComments       ReportComment[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -187,8 +197,10 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms     ClassArm[]
-  classSubjects ClassSubject[]
+  classArms            ClassArm[]
+  classSubjects        ClassSubject[]
+  assessmentComponents AssessmentComponent[]
+  reportWindows        ReportWindow[]
 
   @@map("class_levels")
 }
@@ -208,6 +220,8 @@ model ClassArm {
   studentPositions   StudentPosition[]
   subjectEnrollments StudentSubjectEnrollment[]
   timetableSlots     TimetableSlot[]
+  scoreEntries       ScoreEntry[]
+  subjectTermResults SubjectTermResult[]
 
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
@@ -290,8 +304,11 @@ model StaffProfile {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  assignments    StaffAssignment[]
-  timetableSlots TimetableSlot[]
+  assignments         StaffAssignment[]
+  timetableSlots      TimetableSlot[]
+  scoreEntriesEntered ScoreEntry[]
+  skillRatingsGiven   SkillRating[]
+  reportCommentsGiven ReportComment[]
 
   @@map("staff_profiles")
 }
@@ -337,6 +354,11 @@ model StudentProfile {
   positions          StudentPosition[]
   departmentHistory  StudentDepartment[]
   subjectEnrollments StudentSubjectEnrollment[]
+  scoreEntries       ScoreEntry[]
+  subjectTermResults SubjectTermResult[]
+  skillRatings       SkillRating[]
+  reportComments     ReportComment[]
+  termReportCards    TermReportCard[]
 
   @@map("student_profiles")
 }
@@ -454,6 +476,9 @@ model Subject {
   groupWeightAsChild  SubjectGroupWeight[]       @relation("GroupWeightChild")
   staffAssignments    StaffAssignment[]
   timetableSlots      TimetableSlot[]
+  scoreEntries        ScoreEntry[]
+  subjectTermResults  SubjectTermResult[]
+  reportComments      ReportComment[]
 
   @@map("subjects")
 }
@@ -583,4 +608,306 @@ model TimetableSlot {
   @@index([venue, dayOfWeek, academicSessionId, termId])
   @@index([classArmId, dayOfWeek, academicSessionId, termId])
   @@map("timetable_slots")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6 Assessment & Reporting — components + scoring slice (PRD §3.6;
+// BUILD_PLAN.md §6). Status transitions off the three date fields via a
+// scheduled BullMQ sweep (apps/worker), with Admin override always available
+// — same "scheduled by default, override always on top" shape as the old
+// AssessmentWindow design. Structure-completeness (this term+class level's
+// components sum to 100) is validated before any component can open — a
+// service-layer check (assertStructureComplete), since Prisma can't express
+// "these sibling rows must sum to X" as a constraint.
+// ---------------------------------------------------------------------------
+
+enum AssessmentComponentType {
+  CA
+  MID_TERM
+  EXAM
+}
+
+enum AssessmentComponentStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  PUBLISHED
+}
+
+model AssessmentComponent {
+  id              String                    @id @default(uuid())
+  termId          String
+  term            Term                      @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelId    String
+  classLevel      ClassLevel                @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+  type            AssessmentComponentType
+  name            String
+  sequence        Int
+  maxScore        Decimal                   @db.Decimal(5, 2)
+  inputOpensAt    DateTime
+  inputClosesAt   DateTime
+  publishAt       DateTime
+  status          AssessmentComponentStatus @default(DRAFT)
+  createdByUserId String
+  createdByUser   User                      @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  scoreEntries ScoreEntry[]
+
+  @@unique([termId, classLevelId, type, sequence])
+  @@map("assessment_components")
+}
+
+// Write permission (PRD §3.6/FR4.2): only the SUBJECT_TEACHER whose active
+// StaffAssignment matches (subjectId, classArmId), and only while the parent
+// AssessmentComponent.status = OPEN — or Admin/Super-Admin, any time, as
+// override. A manual service-layer check (StaffAssignmentService.
+// findActiveAssignment), not a CASL condition — see ability.factory.ts's
+// comment on why request-body-dependent checks aren't CASL-expressible here.
+model ScoreEntry {
+  id                    String              @id @default(uuid())
+  studentId             String
+  student               StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId             String
+  subject               Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  assessmentComponentId String
+  assessmentComponent   AssessmentComponent @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
+  classArmId            String
+  classArm              ClassArm            @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  score                 Decimal             @db.Decimal(5, 2)
+  // Nullable: an Admin/Super-Admin override may not hold a StaffProfile at
+  // all (PRD §5 — Admin isn't necessarily also Staff), so there's no
+  // StaffAssignment identity to record for that write.
+  enteredByStaffId      String?
+  enteredByStaff        StaffProfile?       @relation(fields: [enteredByStaffId], references: [id])
+  enteredAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@unique([studentId, subjectId, assessmentComponentId])
+  @@map("score_entries")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6 Assessment & Reporting — aggregation, grading, and report cards
+// (PRD §3.6; BUILD_PLAN.md §6). Computed/materialized once a term+class
+// level's components are all CLOSED/PUBLISHED (FR4.4) — triggered from the
+// worker's assessment-schedule-sweep, not a user-facing write path.
+// ---------------------------------------------------------------------------
+
+model GradeScale {
+  id         String   @id @default(uuid())
+  minScore   Decimal  @db.Decimal(5, 2)
+  maxScore   Decimal  @db.Decimal(5, 2)
+  grade      String
+  remark     String?
+  gradePoint Decimal? @db.Decimal(3, 2)
+  createdAt  DateTime @default(now())
+
+  @@map("grade_scales")
+}
+
+// Full-term only (FR4.4) — a mid-term's partial total isn't meaningful
+// against a scale built for "out of 100", so the mid-term report computes
+// its own interim snapshot at generation time instead (TermReportCard.
+// scoresSnapshot) rather than writing a row here.
+model SubjectTermResult {
+  id         String         @id @default(uuid())
+  studentId  String
+  student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId  String
+  subject    Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classArmId String
+  classArm   ClassArm       @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  termId     String
+  term       Term           @relation(fields: [termId], references: [id], onDelete: Cascade)
+  totalScore Decimal        @db.Decimal(5, 2)
+  grade      String?
+  // The matched GradeScale row's own remark — never entered separately.
+  remark     String?
+  position   Int?
+  computedAt DateTime       @default(now())
+
+  @@unique([studentId, subjectId, termId])
+  @@map("subject_term_results")
+}
+
+enum TermReportCardType {
+  MID_TERM
+  FULL_TERM
+}
+
+enum TermReportCardStatus {
+  GENERATING
+  READY
+  PUBLISHED
+  FAILED
+}
+
+// A mid-term report (scores-only, no comments/skills gate, generated as soon
+// as the relevant components close) and the end-of-term report (full publish
+// gate, added in Phase 4 M4) are the same shape, distinguished by
+// reportType — see the design note in BUILD_PLAN.md's Phase 4 plan for why
+// this isn't two separate models. `scoresSnapshot` captures what a MID_TERM
+// report showed at generation time (raw per-component scores + subtotal, no
+// GradeScale letter) for auditability, since ScoreEntry rows could
+// theoretically change later.
+model TermReportCard {
+  id                String               @id @default(uuid())
+  studentId         String
+  student           StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId            String
+  term              Term                 @relation(fields: [termId], references: [id], onDelete: Cascade)
+  reportType        TermReportCardType
+  status            TermReportCardStatus @default(GENERATING)
+  pdfUrl            String?
+  scoresSnapshot    Json?
+  // Report-level summary (added post-Phase-4, PRD §3.6). overallScore is an
+  // average out of 100 for FULL_TERM, a normalized percentage for MID_TERM
+  // (the PDF labels it "Average" vs "Percentage" accordingly — same field,
+  // same GradeScale lookup, different meaning of the number going in).
+  // overallRemark is FULL_TERM-only; MID_TERM never sets it.
+  overallScore      Decimal?             @db.Decimal(5, 2)
+  overallGrade      String?
+  overallRemark     String?
+  generatedAt       DateTime?
+  generatedByUserId String?
+  generatedByUser   User?                @relation(fields: [generatedByUserId], references: [id])
+  publishedAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([studentId, termId, reportType])
+  @@map("term_report_cards")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6 Assessment & Reporting — skills, report windows, comments
+// (PRD §3.6; BUILD_PLAN.md §6 M3). Psychomotor/Affective-Cognitive skills
+// and class/subject/principal comments, gated by ReportWindow the same
+// scheduled-sweep-with-override shape as AssessmentComponent.
+// ---------------------------------------------------------------------------
+
+enum SkillCategory {
+  PSYCHOMOTOR
+  AFFECTIVE_COGNITIVE
+}
+
+// Admin/Super-Admin configures this list once per academic session; on
+// first access for a session with none yet, the service copies (not
+// references) the most recent prior session's list — see
+// SkillAssessmentItemService.findAllForSession.
+model SkillAssessmentItem {
+  id                String          @id @default(uuid())
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  category          SkillCategory
+  name              String
+  order             Int
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  ratings SkillRating[]
+
+  @@unique([academicSessionId, category, name])
+  @@map("skill_assessment_items")
+}
+
+enum SkillRatingValue {
+  EXCELLENT
+  VERY_GOOD
+  GOOD
+  FAIR
+  POOR
+}
+
+// Write permission: the CLASS_TEACHER of the student's class only (or Admin
+// override), and only while the relevant ReportWindow is OPEN.
+// ratedByStaffId is nullable for the same reason ScoreEntry.enteredByStaffId
+// is — an Admin override author may hold no StaffProfile at all.
+model SkillRating {
+  id                    String              @id @default(uuid())
+  studentId             String
+  student               StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId                String
+  term                  Term                @relation(fields: [termId], references: [id], onDelete: Cascade)
+  skillAssessmentItemId String
+  skillAssessmentItem   SkillAssessmentItem @relation(fields: [skillAssessmentItemId], references: [id], onDelete: Cascade)
+  rating                SkillRatingValue
+  ratedByStaffId        String?
+  ratedByStaff          StaffProfile?       @relation(fields: [ratedByStaffId], references: [id])
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@unique([studentId, termId, skillAssessmentItemId])
+  @@map("skill_ratings")
+}
+
+enum ReportWindowStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+// Governs both SkillRating entry and the CLASS_TEACHER ReportComment for a
+// term+class level — both are end-of-term class-teacher tasks sharing one
+// schedule. Same auto-transition-with-override shape as AssessmentComponent
+// (see the worker's assessment-sweep, extended to also sweep this table).
+model ReportWindow {
+  id              String             @id @default(uuid())
+  termId          String
+  term            Term               @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelId    String
+  classLevel      ClassLevel         @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+  inputOpensAt    DateTime
+  inputClosesAt   DateTime
+  status          ReportWindowStatus @default(DRAFT)
+  createdByUserId String
+  createdByUser   User               @relation(fields: [createdByUserId], references: [id])
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([termId, classLevelId])
+  @@map("report_windows")
+}
+
+enum ReportCommentType {
+  SUBJECT
+  CLASS_TEACHER
+  // Covers both the PRINCIPAL and HEADTEACHER StaffAssignment types —
+  // PRD §3.6 lists this as one comment type ("PRINCIPAL/HEADTEACHER"),
+  // authored by whoever holds either assignment, not two separate types.
+  PRINCIPAL
+}
+
+// Only the assigned staff for the relevant scope may write (PRD §3.6):
+// SUBJECT — the subject teacher, gated on that (term, classLevel)'s
+// AssessmentComponents all being CLOSED/PUBLISHED (not window-gated);
+// CLASS_TEACHER — the class teacher, gated on this ReportWindow being OPEN;
+// PRINCIPAL — role-scoped only, no date gate. subjectId is required (and
+// only valid) when commentType = SUBJECT. authorStaffId is nullable for the
+// same Admin-override-with-no-StaffProfile reason as ScoreEntry/SkillRating.
+//
+// A plain @@unique can't stop duplicate CLASS_TEACHER/PRINCIPAL rows since
+// Postgres treats NULL subjectId as distinct on every insert — the
+// generated migration hand-adds a partial unique index (WHERE "subjectId"
+// IS NULL) for those two types, same precedent as the SUPER_ADMIN/
+// AcademicSession.isCurrent singleton indexes.
+model ReportComment {
+  id            String            @id @default(uuid())
+  studentId     String
+  student       StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId        String
+  term          Term              @relation(fields: [termId], references: [id], onDelete: Cascade)
+  commentType   ReportCommentType
+  subjectId     String?
+  subject       Subject?          @relation(fields: [subjectId], references: [id])
+  authorStaffId String?
+  authorStaff   StaffProfile?     @relation(fields: [authorStaffId], references: [id])
+  comment       String
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([studentId, termId, commentType, subjectId])
+  @@map("report_comments")
 }

@@ -188,12 +188,15 @@ export class StudentService {
 
   /**
    * PRD §5 row-level list scoping: SUPER_ADMIN/ADMIN see every student;
-   * STAFF see students in class arms they hold an active CLASS_TEACHER or
-   * SUBJECT_TEACHER assignment for (subject-level narrowing arrives in
-   * Phase 3 once StudentSubjectEnrollment exists); PARENT see their own
-   * wards; STUDENT sees only themself. This is plain Prisma `where`
-   * composition, not a CASL instance check, per PRD §5's own note that
-   * scoped rules need row-level checks against StaffAssignment/
+   * STAFF holding an active PRINCIPAL/HEADTEACHER assignment (school-wide
+   * roles, not tied to a classArmId) see every student too, matching their
+   * real-world remit (e.g. writing PRINCIPAL report-card comments for any
+   * student); other STAFF see students in class arms they hold an active
+   * CLASS_TEACHER or SUBJECT_TEACHER assignment for (subject-level narrowing
+   * arrives in Phase 3 once StudentSubjectEnrollment exists); PARENT see
+   * their own wards; STUDENT sees only themself. This is plain Prisma
+   * `where` composition, not a CASL instance check, per PRD §5's own note
+   * that scoped rules need row-level checks against StaffAssignment/
    * StudentGuardian, evaluated per-request.
    */
   async findAllForUser(user: RequestUser) {
@@ -205,6 +208,12 @@ export class StudentService {
     }
 
     if (user.roles.includes("STAFF")) {
+      if (await this.hasActiveSchoolWideAssignment(user.id)) {
+        return this.prisma.studentProfile.findMany({
+          include: STUDENT_LIST_INCLUDE,
+          orderBy: { admissionNumber: "asc" },
+        });
+      }
       const classArmIds = await this.activeAssignedClassArmIds(user.id);
       if (classArmIds.length === 0) return [];
       return this.prisma.studentProfile.findMany({
@@ -250,9 +259,12 @@ export class StudentService {
       }
     }
 
-    if (user.roles.includes("STAFF") && student.currentClassId) {
-      const classArmIds = await this.activeAssignedClassArmIds(user.id);
-      if (classArmIds.includes(student.currentClassId)) return student;
+    if (user.roles.includes("STAFF")) {
+      if (await this.hasActiveSchoolWideAssignment(user.id)) return student;
+      if (student.currentClassId) {
+        const classArmIds = await this.activeAssignedClassArmIds(user.id);
+        if (classArmIds.includes(student.currentClassId)) return student;
+      }
     }
 
     throw new ForbiddenException("Insufficient permissions to view this student");
@@ -272,6 +284,20 @@ export class StudentService {
     });
 
     return [...new Set(assignments.map((a) => a.classArmId).filter((id): id is string => id !== null))];
+  }
+
+  private async hasActiveSchoolWideAssignment(userId: string): Promise<boolean> {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    if (!staffProfile) return false;
+
+    const count = await this.prisma.staffAssignment.count({
+      where: {
+        staffId: staffProfile.id,
+        isActive: true,
+        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER] },
+      },
+    });
+    return count > 0;
   }
 }
 

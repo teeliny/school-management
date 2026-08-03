@@ -27,7 +27,14 @@ export type Subject =
   | "SubjectGroupWeight"
   | "StudentSubjectEnrollment"
   | "StudentDepartment"
-  | "TimetableSlot";
+  | "TimetableSlot"
+  | "AssessmentComponent"
+  | "ScoreEntry"
+  | "TermReportCard"
+  | "SkillAssessmentItem"
+  | "ReportWindow"
+  | "SkillRating"
+  | "ReportComment";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string }]
 >;
@@ -63,6 +70,19 @@ export class AbilityFactory {
         "StudentDepartment",
         "TimetableSlot",
       ]);
+
+      // PRD §3.6/§5: Admin defines the assessment structure and can open/
+      // close/publish components manually; Admin/Super-Admin can also enter
+      // or correct a score outside the normal SUBJECT_TEACHER+OPEN path
+      // (override), which the manual check in ScoreEntryService falls back
+      // to when this flat capability is present.
+      can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
+
+      // PRD §3.6/§5: Admin/Super-Admin configures the skills list and report
+      // windows, and can rate skills / write any comment as override outside
+      // the normal CLASS_TEACHER/SUBJECT_TEACHER/PRINCIPAL paths — same
+      // override-detection shape as ScoreEntry above.
+      can("manage", ["SkillAssessmentItem", "ReportWindow", "SkillRating", "ReportComment"]);
     }
 
     // PRD §5: Registrar manages the class timetable even though it's not a

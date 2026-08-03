@@ -116,6 +116,57 @@ export class StaffAssignmentService {
   findOne(id: string) {
     return this.prisma.staffAssignment.findUniqueOrThrow({ where: { id } });
   }
+
+  /**
+   * The reusable "is this user actively assigned to do X" lookup that
+   * Phase 4's row-level checks (score entry, skill rating, class-teacher
+   * comment) all need — resolves the user's StaffProfile, then their active
+   * assignment matching the given type/subject/classArm. Returns null (not
+   * throw) when there's no match, so callers can pass that straight into
+   * their own ForbiddenException with a scenario-specific message.
+   */
+  async findActiveAssignment(filters: {
+    userId: string;
+    assignmentType: AssignmentType;
+    subjectId?: string;
+    classArmId?: string;
+  }) {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: filters.userId } });
+    if (!staffProfile) return null;
+
+    return this.prisma.staffAssignment.findFirst({
+      where: {
+        staffId: staffProfile.id,
+        assignmentType: filters.assignmentType,
+        subjectId: filters.subjectId,
+        classArmId: filters.classArmId,
+        isActive: true,
+      },
+    });
+  }
+
+  /**
+   * All class arms this user actively holds a CLASS_TEACHER or
+   * SUBJECT_TEACHER assignment for — the same lookup StudentService.
+   * findAllForUser (identity/students/student.ts) inlines for its own STAFF
+   * branch, extracted here as a second consumer needs it (TermReportCard
+   * staff visibility, PRD §5) without a third copy-paste.
+   */
+  async activeAssignedClassArmIds(userId: string): Promise<string[]> {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    if (!staffProfile) return [];
+
+    const assignments = await this.prisma.staffAssignment.findMany({
+      where: {
+        staffId: staffProfile.id,
+        isActive: true,
+        assignmentType: { in: [AssignmentType.CLASS_TEACHER, AssignmentType.SUBJECT_TEACHER] },
+        classArmId: { not: null },
+      },
+    });
+
+    return [...new Set(assignments.map((a) => a.classArmId).filter((id): id is string => id !== null))];
+  }
 }
 
 @Controller("staff-assignments")

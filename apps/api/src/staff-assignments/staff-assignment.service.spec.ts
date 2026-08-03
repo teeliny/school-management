@@ -10,7 +10,7 @@ function buildPrismaMock() {
       findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
     },
-    staffProfile: { update: jest.fn() },
+    staffProfile: { update: jest.fn(), findUnique: jest.fn() },
   };
 }
 
@@ -82,5 +82,66 @@ describe("StaffAssignmentService.create — class-teacher duplicate rule (PRD FR
     await expect(
       service.create(buildDto({ classArmId: undefined })),
     ).rejects.toThrow(/classArmId is required/);
+  });
+});
+
+describe("StaffAssignmentService.findActiveAssignment (Phase 4 row-level auth helper)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let service: StaffAssignmentService;
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    service = new StaffAssignmentService(prisma as never);
+  });
+
+  it("returns null without querying assignments when the user has no StaffProfile", async () => {
+    prisma.staffProfile.findUnique.mockResolvedValue(null);
+
+    const result = await service.findActiveAssignment({
+      userId: "user-1",
+      assignmentType: AssignmentType.SUBJECT_TEACHER,
+      subjectId: "subj-1",
+      classArmId: "arm-1",
+    });
+
+    expect(result).toBeNull();
+    expect(prisma.staffAssignment.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("looks up the active assignment scoped to the resolved staffId + given filters", async () => {
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    prisma.staffAssignment.findFirst.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+
+    const result = await service.findActiveAssignment({
+      userId: "user-1",
+      assignmentType: AssignmentType.SUBJECT_TEACHER,
+      subjectId: "subj-1",
+      classArmId: "arm-1",
+    });
+
+    expect(result).toEqual({ id: "assignment-1", staffId: "staff-1" });
+    expect(prisma.staffAssignment.findFirst).toHaveBeenCalledWith({
+      where: {
+        staffId: "staff-1",
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        subjectId: "subj-1",
+        classArmId: "arm-1",
+        isActive: true,
+      },
+    });
+  });
+
+  it("returns null when no matching active assignment exists", async () => {
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    prisma.staffAssignment.findFirst.mockResolvedValue(null);
+
+    const result = await service.findActiveAssignment({
+      userId: "user-1",
+      assignmentType: AssignmentType.SUBJECT_TEACHER,
+      subjectId: "subj-1",
+      classArmId: "arm-1",
+    });
+
+    expect(result).toBeNull();
   });
 });

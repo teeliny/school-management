@@ -3,7 +3,22 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, GraduationCap, Users, Mail, BookOpen, CalendarClock, Building2, LogOut, type LucideIcon } from "lucide-react";
+import {
+  LayoutDashboard,
+  GraduationCap,
+  Users,
+  Mail,
+  BookOpen,
+  CalendarClock,
+  Building2,
+  LogOut,
+  ClipboardList,
+  NotebookPen,
+  MessageSquare,
+  FileText,
+  Calendar,
+  type LucideIcon,
+} from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
 import { ThemeToggle } from "../molecules/theme-toggle";
 import {
@@ -55,6 +70,30 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         icon: CalendarClock,
         visible: ({ isAdmin, user }) => isAdmin || user.assignmentTypes.includes("REGISTRAR"),
       },
+    ],
+  },
+  {
+    eyebrow: "Assessment",
+    items: [
+      { href: "/assessment-setup", label: "Assessment Setup", icon: ClipboardList, adminOnly: true },
+      {
+        href: "/gradebook",
+        label: "Gradebook",
+        icon: NotebookPen,
+        visible: ({ isAdmin, user }) => isAdmin || user.assignmentTypes.includes("SUBJECT_TEACHER"),
+      },
+      {
+        href: "/skills-comments",
+        label: "Skills & Comments",
+        icon: MessageSquare,
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          ["CLASS_TEACHER", "SUBJECT_TEACHER", "PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
+      },
+      { href: "/report-cards", label: "Report Cards", icon: FileText },
+      { href: "/calendar", label: "Calendar", icon: Calendar },
     ],
   },
 ];

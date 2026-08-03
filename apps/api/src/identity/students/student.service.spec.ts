@@ -1,6 +1,7 @@
-import { Role } from "@prisma/client";
+import { AssignmentType, Role } from "@prisma/client";
 import { StudentService } from "./student";
 import type { CreateStudentDto } from "./dto/create-student.dto";
+import type { RequestUser } from "../../auth/jwt.strategy";
 
 function buildTxMock() {
   return {
@@ -122,5 +123,66 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
       "new-parent@example.com",
       "raw-token-123",
     );
+  });
+});
+
+describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
+  let prisma: {
+    studentProfile: { findMany: jest.Mock };
+    staffProfile: { findUnique: jest.Mock };
+    staffAssignment: { findMany: jest.Mock; count: jest.Mock };
+  };
+  let service: StudentService;
+
+  beforeEach(() => {
+    prisma = {
+      studentProfile: { findMany: jest.fn().mockResolvedValue([]) },
+      staffProfile: { findUnique: jest.fn().mockResolvedValue({ id: "staff-1" }) },
+      staffAssignment: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+    };
+    service = new StudentService(prisma as never, {} as never, {} as never, {} as never);
+  });
+
+  function staffUser(): RequestUser {
+    return { id: "user-1", roles: ["STAFF"], assignmentTypes: [] };
+  }
+
+  it("returns every student for STAFF holding an active PRINCIPAL assignment, without narrowing by class arm", async () => {
+    prisma.staffAssignment.count.mockResolvedValueOnce(1); // hasActiveSchoolWideAssignment
+
+    await service.findAllForUser(staffUser());
+
+    expect(prisma.staffAssignment.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER] },
+        }),
+      }),
+    );
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.not.objectContaining({ where: expect.anything() }),
+    );
+    expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("falls back to class-arm scoping for STAFF with no school-wide assignment", async () => {
+    prisma.staffAssignment.count.mockResolvedValueOnce(0);
+    prisma.staffAssignment.findMany.mockResolvedValueOnce([{ classArmId: "arm-1" }]);
+
+    await service.findAllForUser(staffUser());
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { currentClassId: { in: ["arm-1"] } } }),
+    );
+  });
+
+  it("returns an empty list for STAFF with neither a school-wide assignment nor a class-arm assignment", async () => {
+    prisma.staffAssignment.count.mockResolvedValueOnce(0);
+    prisma.staffAssignment.findMany.mockResolvedValueOnce([]);
+
+    const result = await service.findAllForUser(staffUser());
+
+    expect(result).toEqual([]);
+    expect(prisma.studentProfile.findMany).not.toHaveBeenCalled();
   });
 });
