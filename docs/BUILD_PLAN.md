@@ -135,8 +135,9 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 3. Extend to exam timetable generation (calculation-subject-first, minimum gap between calculation exams).
 4. Extend to invigilation assignment (staff eligibility exclusion: `BURSAR`/`PRINCIPAL`/`VICE_PRINCIPAL`, load balancing, no double-booking).
 5. Approval workflow UI: `PENDING_REVIEW → APPROVED`, with the split approval rule from PRD §5 (class timetables: Admin or Super-Admin; exam timetables and invigilation rosters: Admin only, footnote 4).
+6. Whole-school timetable overview UI (PRD FR6.10, §5 footnote 6): by-day (Mon–Fri) and by-class grouped views, scoped server-side per requester — Super-Admin/Admin/Registrar unscoped, Principal to `JSS`/`SSS`, Headteacher to `CRECHE`/`NURSERY`/`PRIMARY`. Visual reference: `docs/school-system-design.html` "Timetable" panel.
 
-**Done when:** a realistic SSS1–3 constraint set (real subject list, real staff roster, real `SchedulingConstraint` values) produces a usable draft timetable, exam schedule, and invigilation roster requiring only minor manual edits — verified end-to-end through the full async pipeline, including one deliberately-simulated timeout case that exercises FR6.9.
+**Done when:** a realistic SSS1–3 constraint set (real subject list, real staff roster, real `SchedulingConstraint` values) produces a usable draft timetable, exam schedule, and invigilation roster requiring only minor manual edits — verified end-to-end through the full async pipeline, including one deliberately-simulated timeout case that exercises FR6.9. The whole-school overview correctly scopes Principal/Headteacher to their class-level range and lets Super-Admin/Admin/Registrar switch between by-day and by-class grouping.
 
 ---
 

@@ -364,6 +364,13 @@
   .notif-body{font-size:12px; color:rgb(var(--muted)); margin-top:2px;}
   .notif-time{font-size:10.5px; color:rgb(var(--muted)); font-family:'IBM Plex Mono',monospace; white-space:nowrap;}
 
+  /* Timetable */
+  .tt-day-label{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:rgb(var(--muted)); margin-bottom:8px;}
+  .tt-slot{background:rgb(var(--card-inset)); border:1px solid rgb(var(--border)); border-radius:8px; padding:8px 10px; margin-bottom:8px;}
+  .tt-slot-time{font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:rgb(var(--muted));}
+  .tt-slot-subject{font-weight:500; font-size:13px; margin:2px 0;}
+  .tt-slot-meta{font-size:11px; color:rgb(var(--muted));}
+
   /* Audit log */
   .audit-row{display:flex; gap:12px; padding:10px 0; border-bottom:1px solid rgb(var(--border) / 0.6); font-size:12px;}
   .audit-time{font-family:'IBM Plex Mono',monospace; color:rgb(var(--muted)); width:132px; flex:none;}
@@ -438,6 +445,10 @@
       <div class="nav-item" data-panel="report-cards">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6M9 9h1"/></svg>
         <span class="fade-label">Report Cards</span>
+      </div>
+      <div class="nav-item" data-panel="timetable">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+        <span class="fade-label">Timetable</span>
       </div>
       <div class="nav-item" data-panel="scheduling">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
@@ -768,6 +779,82 @@
           </div>
 
           <div class="card-sub">Score shown is normalized to a percentage of the Mid-Term Test's max score. No overall remark, skills, or comments yet — those are end-of-term only, finalized in the full-term report card above.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============= TIMETABLE ============= -->
+    <section class="panel" id="panel-timetable">
+      <div class="letterhead">
+        <div class="letterhead-eyebrow">Timetable · Class Schedule</div>
+        <h1 class="display">Weekly timetable</h1>
+        <div class="letterhead-rule"></div>
+      </div>
+
+      <!-- Illustrative caption only — mirrors the roleSelect disclaimer above; the real
+           scoping (Principal → JSS/SSS, Headteacher → Creche/Nursery/Primary, everyone
+           else school-wide) is PRD §5 footnote 5, enforced server-side, not by this page. -->
+      <div class="card-sub" style="margin-bottom:16px;">Super-Admin, Admin, and Registrar see the whole school here. Principal's view is scoped to JSS/SSS classes only; Headteacher's to Creche/Nursery/Primary only (PRD §5, footnote 5).</div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><h3 class="card-title">This week</h3><div class="card-sub">Term 1 · Aug 4–8, 2026</div></div>
+          <div class="tab-row" style="margin:0;">
+            <span class="tab active" data-tt="day" onclick="showTimetableView(this.dataset.tt, this)">By day</span>
+            <span class="tab" data-tt="class" onclick="showTimetableView(this.dataset.tt, this)">By class</span>
+          </div>
+        </div>
+
+        <!-- By day: every class's periods for that weekday, Mon–Fri at a glance -->
+        <div id="ttByDay">
+          <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px;">
+            <div>
+              <div class="tt-day-label">Monday</div>
+              <div class="tt-slot"><div class="tt-slot-time">8:00–8:40</div><div class="tt-slot-subject">Mathematics</div><div class="tt-slot-meta">JSS2 Silver · Mr. Adeyemi</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">8:40–9:20</div><div class="tt-slot-subject">English</div><div class="tt-slot-meta">SS1 Gold · Mrs. Okoro</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">9:20–10:00</div><div class="tt-slot-subject">Basic Science</div><div class="tt-slot-meta">Primary 4 · Mr. Bello</div></div>
+            </div>
+            <div>
+              <div class="tt-day-label">Tuesday</div>
+              <div class="tt-slot"><div class="tt-slot-time">8:00–8:40</div><div class="tt-slot-subject">English</div><div class="tt-slot-meta">JSS2 Silver · Mrs. Okoro</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">8:40–9:20</div><div class="tt-slot-subject">Basic Science</div><div class="tt-slot-meta">SS1 Gold · Mr. Bello</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">9:20–10:00</div><div class="tt-slot-subject">Mathematics</div><div class="tt-slot-meta">Primary 4 · Mr. Adeyemi</div></div>
+            </div>
+            <div>
+              <div class="tt-day-label">Wednesday</div>
+              <div class="tt-slot"><div class="tt-slot-time">8:00–8:40</div><div class="tt-slot-subject">Mathematics</div><div class="tt-slot-meta">JSS2 Silver · Mr. Adeyemi</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">8:40–9:20</div><div class="tt-slot-subject">Social Studies</div><div class="tt-slot-meta">SS1 Gold · Mrs. Nwosu</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">9:20–10:00</div><div class="tt-slot-subject">Basic Science</div><div class="tt-slot-meta">Primary 4 · Mr. Bello</div></div>
+            </div>
+            <div>
+              <div class="tt-day-label">Thursday</div>
+              <div class="tt-slot"><div class="tt-slot-time">8:00–8:40</div><div class="tt-slot-subject">Basic Science</div><div class="tt-slot-meta">JSS2 Silver · Mr. Bello</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">8:40–9:20</div><div class="tt-slot-subject">Mathematics</div><div class="tt-slot-meta">SS1 Gold · Mr. Adeyemi</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">9:20–10:00</div><div class="tt-slot-subject">English</div><div class="tt-slot-meta">Primary 4 · Mrs. Okoro</div></div>
+            </div>
+            <div>
+              <div class="tt-day-label">Friday</div>
+              <div class="tt-slot"><div class="tt-slot-time">8:00–8:40</div><div class="tt-slot-subject">English</div><div class="tt-slot-meta">JSS2 Silver · Mrs. Okoro</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">8:40–9:20</div><div class="tt-slot-subject">Mathematics</div><div class="tt-slot-meta">SS1 Gold · Mr. Adeyemi</div></div>
+              <div class="tt-slot"><div class="tt-slot-time">9:20–10:00</div><div class="tt-slot-subject">Basic Science</div><div class="tt-slot-meta">Primary 4 · Mr. Bello</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- By class: one class's full week, conventional day-by-period grid -->
+        <div id="ttByClass" style="display:none;">
+          <div class="field" style="max-width:260px; margin-bottom:14px;">
+            <label>Class</label>
+            <select><option>JSS2 Silver</option><option>SS1 Gold</option><option>Primary 4</option></select>
+          </div>
+          <div class="scroll-x">
+            <table>
+              <tr><th>Period</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th></tr>
+              <tr><td class="cell-mono">8:00–8:40</td><td>Mathematics</td><td>English</td><td>Mathematics</td><td>Basic Science</td><td>English</td></tr>
+              <tr><td class="cell-mono">8:40–9:20</td><td>English</td><td>Basic Science</td><td>Social Studies</td><td>Mathematics</td><td>Mathematics</td></tr>
+              <tr><td class="cell-mono">9:20–10:00</td><td>Basic Science</td><td>Mathematics</td><td>Basic Science</td><td>English</td><td>Basic Science</td></tr>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -1107,6 +1194,13 @@
     }
   }
   setRole('admin');
+
+  function showTimetableView(view, el){
+    document.getElementById('ttByDay').style.display = view==='day' ? 'block' : 'none';
+    document.getElementById('ttByClass').style.display = view==='class' ? 'block' : 'none';
+    el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+  }
 
   function showPayMethod(method, el){
     document.getElementById('payCash').style.display = method==='cash' ? 'block' : 'none';
