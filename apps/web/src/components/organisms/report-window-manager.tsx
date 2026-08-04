@@ -22,15 +22,22 @@ interface TermOption {
 }
 interface ReportWindowItem {
   id: string;
+  termId: string;
+  classLevelCategory: ClassLevelCategory;
   inputOpensAt: string;
   inputClosesAt: string;
   status: WindowStatus;
+}
+
+function toDatetimeLocalValue(iso: string): string {
+  return iso.slice(0, 16);
 }
 
 export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
   const [termId, setTermId] = useState("");
   const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
   const [windows, setWindows] = useState<ReportWindowItem[] | null>(null);
+  const [existingWindows, setExistingWindows] = useState<ReportWindowItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -52,6 +59,22 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Every report window ever configured, across every class group/term/
+  // session — powers the "copy dates from existing" picker below,
+  // independent of which class group/term is currently selected.
+  useEffect(() => {
+    apiFetch<ReportWindowItem[]>("/report-windows", { auth: true })
+      .then(setExistingWindows)
+      .catch(() => setExistingWindows([]));
+  }, []);
+
+  function applyExisting(id: string) {
+    const existing = existingWindows.find((w) => w.id === id);
+    if (!existing) return;
+    setInputOpensAt(toDatetimeLocalValue(existing.inputOpensAt));
+    setInputClosesAt(toDatetimeLocalValue(existing.inputClosesAt));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -143,6 +166,25 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
+            {existingWindows.length > 0 && (
+              <div className="col-span-3">
+                <Label htmlFor="rw-copy-from">Copy dates from existing (any class group, any term)</Label>
+                <Select value="" onValueChange={applyExisting}>
+                  <SelectTrigger id="rw-copy-from" className="mt-1">
+                    <SelectValue placeholder="Select a previous report window…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {existingWindows.map((existing) => (
+                      <SelectItem key={existing.id} value={existing.id}>
+                        {existing.classLevelCategory} · {terms.find((t) => t.id === existing.termId)?.name ?? existing.termId} —{" "}
+                        {new Date(existing.inputOpensAt).toLocaleDateString()} →{" "}
+                        {new Date(existing.inputClosesAt).toLocaleDateString()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <FormField
               label="Opens at"
               id="rw-opens-at"

@@ -42,10 +42,34 @@ function toDatetimeLocalValue(iso: string | null): string {
   return iso ? iso.slice(0, 16) : "";
 }
 
+interface ExistingComponentOption {
+  key: string;
+  type: ComponentType;
+  name: string;
+  sequence: number;
+  maxScore: number;
+}
+
+// A component's identity for reuse purposes is (type, name, sequence,
+// maxScore) — everything else (dates, status) is term-specific and never
+// part of what's being "copied", same as TermService.create's carry-forward
+// never copying dates.
+function dedupeExistingOptions(items: AssessmentComponentItem[]): ExistingComponentOption[] {
+  const seen = new Map<string, ExistingComponentOption>();
+  for (const item of items) {
+    const key = `${item.type}|${item.name}|${item.sequence}|${item.maxScore}`;
+    if (!seen.has(key)) {
+      seen.set(key, { key, type: item.type, name: item.name, sequence: item.sequence, maxScore: item.maxScore });
+    }
+  }
+  return [...seen.values()];
+}
+
 export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
   const [termId, setTermId] = useState("");
   const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
   const [components, setComponents] = useState<AssessmentComponentItem[] | null>(null);
+  const [existingOptions, setExistingOptions] = useState<ExistingComponentOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -75,6 +99,25 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Every AC ever defined, across every class group/term/session — unique by
+  // (type, name, sequence, maxScore) — powers the "copy from existing"
+  // picker below, independent of which class group/term is currently
+  // selected.
+  useEffect(() => {
+    apiFetch<AssessmentComponentItem[]>("/assessment-components", { auth: true })
+      .then((items) => setExistingOptions(dedupeExistingOptions(items)))
+      .catch(() => setExistingOptions([]));
+  }, []);
+
+  function applyExisting(key: string) {
+    const option = existingOptions.find((o) => o.key === key);
+    if (!option) return;
+    setType(option.type);
+    setName(option.name);
+    setSequence(String(option.sequence));
+    setMaxScore(String(option.maxScore));
+  }
 
   function resetForm() {
     setType("CA");
@@ -229,6 +272,23 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
+            {!editingId && existingOptions.length > 0 && (
+              <div className="col-span-3">
+                <Label htmlFor="ac-copy-from">Copy from existing (any class group, any term)</Label>
+                <Select value="" onValueChange={applyExisting}>
+                  <SelectTrigger id="ac-copy-from" className="mt-1">
+                    <SelectValue placeholder="Select a previously used component…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {existingOptions.map((option) => (
+                      <SelectItem key={option.key} value={option.key}>
+                        {option.name} ({option.type}, seq {option.sequence}, max {option.maxScore})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div>
               <Label htmlFor="ac-type">Type</Label>
               <Select value={type} onValueChange={(v) => setType(v as ComponentType)}>
