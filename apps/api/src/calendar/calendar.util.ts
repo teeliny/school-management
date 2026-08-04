@@ -10,9 +10,12 @@ export interface CalendarComponentInput {
   name: string;
   termId: string;
   classLevelId: string;
-  inputOpensAt: Date;
-  inputClosesAt: Date;
-  publishAt: Date;
+  // Null on a freshly carried-forward component (TermService.create) until
+  // Admin sets it for the new term — contributes no calendar entry for that
+  // date field until then.
+  inputOpensAt: Date | null;
+  inputClosesAt: Date | null;
+  publishAt: Date | null;
 }
 
 export interface CalendarWindowInput {
@@ -58,13 +61,13 @@ export function buildCalendarEntries(
 
   for (const component of components) {
     const meta = { componentId: component.id, termId: component.termId, classLevelId: component.classLevelId };
-    if (inRange(component.inputOpensAt)) {
+    if (component.inputOpensAt && inRange(component.inputOpensAt)) {
       entries.push({ type: "ASSESSMENT_OPEN", title: `${component.name} opens`, date: component.inputOpensAt, meta });
     }
-    if (inRange(component.inputClosesAt)) {
+    if (component.inputClosesAt && inRange(component.inputClosesAt)) {
       entries.push({ type: "ASSESSMENT_CLOSE", title: `${component.name} closes`, date: component.inputClosesAt, meta });
     }
-    if (inRange(component.publishAt)) {
+    if (component.publishAt && inRange(component.publishAt)) {
       entries.push({ type: "ASSESSMENT_PUBLISH", title: `${component.name} publishes`, date: component.publishAt, meta });
     }
   }

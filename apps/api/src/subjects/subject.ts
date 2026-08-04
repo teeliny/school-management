@@ -16,7 +16,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
-import { CreateSubjectDto, CreateSubjectGroupDto, UpdateSubjectDto } from "./dto/subject.dto";
+import { CreateSubjectDto, CreateSubjectGroupChildDto, CreateSubjectGroupDto, UpdateSubjectDto } from "./dto/subject.dto";
 
 const SUBJECT_DETAIL_INCLUDE = {
   childSubjects: true,
@@ -93,6 +93,37 @@ export class SubjectService {
     });
   }
 
+  /**
+   * Adds one independently-scored child to an already-existing group (PRD
+   * §3.3) — the group itself and its other children/weights are untouched.
+   * Mirrors createGroup's per-child shape (same parent type/departmentId,
+   * new SubjectGroupWeight row) so a child added later is indistinguishable
+   * from one created with the group initially.
+   */
+  async addGroupChild(parentId: string, dto: CreateSubjectGroupChildDto) {
+    const parent = await this.prisma.subject.findUniqueOrThrow({ where: { id: parentId } });
+    if (!parent.isGroup) {
+      throw new BadRequestException("Only a grouped subject can have child subjects added to it");
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const childSubject = await tx.subject.create({
+        data: {
+          name: dto.name,
+          code: dto.code,
+          type: parent.type,
+          departmentId: parent.departmentId ?? undefined,
+          parentSubjectId: parent.id,
+        },
+      });
+      await tx.subjectGroupWeight.create({
+        data: { groupSubjectId: parent.id, childSubjectId: childSubject.id, weight: dto.weight },
+      });
+
+      return tx.subject.findUniqueOrThrow({ where: { id: parent.id }, include: SUBJECT_DETAIL_INCLUDE });
+    });
+  }
+
   findAll(filters: { type?: SubjectType; departmentId?: string; isGroup?: boolean }) {
     return this.prisma.subject.findMany({
       where: {
@@ -121,6 +152,15 @@ export class SubjectService {
   remove(id: string) {
     return this.prisma.subject.delete({ where: { id } });
   }
+
+  /**
+   * Catalogue-wide disable/enable — distinct from ClassSubjectTermStatus's
+   * per-class-per-term disable (subjects/class-subject-term-status.ts).
+   * Applies to any Subject, including a group's child, everywhere at once.
+   */
+  setActive(id: string, isActive: boolean) {
+    return this.prisma.subject.update({ where: { id }, data: { isActive } });
+  }
 }
 
 @Controller("subjects")
@@ -138,6 +178,12 @@ export class SubjectController {
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
   createGroup(@Body() dto: CreateSubjectGroupDto) {
     return this.service.createGroup(dto);
+  }
+
+  @Post(":id/children")
+  @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  addGroupChild(@Param("id") id: string, @Body() dto: CreateSubjectGroupChildDto) {
+    return this.service.addGroupChild(id, dto);
   }
 
   @Get()
@@ -168,5 +214,17 @@ export class SubjectController {
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
   remove(@Param("id") id: string) {
     return this.service.remove(id);
+  }
+
+  @Patch(":id/disable")
+  @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  disable(@Param("id") id: string) {
+    return this.service.setActive(id, false);
+  }
+
+  @Patch(":id/enable")
+  @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  enable(@Param("id") id: string) {
+    return this.service.setActive(id, true);
   }
 }

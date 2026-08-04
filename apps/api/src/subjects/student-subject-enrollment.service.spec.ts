@@ -17,8 +17,13 @@ function buildTxMock() {
     classArm: { findUniqueOrThrow: jest.fn() },
     term: { findFirst: jest.fn() },
     classSubject: { findMany: jest.fn() },
+    classSubjectTermStatus: { findUnique: jest.fn() },
     studentSubjectEnrollment: { upsert: jest.fn() },
   };
+}
+
+function buildClassSubjectTermStatusMock() {
+  return { assertActiveForTerm: jest.fn() };
 }
 
 const CLASS_ARM = { id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" };
@@ -30,15 +35,26 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 
   beforeEach(() => {
     tx = buildTxMock();
-    service = new StudentSubjectEnrollmentService({} as never);
+    service = new StudentSubjectEnrollmentService({} as never, buildClassSubjectTermStatusMock() as never);
     tx.classArm.findUniqueOrThrow.mockResolvedValue(CLASS_ARM);
     tx.term.findFirst.mockResolvedValue(TERM);
+    tx.classSubjectTermStatus.findUnique.mockResolvedValue(null);
   });
 
   it("auto-enrolls a COMPULSORY subject and skips a GENERAL one", async () => {
     tx.classSubject.findMany.mockResolvedValue([
-      { id: "cs-1", subjectId: "subj-compulsory", isCompulsoryOverride: null, subject: { type: SubjectType.COMPULSORY } },
-      { id: "cs-2", subjectId: "subj-general", isCompulsoryOverride: null, subject: { type: SubjectType.GENERAL } },
+      {
+        id: "cs-1",
+        subjectId: "subj-compulsory",
+        isCompulsoryOverride: null,
+        subject: { type: SubjectType.COMPULSORY, isActive: true },
+      },
+      {
+        id: "cs-2",
+        subjectId: "subj-general",
+        isCompulsoryOverride: null,
+        subject: { type: SubjectType.GENERAL, isActive: true },
+      },
     ]);
 
     await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
@@ -60,7 +76,7 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
         id: "cs-1",
         subjectId: "subj-1",
         isCompulsoryOverride: false,
-        subject: { type: SubjectType.COMPULSORY },
+        subject: { type: SubjectType.COMPULSORY, isActive: true },
       },
     ]);
 
@@ -78,7 +94,7 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
         id: "cs-1",
         subjectId: "subj-1",
         isCompulsoryOverride: true,
-        subject: { type: SubjectType.GENERAL },
+        subject: { type: SubjectType.GENERAL, isActive: true },
       },
     ]);
 
@@ -88,6 +104,44 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
     });
 
     expect(tx.studentSubjectEnrollment.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a COMPULSORY subject explicitly disabled for this class+term", async () => {
+    tx.classSubject.findMany.mockResolvedValue([
+      {
+        id: "cs-1",
+        subjectId: "subj-compulsory",
+        isCompulsoryOverride: null,
+        subject: { type: SubjectType.COMPULSORY, isActive: true },
+      },
+    ]);
+    tx.classSubjectTermStatus.findUnique.mockResolvedValue({ isActive: false });
+
+    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
+      studentId: "student-1",
+      classArmId: "arm-1",
+    });
+
+    expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("skips a COMPULSORY subject disabled catalogue-wide (Subject.isActive)", async () => {
+    tx.classSubject.findMany.mockResolvedValue([
+      {
+        id: "cs-1",
+        subjectId: "subj-compulsory",
+        isCompulsoryOverride: null,
+        subject: { type: SubjectType.COMPULSORY, isActive: false },
+      },
+    ]);
+
+    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
+      studentId: "student-1",
+      classArmId: "arm-1",
+    });
+
+    expect(tx.classSubjectTermStatus.findUnique).not.toHaveBeenCalled();
+    expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
   });
 
   it("no-ops when there is no current term for the session (known Term.isCurrent gap)", async () => {
@@ -105,6 +159,7 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 
 describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
+  let classSubjectTermStatus: ReturnType<typeof buildClassSubjectTermStatusMock>;
   let service: StudentSubjectEnrollmentService;
 
   function buildDto(overrides: Partial<CreateEnrollmentDto> = {}): CreateEnrollmentDto {
@@ -120,7 +175,8 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    service = new StudentSubjectEnrollmentService(prisma as never);
+    classSubjectTermStatus = buildClassSubjectTermStatusMock();
+    service = new StudentSubjectEnrollmentService(prisma as never, classSubjectTermStatus as never);
     prisma.classArm.findUniqueOrThrow.mockResolvedValue({
       ...CLASS_ARM,
       classLevel: { category: ClassLevelCategory.SSS },
@@ -194,5 +250,14 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
     prisma.classSubject.findUnique.mockResolvedValue(null);
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/not assigned/);
+  });
+
+  it("blocks opt-in when the subject is disabled for this class+term", async () => {
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", type: SubjectType.GENERAL, departmentId: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    classSubjectTermStatus.assertActiveForTerm.mockRejectedValue(new Error("disabled for this class for this term"));
+
+    await expect(service.enroll(buildDto())).rejects.toThrow(/disabled for this class for this term/);
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
   });
 });

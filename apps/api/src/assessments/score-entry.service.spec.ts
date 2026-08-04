@@ -6,6 +6,7 @@ import type { CreateScoreEntryDto } from "./dto/score-entry.dto";
 function buildPrismaMock() {
   return {
     staffProfile: { findUnique: jest.fn() },
+    classArm: { findUniqueOrThrow: jest.fn() },
     assessmentComponent: { findUniqueOrThrow: jest.fn() },
     scoreEntry: { upsert: jest.fn() },
   };
@@ -13,6 +14,10 @@ function buildPrismaMock() {
 
 function buildStaffAssignmentsMock() {
   return { findActiveAssignment: jest.fn() };
+}
+
+function buildClassSubjectTermStatusMock() {
+  return { assertActiveForTerm: jest.fn() };
 }
 
 const USER: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["SUBJECT_TEACHER"] };
@@ -31,20 +36,24 @@ function buildDto(overrides: Partial<CreateScoreEntryDto> = {}): CreateScoreEntr
 describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let staffAssignments: ReturnType<typeof buildStaffAssignmentsMock>;
+  let classSubjectTermStatus: ReturnType<typeof buildClassSubjectTermStatusMock>;
   let service: ScoreEntryService;
 
   beforeEach(() => {
     prisma = buildPrismaMock();
     staffAssignments = buildStaffAssignmentsMock();
-    service = new ScoreEntryService(prisma as never, staffAssignments as never);
+    classSubjectTermStatus = buildClassSubjectTermStatusMock();
+    service = new ScoreEntryService(prisma as never, staffAssignments as never, classSubjectTermStatus as never);
+    prisma.classArm.findUniqueOrThrow.mockResolvedValue({ id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" });
+    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
+      id: "comp-1",
+      termId: "term-1",
+      status: AssessmentComponentStatus.OPEN,
+    });
   });
 
   it("allows the assigned subject teacher to score while the component is OPEN", async () => {
     staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
-    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
-      id: "comp-1",
-      status: AssessmentComponentStatus.OPEN,
-    });
     prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
 
     await service.enter(buildDto(), USER, false);
@@ -75,17 +84,42 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
   });
 
   it("allows an Admin override regardless of assignment or component status", async () => {
+    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
+      id: "comp-1",
+      termId: "term-1",
+      status: AssessmentComponentStatus.CLOSED,
+    });
     prisma.staffProfile.findUnique.mockResolvedValue(null);
     prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
 
     await service.enter(buildDto(), USER, true);
 
     expect(staffAssignments.findActiveAssignment).not.toHaveBeenCalled();
-    expect(prisma.assessmentComponent.findUniqueOrThrow).not.toHaveBeenCalled();
     expect(prisma.scoreEntry.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({ enteredByStaffId: null }),
       }),
     );
+  });
+
+  it("checks the class-subject's per-term status before writing, for both regular and override entry", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
+
+    await service.enter(buildDto(), USER, false);
+
+    expect(classSubjectTermStatus.assertActiveForTerm).toHaveBeenCalledWith({
+      subjectId: "subj-1",
+      classLevelId: "level-1",
+      academicSessionId: "session-1",
+      termId: "term-1",
+    });
+  });
+
+  it("blocks score entry — even as an Admin override — when the subject is disabled for this class+term", async () => {
+    classSubjectTermStatus.assertActiveForTerm.mockRejectedValue(new Error("disabled for this class for this term"));
+
+    await expect(service.enter(buildDto(), USER, true)).rejects.toThrow(/disabled for this class for this term/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
   });
 });

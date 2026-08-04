@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Injectable, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { AssessmentComponentStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -9,8 +10,47 @@ import { CreateTermDto, UpdateTermDto } from "./dto/term.dto";
 export class TermService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Assessment structure (CA/Mid-Term/Exam definitions) is meant to stay the
+   * same term-to-term and session-to-session by default — Admin only acts
+   * when it changes — so a new term carries forward the chronologically-
+   * preceding term's AssessmentComponent rows (any session, not just this
+   * one, same "preceding" resolution as AcademicSessionService.create's
+   * ClassSubject carry-forward). Dates are intentionally NOT carried — a
+   * carried-forward component starts DRAFT with no dates until Admin sets
+   * them for the new term (assessment-sweep.util.ts treats a null date as
+   * never eligible for auto-transition).
+   */
   create(dto: CreateTermDto) {
-    return this.prisma.term.create({ data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const term = await tx.term.create({ data: dto });
+
+      const previousTerm = await tx.term.findFirst({
+        where: { id: { not: term.id }, startDate: { lt: term.startDate } },
+        orderBy: { startDate: "desc" },
+      });
+
+      if (previousTerm) {
+        const priorComponents = await tx.assessmentComponent.findMany({ where: { termId: previousTerm.id } });
+        if (priorComponents.length > 0) {
+          await tx.assessmentComponent.createMany({
+            data: priorComponents.map((component) => ({
+              termId: term.id,
+              classLevelId: component.classLevelId,
+              type: component.type,
+              name: component.name,
+              sequence: component.sequence,
+              maxScore: component.maxScore,
+              status: AssessmentComponentStatus.DRAFT,
+              createdByUserId: component.createdByUserId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      return term;
+    });
   }
 
   findAll(academicSessionId?: string) {

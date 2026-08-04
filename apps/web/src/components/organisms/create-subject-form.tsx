@@ -6,6 +6,7 @@ import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { Checkbox } from "../atoms/checkbox";
+import { Badge } from "../atoms/badge";
 import {
   Select,
   SelectContent,
@@ -21,10 +22,41 @@ interface DepartmentOption {
   name: string;
 }
 
+export interface EditableSubject {
+  id: string;
+  name: string;
+  code: string;
+  type: SubjectType;
+  departmentId?: string | null;
+  requiresCalculation: boolean;
+  isGroup: boolean;
+}
+
 interface ChildRow {
   name: string;
   code: string;
   weight: string;
+}
+
+// A group child fetched from GET /subjects/:id — each child is itself a
+// full Subject row (own id/name/code/isActive, editable via
+// PATCH /subjects/:id or disabled via PATCH /subjects/:id/disable),
+// paired with its aggregation weight (PATCH /subject-group-weights/:id).
+interface ExistingGroupChild {
+  subjectId: string;
+  weightId: string;
+  name: string;
+  code: string;
+  weight: string;
+  isActive: boolean;
+}
+
+interface SubjectDetailResponse {
+  groupWeightsAsGroup: Array<{
+    id: string;
+    weight: number;
+    childSubject: { id: string; name: string; code: string; isActive: boolean };
+  }>;
 }
 
 function emptyChild(): ChildRow {
@@ -40,7 +72,21 @@ const TYPE_LABELS: Record<SubjectType, string> = {
 // PRD §3.3: a grouped subject (e.g. Basic Science and Technology) is one
 // parent with N independently-scored children, each with an aggregation
 // weight — created via POST /subjects/groups in a single transaction.
-export function CreateSubjectForm({ onCreated }: { onCreated?: () => void }) {
+// When `editingSubject` is set (SubjectList's "Edit" button), this form
+// switches into edit mode: fields are pre-filled, the grouped-subject
+// creation UI is hidden (editing only touches the plain Subject fields —
+// UpdateSubjectDto has no group semantics), and submit PATCHes instead.
+export function CreateSubjectForm({
+  editingSubject,
+  onCreated,
+  onEditSaved,
+  onCancelEdit,
+}: {
+  editingSubject?: EditableSubject | null;
+  onCreated?: () => void;
+  onEditSaved?: () => void;
+  onCancelEdit?: () => void;
+}) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [type, setType] = useState<SubjectType>("COMPULSORY");
@@ -53,9 +99,117 @@ export function CreateSubjectForm({ onCreated }: { onCreated?: () => void }) {
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [existingGroupChildren, setExistingGroupChildren] = useState<ExistingGroupChild[]>([]);
+  const [savingChildId, setSavingChildId] = useState<string | null>(null);
+  const [togglingChildId, setTogglingChildId] = useState<string | null>(null);
+  const [newChild, setNewChild] = useState<ChildRow>(emptyChild());
+  const [addingChild, setAddingChild] = useState(false);
+
+  const isEditing = Boolean(editingSubject);
+
   useEffect(() => {
     apiFetch<DepartmentOption[]>("/departments", { auth: true }).then(setDepartments).catch(() => setDepartments([]));
   }, []);
+
+  function loadGroupChildren(parentId: string) {
+    return apiFetch<SubjectDetailResponse>(`/subjects/${parentId}`, { auth: true })
+      .then((detail) =>
+        setExistingGroupChildren(
+          detail.groupWeightsAsGroup.map((gw) => ({
+            subjectId: gw.childSubject.id,
+            weightId: gw.id,
+            name: gw.childSubject.name,
+            code: gw.childSubject.code,
+            weight: String(gw.weight),
+            isActive: gw.childSubject.isActive,
+          })),
+        ),
+      )
+      .catch(() => setExistingGroupChildren([]));
+  }
+
+  useEffect(() => {
+    setError(null);
+    setSuccess(null);
+    setExistingGroupChildren([]);
+    setNewChild(emptyChild());
+    if (editingSubject) {
+      setName(editingSubject.name);
+      setCode(editingSubject.code);
+      setType(editingSubject.type);
+      setDepartmentId(editingSubject.departmentId ?? "");
+      setRequiresCalculation(editingSubject.requiresCalculation);
+      setIsGroup(false);
+
+      if (editingSubject.isGroup) {
+        loadGroupChildren(editingSubject.id);
+      }
+    } else {
+      reset();
+    }
+  }, [editingSubject?.id]);
+
+  function updateExistingChild(subjectId: string, patch: Partial<ExistingGroupChild>) {
+    setExistingGroupChildren((rows) => rows.map((row) => (row.subjectId === subjectId ? { ...row, ...patch } : row)));
+  }
+
+  async function saveExistingChild(child: ExistingGroupChild) {
+    setError(null);
+    setSavingChildId(child.subjectId);
+    try {
+      await Promise.all([
+        apiFetch(`/subjects/${child.subjectId}`, {
+          method: "PATCH",
+          auth: true,
+          body: { name: child.name, code: child.code },
+        }),
+        apiFetch(`/subject-group-weights/${child.weightId}`, {
+          method: "PATCH",
+          auth: true,
+          body: { weight: Number(child.weight) },
+        }),
+      ]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update child subject");
+    } finally {
+      setSavingChildId(null);
+    }
+  }
+
+  async function toggleChildActive(child: ExistingGroupChild) {
+    setError(null);
+    setTogglingChildId(child.subjectId);
+    try {
+      await apiFetch(`/subjects/${child.subjectId}/${child.isActive ? "disable" : "enable"}`, {
+        method: "PATCH",
+        auth: true,
+      });
+      updateExistingChild(child.subjectId, { isActive: !child.isActive });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update child subject status");
+    } finally {
+      setTogglingChildId(null);
+    }
+  }
+
+  async function addExistingGroupChild() {
+    if (!editingSubject) return;
+    setError(null);
+    setAddingChild(true);
+    try {
+      await apiFetch(`/subjects/${editingSubject.id}/children`, {
+        method: "POST",
+        auth: true,
+        body: { ...newChild, weight: Number(newChild.weight) },
+      });
+      setNewChild(emptyChild());
+      await loadGroupChildren(editingSubject.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to add child subject");
+    } finally {
+      setAddingChild(false);
+    }
+  }
 
   function updateChild(index: number, patch: Partial<ChildRow>) {
     setChildren((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -92,6 +246,12 @@ export function CreateSubjectForm({ onCreated }: { onCreated?: () => void }) {
         departmentId: type === "DEPARTMENT" ? departmentId || undefined : undefined,
         requiresCalculation,
       };
+
+      if (editingSubject) {
+        await apiFetch(`/subjects/${editingSubject.id}`, { method: "PATCH", auth: true, body: base });
+        onEditSaved?.();
+        return;
+      }
 
       if (isGroup) {
         await apiFetch("/subjects/groups", {
@@ -167,12 +327,100 @@ export function CreateSubjectForm({ onCreated }: { onCreated?: () => void }) {
         Requires calculation (Phase 7 scheduling flag)
       </label>
 
-      <label className="flex items-center gap-2 text-[12.5px]">
-        <Checkbox checked={isGroup} onCheckedChange={(v) => setIsGroup(v === true)} />
-        Grouped subject (independently-scored children, e.g. Basic Science and Technology)
-      </label>
+      {isEditing && editingSubject?.isGroup && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-medium">Child subjects</h3>
+          {existingGroupChildren.length === 0 && <p className="text-sm text-muted">Loading child subjects…</p>}
+          {existingGroupChildren.map((child) => (
+            <div key={child.subjectId} className="space-y-2 rounded-lg border border-border p-3">
+              <div className="flex items-center gap-2">
+                <Badge variant={child.isActive ? "success" : "danger"}>
+                  {child.isActive ? "Active" : "Disabled"}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-[1fr_1fr_90px_auto_auto] items-end gap-2">
+                <FormField
+                  label="Name"
+                  id={`existing-child-${child.subjectId}-name`}
+                  value={child.name}
+                  onChange={(e) => updateExistingChild(child.subjectId, { name: e.target.value })}
+                />
+                <FormField
+                  label="Code"
+                  id={`existing-child-${child.subjectId}-code`}
+                  value={child.code}
+                  onChange={(e) => updateExistingChild(child.subjectId, { code: e.target.value })}
+                />
+                <FormField
+                  label="Weight"
+                  id={`existing-child-${child.subjectId}-weight`}
+                  type="number"
+                  value={child.weight}
+                  onChange={(e) => updateExistingChild(child.subjectId, { weight: e.target.value })}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={savingChildId === child.subjectId}
+                  onClick={() => saveExistingChild(child)}
+                >
+                  {savingChildId === child.subjectId ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={togglingChildId === child.subjectId}
+                  onClick={() => toggleChildActive(child)}
+                >
+                  {child.isActive ? "Disable" : "Enable"}
+                </Button>
+              </div>
+            </div>
+          ))}
 
-      {isGroup && (
+          <div className="grid grid-cols-[1fr_1fr_90px_auto] items-end gap-2 rounded-lg border border-dashed border-border p-3">
+            <FormField
+              label="Name"
+              id="new-existing-child-name"
+              value={newChild.name}
+              onChange={(e) => setNewChild({ ...newChild, name: e.target.value })}
+            />
+            <FormField
+              label="Code"
+              id="new-existing-child-code"
+              value={newChild.code}
+              onChange={(e) => setNewChild({ ...newChild, code: e.target.value })}
+            />
+            <FormField
+              label="Weight"
+              id="new-existing-child-weight"
+              type="number"
+              value={newChild.weight}
+              onChange={(e) => setNewChild({ ...newChild, weight: e.target.value })}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={addingChild || !newChild.name || !newChild.code || !newChild.weight}
+              onClick={addExistingGroupChild}
+            >
+              {addingChild ? "Adding…" : "Add child subject"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!isEditing && (
+        <label className="flex items-center gap-2 text-[12.5px]">
+          <Checkbox checked={isGroup} onCheckedChange={(v) => setIsGroup(v === true)} />
+          Grouped subject (independently-scored children, e.g. Basic Science and Technology)
+        </label>
+      )}
+
+      {!isEditing && isGroup && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Child subjects</h3>
@@ -215,9 +463,16 @@ export function CreateSubjectForm({ onCreated }: { onCreated?: () => void }) {
         </div>
       )}
 
-      <Button type="submit" disabled={submitting} className="w-full">
-        {submitting ? "Creating…" : "Create subject"}
-      </Button>
+      <div className="flex gap-2">
+        <Button type="submit" disabled={submitting} className="w-full">
+          {submitting ? "Saving…" : isEditing ? "Save changes" : "Create subject"}
+        </Button>
+        {isEditing && (
+          <Button type="button" variant="outline" onClick={onCancelEdit}>
+            Cancel
+          </Button>
+        )}
+      </div>
     </form>
   );
 }

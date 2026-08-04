@@ -17,6 +17,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
+import { ClassSubjectTermStatusService } from "./class-subject-term-status";
 
 type Tx = Prisma.TransactionClient;
 
@@ -32,7 +33,10 @@ type Tx = Prisma.TransactionClient;
  */
 @Injectable()
 export class StudentSubjectEnrollmentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly classSubjectTermStatus: ClassSubjectTermStatusService,
+  ) {}
 
   resolveEffectiveType(subject: Subject, classSubject: ClassSubject | null): SubjectType {
     if (classSubject?.isCompulsoryOverride === true) return SubjectType.COMPULSORY;
@@ -67,8 +71,21 @@ export class StudentSubjectEnrollmentService {
     });
 
     for (const classSubject of classSubjects) {
+      if (!classSubject.subject.isActive) continue;
+
       const effectiveType = this.resolveEffectiveType(classSubject.subject, classSubject);
       if (effectiveType !== SubjectType.COMPULSORY) continue;
+
+      const status = await tx.classSubjectTermStatus.findUnique({
+        where: {
+          classSubjectId_subjectId_termId: {
+            classSubjectId: classSubject.id,
+            subjectId: classSubject.subjectId,
+            termId: term.id,
+          },
+        },
+      });
+      if (status && !status.isActive) continue;
 
       await tx.studentSubjectEnrollment.upsert({
         where: {
@@ -132,6 +149,13 @@ export class StudentSubjectEnrollmentService {
         throw new BadRequestException("Student's department does not match this subject's department");
       }
     }
+
+    await this.classSubjectTermStatus.assertActiveForTerm({
+      subjectId: dto.subjectId,
+      classLevelId: classArm.classLevelId,
+      academicSessionId: dto.academicSessionId,
+      termId: dto.termId,
+    });
 
     return this.prisma.studentSubjectEnrollment.upsert({
       where: {

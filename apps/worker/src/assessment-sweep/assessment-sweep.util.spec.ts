@@ -102,6 +102,31 @@ describe("computeSweepTransitions (PRD §3.6 date-driven state machine)", () => 
     expect(computeSweepTransitions(components, NOW)).toEqual([]);
   });
 
+  it("never opens a DRAFT component with no inputOpensAt (a freshly carried-forward component), even with a complete structure", () => {
+    const components = [
+      buildComponent({ id: "ca1", maxScore: 40, inputOpensAt: null }),
+      buildComponent({ id: "exam", maxScore: 60, inputOpensAt: null }),
+    ];
+
+    expect(computeSweepTransitions(components, NOW)).toEqual([]);
+  });
+
+  it("never closes an OPEN component with no inputClosesAt", () => {
+    const components = [
+      buildComponent({ id: "ca1", status: AssessmentComponentStatus.OPEN, inputClosesAt: null }),
+    ];
+
+    expect(computeSweepTransitions(components, NOW)).toEqual([]);
+  });
+
+  it("never publishes a CLOSED component with no publishAt", () => {
+    const components = [
+      buildComponent({ id: "ca1", status: AssessmentComponentStatus.CLOSED, publishAt: null }),
+    ];
+
+    expect(computeSweepTransitions(components, NOW)).toEqual([]);
+  });
+
   it("evaluates structure-completeness per (termId, classLevelId) group independently", () => {
     const components = [
       // Complete group — should open.

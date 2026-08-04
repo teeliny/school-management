@@ -33,10 +33,16 @@ interface AssessmentComponentItem {
   name: string;
   sequence: number;
   maxScore: number;
-  inputOpensAt: string;
-  inputClosesAt: string;
-  publishAt: string;
+  // Null on a freshly carried-forward component until Admin sets it for
+  // this term (TermService.create's carry-forward never copies dates).
+  inputOpensAt: string | null;
+  inputClosesAt: string | null;
+  publishAt: string | null;
   status: ComponentStatus;
+}
+
+function toDatetimeLocalValue(iso: string | null): string {
+  return iso ? iso.slice(0, 16) : "";
 }
 
 export function AssessmentComponentManager({
@@ -60,6 +66,8 @@ export function AssessmentComponentManager({
   const [inputClosesAt, setInputClosesAt] = useState("");
   const [publishAt, setPublishAt] = useState("");
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+
   const load = useCallback(() => {
     if (!termId || !classLevelId) {
       setComponents(null);
@@ -76,31 +84,56 @@ export function AssessmentComponentManager({
     load();
   }, [load]);
 
+  function resetForm() {
+    setType("CA");
+    setName("");
+    setSequence("1");
+    setMaxScore("");
+    setInputOpensAt("");
+    setInputClosesAt("");
+    setPublishAt("");
+  }
+
+  function startEdit(component: AssessmentComponentItem) {
+    setEditingId(component.id);
+    setType(component.type);
+    setName(component.name);
+    setSequence(String(component.sequence));
+    setMaxScore(String(component.maxScore));
+    setInputOpensAt(toDatetimeLocalValue(component.inputOpensAt));
+    setInputClosesAt(toDatetimeLocalValue(component.inputClosesAt));
+    setPublishAt(toDatetimeLocalValue(component.publishAt));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    resetForm();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await apiFetch("/assessment-components", {
-        method: "POST",
-        auth: true,
-        body: {
-          termId,
-          classLevelId,
-          type,
-          name,
-          sequence: Number(sequence),
-          maxScore: Number(maxScore),
-          inputOpensAt,
-          inputClosesAt,
-          publishAt,
-        },
-      });
-      setName("");
-      setMaxScore("");
-      setInputOpensAt("");
-      setInputClosesAt("");
-      setPublishAt("");
+      const body = {
+        termId,
+        classLevelId,
+        type,
+        name,
+        sequence: Number(sequence),
+        maxScore: Number(maxScore),
+        inputOpensAt,
+        inputClosesAt,
+        publishAt,
+      };
+
+      if (editingId) {
+        await apiFetch(`/assessment-components/${editingId}`, { method: "PATCH", auth: true, body });
+        setEditingId(null);
+      } else {
+        await apiFetch("/assessment-components", { method: "POST", auth: true, body });
+      }
+      resetForm();
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -182,6 +215,9 @@ export function AssessmentComponentManager({
                     </td>
                     <td className="py-2.5">
                       <div className="flex justify-end gap-1.5">
+                        <Button type="button" variant="outline" size="sm" onClick={() => startEdit(component)}>
+                          Edit
+                        </Button>
                         <Button type="button" variant="outline" size="sm" onClick={() => transition(component.id, "force-open")}>
                           Open
                         </Button>
@@ -243,9 +279,16 @@ export function AssessmentComponentManager({
               value={publishAt}
               onChange={(e) => setPublishAt(e.target.value)}
             />
-            <Button type="submit" disabled={submitting || !termId || !classLevelId} className="col-span-3">
-              {submitting ? "Creating…" : "Create component"}
-            </Button>
+            <div className="col-span-3 flex gap-2">
+              <Button type="submit" disabled={submitting || !termId || !classLevelId} className="w-full">
+                {submitting ? "Saving…" : editingId ? "Save changes" : "Create component"}
+              </Button>
+              {editingId && (
+                <Button type="button" variant="outline" onClick={cancelEdit}>
+                  Cancel
+                </Button>
+              )}
+            </div>
           </form>
         </>
       )}

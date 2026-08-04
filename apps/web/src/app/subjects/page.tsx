@@ -5,14 +5,15 @@ import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
-import { SubjectList } from "../../components/organisms/subject-list";
-import { CreateSubjectForm } from "../../components/organisms/create-subject-form";
+import { SubjectList, type SubjectListItem } from "../../components/organisms/subject-list";
+import { CreateSubjectForm, type EditableSubject } from "../../components/organisms/create-subject-form";
 import { ClassSubjectAssignment } from "../../components/organisms/class-subject-assignment";
 import { StudentDepartmentForm } from "../../components/organisms/student-department-form";
 
 export default function SubjectsPage() {
   const { user, loading, logout } = useCurrentUser();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [editingSubject, setEditingSubject] = useState<EditableSubject | null>(null);
 
   if (loading) {
     return (
@@ -25,6 +26,18 @@ export default function SubjectsPage() {
 
   const canManage = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
 
+  function handleEdit(subject: SubjectListItem) {
+    setEditingSubject({
+      id: subject.id,
+      name: subject.name,
+      code: subject.code,
+      type: subject.type,
+      departmentId: subject.departmentId,
+      requiresCalculation: subject.requiresCalculation,
+      isGroup: subject.isGroup,
+    });
+  }
+
   return (
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="Academics · Subjects" title="Subjects" />
@@ -33,13 +46,30 @@ export default function SubjectsPage() {
         <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
           <Card>
             <CardHeader title="Subject catalogue" />
-            <SubjectList refreshKey={refreshKey} />
+            <SubjectList canManage={canManage} refreshKey={refreshKey} onEdit={handleEdit} />
           </Card>
 
           {canManage && (
             <Card>
-              <CardHeader title="Create subject" sub="Including grouped subjects with independently-scored children" />
-              <CreateSubjectForm onCreated={() => setRefreshKey((k) => k + 1)} />
+              <CardHeader
+                title={editingSubject ? `Edit ${editingSubject.name}` : "Create subject"}
+                sub={
+                  editingSubject
+                    ? editingSubject.isGroup
+                      ? "Child subjects can be edited, disabled, or added to below"
+                      : undefined
+                    : "Including grouped subjects with independently-scored children"
+                }
+              />
+              <CreateSubjectForm
+                editingSubject={editingSubject}
+                onCreated={() => setRefreshKey((k) => k + 1)}
+                onEditSaved={() => {
+                  setEditingSubject(null);
+                  setRefreshKey((k) => k + 1);
+                }}
+                onCancelEdit={() => setEditingSubject(null)}
+              />
             </Card>
           )}
         </div>

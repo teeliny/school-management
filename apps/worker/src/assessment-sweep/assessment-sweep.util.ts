@@ -7,9 +7,13 @@ export interface SweepableComponent {
   classLevelId: string;
   status: AssessmentComponentStatus;
   maxScore: number;
-  inputOpensAt: Date;
-  inputClosesAt: Date;
-  publishAt: Date;
+  // Null on a freshly carried-forward component (TermService.create) until
+  // Admin sets it for the new term — never treat a null date as "already
+  // due" (an unguarded `now >= null` comparison coerces to `now >= 0` and
+  // is always true in JS).
+  inputOpensAt: Date | null;
+  inputClosesAt: Date | null;
+  publishAt: Date | null;
 }
 
 export interface SweepTransition {
@@ -42,15 +46,15 @@ export function computeSweepTransitions(components: SweepableComponent[], now: D
 
     for (const component of group) {
       if (component.status === AssessmentComponentStatus.DRAFT) {
-        if (now >= component.inputOpensAt && structureComplete) {
+        if (component.inputOpensAt && now >= component.inputOpensAt && structureComplete) {
           transitions.push({ componentId: component.id, nextStatus: AssessmentComponentStatus.OPEN });
         }
       } else if (component.status === AssessmentComponentStatus.OPEN) {
-        if (now >= component.inputClosesAt) {
+        if (component.inputClosesAt && now >= component.inputClosesAt) {
           transitions.push({ componentId: component.id, nextStatus: AssessmentComponentStatus.CLOSED });
         }
       } else if (component.status === AssessmentComponentStatus.CLOSED) {
-        if (now >= component.publishAt) {
+        if (component.publishAt && now >= component.publishAt) {
           transitions.push({ componentId: component.id, nextStatus: AssessmentComponentStatus.PUBLISHED });
         }
       }

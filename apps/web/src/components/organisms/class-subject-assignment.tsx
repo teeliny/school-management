@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { Checkbox } from "../atoms/checkbox";
+import { Badge } from "../atoms/badge";
 import {
   Select,
   SelectContent,
@@ -21,16 +22,31 @@ interface AcademicSessionOption {
   id: string;
   name: string;
 }
+interface TermOption {
+  id: string;
+  name: string;
+}
 interface SubjectOption {
   id: string;
   name: string;
   code: string;
 }
+interface ChildSubject {
+  id: string;
+  name: string;
+  code: string;
+}
+interface TermStatus {
+  subjectId: string;
+  termId: string;
+  isActive: boolean;
+}
 interface ClassSubjectRow {
   id: string;
   subjectId: string;
   isCompulsoryOverride: boolean | null;
-  subject: SubjectOption;
+  subject: SubjectOption & { isGroup: boolean; childSubjects: ChildSubject[] };
+  termStatuses: TermStatus[];
 }
 
 // PRD §3.3: ClassSubject is the source of truth for "which subjects exist
@@ -41,8 +57,10 @@ export function ClassSubjectAssignment() {
   const [classLevels, setClassLevels] = useState<ClassLevelOption[]>([]);
   const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
   const [subjects, setSubjects] = useState<SubjectOption[]>([]);
+  const [terms, setTerms] = useState<TermOption[]>([]);
   const [classLevelId, setClassLevelId] = useState("");
   const [academicSessionId, setAcademicSessionId] = useState("");
+  const [termId, setTermId] = useState("");
   const [assigned, setAssigned] = useState<ClassSubjectRow[] | null>(null);
   const [subjectToAdd, setSubjectToAdd] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +70,17 @@ export function ClassSubjectAssignment() {
     apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }).then(setSessions).catch(() => setSessions([]));
     apiFetch<SubjectOption[]>("/subjects", { auth: true }).then(setSubjects).catch(() => setSubjects([]));
   }, []);
+
+  useEffect(() => {
+    setTermId("");
+    if (!academicSessionId) {
+      setTerms([]);
+      return;
+    }
+    apiFetch<TermOption[]>(`/terms?academicSessionId=${academicSessionId}`, { auth: true })
+      .then(setTerms)
+      .catch(() => setTerms([]));
+  }, [academicSessionId]);
 
   const load = useCallback(() => {
     if (!classLevelId || !academicSessionId) {
@@ -101,11 +130,30 @@ export function ClassSubjectAssignment() {
     }
   }
 
+  function isActiveForTerm(row: ClassSubjectRow, subjectId: string) {
+    const status = row.termStatuses.find((s) => s.subjectId === subjectId && s.termId === termId);
+    return status ? status.isActive : true;
+  }
+
+  async function toggleTermStatus(row: ClassSubjectRow, subjectId: string, currentlyActive: boolean) {
+    if (!termId) return;
+    setError(null);
+    try {
+      await apiFetch(
+        `/class-subjects/${row.id}/terms/${termId}/subjects/${subjectId}/${currentlyActive ? "disable" : "enable"}`,
+        { method: "PATCH", auth: true },
+      );
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update subject status for this term");
+    }
+  }
+
   return (
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div>
           <Label htmlFor="cs-class-level">Class level</Label>
           <Select value={classLevelId} onValueChange={setClassLevelId}>
@@ -136,6 +184,21 @@ export function ClassSubjectAssignment() {
             </SelectContent>
           </Select>
         </div>
+        <div>
+          <Label htmlFor="cs-term">Term (to disable a subject for it)</Label>
+          <Select value={termId} onValueChange={setTermId} disabled={!academicSessionId}>
+            <SelectTrigger id="cs-term" className="mt-1">
+              <SelectValue placeholder="Select term" />
+            </SelectTrigger>
+            <SelectContent>
+              {terms.map((term) => (
+                <SelectItem key={term.id} value={term.id}>
+                  {term.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {assigned && (
@@ -144,38 +207,90 @@ export function ClassSubjectAssignment() {
             <thead>
               <tr className="border-b border-border text-muted">
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Subject</th>
-                <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Compulsory override</th>
+                <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Compulsory override</th>
+                <th className="py-2 text-[10px] font-medium uppercase tracking-wide">
+                  {termId ? "Status this term" : "Status (select a term to disable)"}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {assigned.map((row) => (
-                <tr key={row.id} className="border-b border-border/60 last:border-none">
-                  <td className="py-2.5 pr-4">
-                    {row.subject.name} <span className="font-mono text-muted">({row.subject.code})</span>
-                  </td>
-                  <td className="py-2.5">
-                    <div className="flex items-center gap-4">
-                      <label className="flex items-center gap-1.5">
-                        <Checkbox
-                          checked={row.isCompulsoryOverride === true}
-                          onCheckedChange={(v) => toggleOverride(row, v === true ? true : null)}
-                        />
-                        Force compulsory
-                      </label>
-                      <label className="flex items-center gap-1.5">
-                        <Checkbox
-                          checked={row.isCompulsoryOverride === false}
-                          onCheckedChange={(v) => toggleOverride(row, v === true ? false : null)}
-                        />
-                        Force non-compulsory
-                      </label>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {assigned.map((row) => {
+                const active = isActiveForTerm(row, row.subjectId);
+                return (
+                  <Fragment key={row.id}>
+                    <tr className="border-b border-border/60 last:border-none">
+                      <td className="py-2.5 pr-4">
+                        {row.subject.name} <span className="font-mono text-muted">({row.subject.code})</span>
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        <div className="flex items-center gap-4">
+                          <label className="flex items-center gap-1.5">
+                            <Checkbox
+                              checked={row.isCompulsoryOverride === true}
+                              onCheckedChange={(v) => toggleOverride(row, v === true ? true : null)}
+                            />
+                            Force compulsory
+                          </label>
+                          <label className="flex items-center gap-1.5">
+                            <Checkbox
+                              checked={row.isCompulsoryOverride === false}
+                              onCheckedChange={(v) => toggleOverride(row, v === true ? false : null)}
+                            />
+                            Force non-compulsory
+                          </label>
+                        </div>
+                      </td>
+                      <td className="py-2.5">
+                        {termId && (
+                          <div className="flex items-center gap-2">
+                            <Badge variant={active ? "success" : "danger"}>{active ? "Active" : "Disabled"}</Badge>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => toggleTermStatus(row, row.subjectId, active)}
+                            >
+                              {active ? "Disable" : "Enable"}
+                            </Button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                    {row.subject.isGroup &&
+                      row.subject.childSubjects.map((child) => {
+                        const childActive = isActiveForTerm(row, child.id);
+                        return (
+                          <tr key={child.id} className="border-b border-border/60 last:border-none">
+                            <td className="py-2 pr-4 pl-6 text-muted">
+                              — {child.name} <span className="font-mono">({child.code})</span>
+                            </td>
+                            <td className="py-2 pr-4" />
+                            <td className="py-2">
+                              {termId && (
+                                <div className="flex items-center gap-2">
+                                  <Badge variant={childActive ? "success" : "danger"}>
+                                    {childActive ? "Active" : "Disabled"}
+                                  </Badge>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => toggleTermStatus(row, child.id, childActive)}
+                                  >
+                                    {childActive ? "Disable" : "Enable"}
+                                  </Button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </Fragment>
+                );
+              })}
               {assigned.length === 0 && (
                 <tr>
-                  <td colSpan={2} className="py-2.5 text-muted">
+                  <td colSpan={3} className="py-2.5 text-muted">
                     No subjects assigned to this class yet.
                   </td>
                 </tr>

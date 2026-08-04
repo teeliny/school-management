@@ -34,6 +34,8 @@ export function GradeScaleManager() {
   const [remark, setRemark] = useState("");
   const [gradePoint, setGradePoint] = useState("");
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+
   const load = useCallback(() => {
     apiFetch<GradeScaleItem[]>("/grade-scales", { auth: true })
       .then(setScales)
@@ -44,27 +46,48 @@ export function GradeScaleManager() {
     load();
   }, [load]);
 
+  function resetForm() {
+    setMinScore("");
+    setMaxScore("");
+    setGrade("");
+    setRemark("");
+    setGradePoint("");
+  }
+
+  function startEdit(scale: GradeScaleItem) {
+    setEditingId(scale.id);
+    setMinScore(String(scale.minScore));
+    setMaxScore(String(scale.maxScore));
+    setGrade(scale.grade);
+    setRemark(scale.remark ?? "");
+    setGradePoint(scale.gradePoint !== null ? String(scale.gradePoint) : "");
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    resetForm();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await apiFetch("/grade-scales", {
-        method: "POST",
-        auth: true,
-        body: {
-          minScore: Number(minScore),
-          maxScore: Number(maxScore),
-          grade,
-          remark: remark || undefined,
-          gradePoint: gradePoint ? Number(gradePoint) : undefined,
-        },
-      });
-      setMinScore("");
-      setMaxScore("");
-      setGrade("");
-      setRemark("");
-      setGradePoint("");
+      const body = {
+        minScore: Number(minScore),
+        maxScore: Number(maxScore),
+        grade,
+        remark: remark || undefined,
+        gradePoint: gradePoint ? Number(gradePoint) : undefined,
+      };
+
+      if (editingId) {
+        await apiFetch(`/grade-scales/${editingId}`, { method: "PATCH", auth: true, body });
+        setEditingId(null);
+      } else {
+        await apiFetch("/grade-scales", { method: "POST", auth: true, body });
+      }
+      resetForm();
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -102,23 +125,28 @@ export function GradeScaleManager() {
                   {scale.gradePoint !== null ? `, ${scale.gradePoint} pts` : ""})
                 </span>
               </span>
-              <AlertDialog open={deletingId === scale.id} onOpenChange={(open) => setDeletingId(open ? scale.id : null)}>
-                <AlertDialogTrigger asChild>
-                  <Button type="button" variant="outline" size="sm">
-                    Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogTitle className="text-lg font-semibold">Delete grade {scale.grade}?</AlertDialogTitle>
-                  <AlertDialogDescription className="mt-2 text-sm text-muted">This cannot be undone.</AlertDialogDescription>
-                  <div className="mt-4 flex justify-end gap-2">
-                    <AlertDialogCancel asChild>
-                      <Button variant="outline">Cancel</Button>
-                    </AlertDialogCancel>
-                    <Button onClick={() => handleDelete(scale.id)}>Confirm delete</Button>
-                  </div>
-                </AlertDialogContent>
-              </AlertDialog>
+              <div className="flex items-center gap-1.5">
+                <Button type="button" variant="outline" size="sm" onClick={() => startEdit(scale)}>
+                  Edit
+                </Button>
+                <AlertDialog open={deletingId === scale.id} onOpenChange={(open) => setDeletingId(open ? scale.id : null)}>
+                  <AlertDialogTrigger asChild>
+                    <Button type="button" variant="outline" size="sm">
+                      Delete
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogTitle className="text-lg font-semibold">Delete grade {scale.grade}?</AlertDialogTitle>
+                    <AlertDialogDescription className="mt-2 text-sm text-muted">This cannot be undone.</AlertDialogDescription>
+                    <div className="mt-4 flex justify-end gap-2">
+                      <AlertDialogCancel asChild>
+                        <Button variant="outline">Cancel</Button>
+                      </AlertDialogCancel>
+                      <Button onClick={() => handleDelete(scale.id)}>Confirm delete</Button>
+                    </div>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
             </div>
           ))}
         {scales?.length === 0 && <p className="text-sm text-muted">No grade scale rows yet.</p>}
@@ -130,9 +158,16 @@ export function GradeScaleManager() {
         <FormField label="Grade (e.g. A1)" id="gs-grade" required value={grade} onChange={(e) => setGrade(e.target.value)} />
         <FormField label="Remark" id="gs-remark" value={remark} onChange={(e) => setRemark(e.target.value)} />
         <FormField label="Grade point" id="gs-point" type="number" value={gradePoint} onChange={(e) => setGradePoint(e.target.value)} />
-        <Button type="submit" disabled={submitting} className="col-span-5">
-          {submitting ? "Creating…" : "Add grade scale row"}
-        </Button>
+        <div className="col-span-5 flex gap-2">
+          <Button type="submit" disabled={submitting} className="w-full">
+            {submitting ? "Saving…" : editingId ? "Save changes" : "Add grade scale row"}
+          </Button>
+          {editingId && (
+            <Button type="button" variant="outline" onClick={cancelEdit}>
+              Cancel
+            </Button>
+          )}
+        </div>
       </form>
     </div>
   );

@@ -64,10 +64,11 @@ model User {
   parentProfile   ParentProfile?
   studentProfile  StudentProfile?
 
-  approvedTimetableSlots      TimetableSlot[]
-  createdAssessmentComponents AssessmentComponent[]
-  generatedReportCards        TermReportCard[]
-  createdReportWindows        ReportWindow[]
+  approvedTimetableSlots           TimetableSlot[]
+  createdAssessmentComponents      AssessmentComponent[]
+  generatedReportCards             TermReportCard[]
+  createdReportWindows             ReportWindow[]
+  disabledClassSubjectTermStatuses ClassSubjectTermStatus[]
 
   @@map("users")
 }
@@ -169,14 +170,15 @@ model Term {
   isCurrent         Boolean         @default(false)
   createdAt         DateTime        @default(now())
 
-  subjectEnrollments   StudentSubjectEnrollment[]
-  timetableSlots       TimetableSlot[]
-  assessmentComponents AssessmentComponent[]
-  subjectTermResults   SubjectTermResult[]
-  termReportCards      TermReportCard[]
-  skillRatings         SkillRating[]
-  reportWindows        ReportWindow[]
-  reportComments       ReportComment[]
+  subjectEnrollments       StudentSubjectEnrollment[]
+  timetableSlots           TimetableSlot[]
+  assessmentComponents     AssessmentComponent[]
+  subjectTermResults       SubjectTermResult[]
+  termReportCards          TermReportCard[]
+  skillRatings             SkillRating[]
+  reportWindows            ReportWindow[]
+  reportComments           ReportComment[]
+  classSubjectTermStatuses ClassSubjectTermStatus[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -467,18 +469,25 @@ model Subject {
   childSubjects       Subject[]   @relation("SubjectGroup")
   // Phase 7 data flag only (PRD §3.3/§3.8) — no scheduling behavior yet.
   requiresCalculation Boolean     @default(false)
+  // Catalogue-wide disable (independent of ClassSubjectTermStatus's
+  // per-class-per-term disable) — hides the subject/child from new class
+  // assignments and blocks new ScoreEntry/StudentSubjectEnrollment writes
+  // for it everywhere, until re-enabled. Existing historical records are
+  // untouched.
+  isActive            Boolean     @default(true)
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 
-  classSubjects       ClassSubject[]
-  enrollments         StudentSubjectEnrollment[]
-  groupWeightsAsGroup SubjectGroupWeight[]       @relation("GroupWeightGroup")
-  groupWeightAsChild  SubjectGroupWeight[]       @relation("GroupWeightChild")
-  staffAssignments    StaffAssignment[]
-  timetableSlots      TimetableSlot[]
-  scoreEntries        ScoreEntry[]
-  subjectTermResults  SubjectTermResult[]
-  reportComments      ReportComment[]
+  classSubjects            ClassSubject[]
+  enrollments              StudentSubjectEnrollment[]
+  groupWeightsAsGroup      SubjectGroupWeight[]       @relation("GroupWeightGroup")
+  groupWeightAsChild       SubjectGroupWeight[]       @relation("GroupWeightChild")
+  staffAssignments         StaffAssignment[]
+  timetableSlots           TimetableSlot[]
+  scoreEntries             ScoreEntry[]
+  subjectTermResults       SubjectTermResult[]
+  reportComments           ReportComment[]
+  classSubjectTermStatuses ClassSubjectTermStatus[]
 
   @@map("subjects")
 }
@@ -499,8 +508,39 @@ model ClassSubject {
   isCompulsoryOverride Boolean?
   createdAt            DateTime        @default(now())
 
+  termStatuses ClassSubjectTermStatus[]
+
   @@unique([classLevelId, subjectId, academicSessionId])
   @@map("class_subjects")
+}
+
+// Per-term override of a ClassSubject's availability (this admin feature:
+// disable a subject — or one child of a grouped subject — for one class in
+// one term without touching the session-wide ClassSubject assignment or any
+// other term). subjectId is either classSubject.subjectId itself (disabling
+// the whole class-subject) or one of that subject's childSubjects (disabling
+// just a sub-subject) — only children get their own ClassSubject row for the
+// group parent, not for each child, so the child needs to be named
+// explicitly here. Absence of a row means active; a row only exists once a
+// subject has been explicitly toggled off for that term (and optionally
+// back on).
+model ClassSubjectTermStatus {
+  id               String       @id @default(uuid())
+  classSubjectId   String
+  classSubject     ClassSubject @relation(fields: [classSubjectId], references: [id], onDelete: Cascade)
+  subjectId        String
+  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  termId           String
+  term             Term         @relation(fields: [termId], references: [id], onDelete: Cascade)
+  isActive         Boolean      @default(true)
+  disabledAt       DateTime?
+  disabledByUserId String?
+  disabledByUser   User?        @relation(fields: [disabledByUserId], references: [id])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([classSubjectId, subjectId, termId])
+  @@map("class_subject_term_statuses")
 }
 
 // Defines how a grouped subject's independently-scored children aggregate
@@ -644,9 +684,13 @@ model AssessmentComponent {
   name            String
   sequence        Int
   maxScore        Decimal                   @db.Decimal(5, 2)
-  inputOpensAt    DateTime
-  inputClosesAt   DateTime
-  publishAt       DateTime
+  // Nullable so a carried-forward component (TermService.create) can exist
+  // in DRAFT with no dates until Admin sets them for the new term — never
+  // auto-copied from the prior term's dates (assessment-sweep.util.ts treats
+  // a null date as "not yet configured," never eligible for auto-transition).
+  inputOpensAt    DateTime?
+  inputClosesAt   DateTime?
+  publishAt       DateTime?
   status          AssessmentComponentStatus @default(DRAFT)
   createdByUserId String
   createdByUser   User                      @relation(fields: [createdByUserId], references: [id])

@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import { Button } from "../atoms/button";
 
-interface SubjectListItem {
+export interface SubjectListItem {
   id: string;
   name: string;
   code: string;
   type: "COMPULSORY" | "GENERAL" | "DEPARTMENT";
   isGroup: boolean;
   requiresCalculation: boolean;
+  departmentId?: string | null;
   department?: { name: string } | null;
 }
 
@@ -22,8 +24,18 @@ const TYPE_VARIANT: Record<SubjectListItem["type"], BadgeVariant> = {
 
 // PRD §3.3: only top-level subjects are listed here (SubjectService.findAll
 // excludes children of a group — they're taught/scored independently but
-// only surfaced via their parent's detail view).
-export function SubjectList({ refreshKey }: { refreshKey?: unknown }) {
+// only surfaced via their parent's detail view). "Edit" hands the subject up
+// to the parent page, which populates the Create-subject form for editing
+// (see CreateSubjectForm's editingSubject prop) rather than editing inline.
+export function SubjectList({
+  canManage,
+  refreshKey,
+  onEdit,
+}: {
+  canManage?: boolean;
+  refreshKey?: unknown;
+  onEdit?: (subject: SubjectListItem) => void;
+}) {
   const [subjects, setSubjects] = useState<SubjectListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,7 +61,8 @@ export function SubjectList({ refreshKey }: { refreshKey?: unknown }) {
             <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Code</th>
             <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Name</th>
             <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Type</th>
-            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Notes</th>
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Notes</th>
+            {canManage && <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Actions</th>}
           </tr>
         </thead>
         <tbody>
@@ -65,10 +78,19 @@ export function SubjectList({ refreshKey }: { refreshKey?: unknown }) {
               <td className="py-2.5 pr-4">
                 <Badge variant={TYPE_VARIANT[subject.type]}>{subject.type}</Badge>
               </td>
-              <td className="py-2.5 flex gap-1.5">
-                {subject.isGroup && <Badge variant="info">Group</Badge>}
-                {subject.requiresCalculation && <Badge variant="muted">Calculation</Badge>}
+              <td className="py-2.5 pr-4">
+                <div className="flex gap-1.5">
+                  {subject.isGroup && <Badge variant="info">Group</Badge>}
+                  {subject.requiresCalculation && <Badge variant="muted">Calculation</Badge>}
+                </div>
               </td>
+              {canManage && (
+                <td className="py-2.5">
+                  <Button type="button" variant="outline" size="sm" onClick={() => onEdit?.(subject)}>
+                    Edit
+                  </Button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

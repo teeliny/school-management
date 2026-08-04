@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge } from "../atoms/badge";
 import { Label } from "../atoms/label";
+import { Checkbox } from "../atoms/checkbox";
 import { FormField } from "../molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import {
@@ -47,6 +48,9 @@ export function SkillAssessmentItemManager() {
   const [category, setCategory] = useState<SkillCategory>("PSYCHOMOTOR");
   const [name, setName] = useState("");
   const [order, setOrder] = useState("1");
+  const [isActive, setIsActive] = useState(true);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true })
@@ -74,17 +78,46 @@ export function SkillAssessmentItemManager() {
     load();
   }, [load]);
 
+  function resetForm() {
+    setCategory("PSYCHOMOTOR");
+    setName("");
+    setOrder("1");
+    setIsActive(true);
+  }
+
+  function startEdit(item: SkillAssessmentItemRow) {
+    setEditingId(item.id);
+    setCategory(item.category);
+    setName(item.name);
+    setOrder(String(item.order));
+    setIsActive(item.isActive);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    resetForm();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await apiFetch("/skill-assessment-items", {
-        method: "POST",
-        auth: true,
-        body: { academicSessionId, category, name, order: Number(order) },
-      });
-      setName("");
+      if (editingId) {
+        await apiFetch(`/skill-assessment-items/${editingId}`, {
+          method: "PATCH",
+          auth: true,
+          body: { category, name, order: Number(order), isActive },
+        });
+        setEditingId(null);
+      } else {
+        await apiFetch("/skill-assessment-items", {
+          method: "POST",
+          auth: true,
+          body: { academicSessionId, category, name, order: Number(order) },
+        });
+      }
+      resetForm();
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -143,25 +176,30 @@ export function SkillAssessmentItemManager() {
                         {item.name} <span className="font-mono text-muted">(order {item.order})</span>{" "}
                         {!item.isActive && <Badge variant="muted">Inactive</Badge>}
                       </span>
-                      <AlertDialog open={deletingId === item.id} onOpenChange={(open) => setDeletingId(open ? item.id : null)}>
-                        <AlertDialogTrigger asChild>
-                          <Button type="button" variant="outline" size="sm">
-                            Delete
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogTitle className="text-lg font-semibold">Delete {item.name}?</AlertDialogTitle>
-                          <AlertDialogDescription className="mt-2 text-sm text-muted">
-                            This cannot be undone.
-                          </AlertDialogDescription>
-                          <div className="mt-4 flex justify-end gap-2">
-                            <AlertDialogCancel asChild>
-                              <Button variant="outline">Cancel</Button>
-                            </AlertDialogCancel>
-                            <Button onClick={() => handleDelete(item.id)}>Confirm delete</Button>
-                          </div>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <div className="flex items-center gap-1.5">
+                        <Button type="button" variant="outline" size="sm" onClick={() => startEdit(item)}>
+                          Edit
+                        </Button>
+                        <AlertDialog open={deletingId === item.id} onOpenChange={(open) => setDeletingId(open ? item.id : null)}>
+                          <AlertDialogTrigger asChild>
+                            <Button type="button" variant="outline" size="sm">
+                              Delete
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogTitle className="text-lg font-semibold">Delete {item.name}?</AlertDialogTitle>
+                            <AlertDialogDescription className="mt-2 text-sm text-muted">
+                              This cannot be undone.
+                            </AlertDialogDescription>
+                            <div className="mt-4 flex justify-end gap-2">
+                              <AlertDialogCancel asChild>
+                                <Button variant="outline">Cancel</Button>
+                              </AlertDialogCancel>
+                              <Button onClick={() => handleDelete(item.id)}>Confirm delete</Button>
+                            </div>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
                     </div>
                   ))}
                   {catItems.length === 0 && <p className="text-sm text-muted">None yet.</p>}
@@ -188,9 +226,24 @@ export function SkillAssessmentItemManager() {
             </div>
             <FormField label="Name (e.g. Punctuality)" id="sai-name" required value={name} onChange={(e) => setName(e.target.value)} />
             <FormField label="Order" id="sai-order" type="number" required value={order} onChange={(e) => setOrder(e.target.value)} />
-            <Button type="submit" disabled={submitting} className="self-end">
-              {submitting ? "Adding…" : "Add item"}
-            </Button>
+            {editingId ? (
+              <div className="flex items-end gap-2 self-end">
+                <label className="mb-2.5 flex items-center gap-1.5 text-[12.5px]">
+                  <Checkbox checked={isActive} onCheckedChange={(v) => setIsActive(v === true)} />
+                  Active
+                </label>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? "Saving…" : "Save changes"}
+                </Button>
+                <Button type="button" variant="outline" onClick={cancelEdit}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button type="submit" disabled={submitting} className="self-end">
+                {submitting ? "Adding…" : "Add item"}
+              </Button>
+            )}
           </form>
         </>
       )}

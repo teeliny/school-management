@@ -7,6 +7,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
+import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
 import { CreateScoreEntryDto } from "./dto/score-entry.dto";
 
 @Injectable()
@@ -14,6 +15,7 @@ export class ScoreEntryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly staffAssignments: StaffAssignmentService,
+    private readonly classSubjectTermStatus: ClassSubjectTermStatusService,
   ) {}
 
   /**
@@ -24,6 +26,21 @@ export class ScoreEntryService {
    */
   async enter(dto: CreateScoreEntryDto, user: RequestUser, isOverride: boolean) {
     let enteredByStaffId: string | null = null;
+
+    const classArm = await this.prisma.classArm.findUniqueOrThrow({ where: { id: dto.classArmId } });
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: dto.assessmentComponentId },
+    });
+
+    // Applies regardless of override: an explicit per-term disable means the
+    // subject doesn't apply to this class this term at all, not just "component
+    // isn't open yet" — Admin re-enables it to unblock scoring again.
+    await this.classSubjectTermStatus.assertActiveForTerm({
+      subjectId: dto.subjectId,
+      classLevelId: classArm.classLevelId,
+      academicSessionId: classArm.academicSessionId,
+      termId: component.termId,
+    });
 
     if (isOverride) {
       const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
@@ -40,9 +57,6 @@ export class ScoreEntryService {
       }
       enteredByStaffId = assignment.staffId;
 
-      const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
-        where: { id: dto.assessmentComponentId },
-      });
       if (component.status !== AssessmentComponentStatus.OPEN) {
         throw new BadRequestException("This assessment component is not open for score entry");
       }

@@ -19,8 +19,45 @@ import { CreateAcademicSessionDto, UpdateAcademicSessionDto } from "./dto/academ
 export class AcademicSessionService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Subject assignments are meant to stay the same session-to-session by
+   * default — admin only acts when curriculum/teacher availability changes
+   * (disabling a subject for a specific term, or assigning/unassigning one
+   * outright) — so a new session starts by carrying forward the
+   * chronologically-preceding session's ClassSubject rows (including any
+   * isCompulsoryOverride) rather than starting empty. Per-term disables
+   * (ClassSubjectTermStatus) are keyed to specific Term rows and are
+   * intentionally NOT carried forward — a disable from an old session's term
+   * shouldn't silently apply to the new session's terms.
+   */
   create(dto: CreateAcademicSessionDto) {
-    return this.prisma.academicSession.create({ data: dto });
+    return this.prisma.$transaction(async (tx) => {
+      const session = await tx.academicSession.create({ data: dto });
+
+      const previousSession = await tx.academicSession.findFirst({
+        where: { id: { not: session.id }, startDate: { lt: session.startDate } },
+        orderBy: { startDate: "desc" },
+      });
+
+      if (previousSession) {
+        const previousAssignments = await tx.classSubject.findMany({
+          where: { academicSessionId: previousSession.id },
+        });
+        if (previousAssignments.length > 0) {
+          await tx.classSubject.createMany({
+            data: previousAssignments.map((assignment) => ({
+              classLevelId: assignment.classLevelId,
+              subjectId: assignment.subjectId,
+              academicSessionId: session.id,
+              isCompulsoryOverride: assignment.isCompulsoryOverride,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      return session;
+    });
   }
 
   findAll() {

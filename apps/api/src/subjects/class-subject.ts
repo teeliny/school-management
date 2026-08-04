@@ -21,13 +21,16 @@ export class ClassSubjectService {
   findAll(filters: { classLevelId?: string; academicSessionId?: string }) {
     return this.prisma.classSubject.findMany({
       where: { classLevelId: filters.classLevelId, academicSessionId: filters.academicSessionId },
-      include: { subject: true },
+      include: { subject: { include: { childSubjects: true } }, termStatuses: { include: { term: true } } },
       orderBy: { createdAt: "asc" },
     });
   }
 
   findOne(id: string) {
-    return this.prisma.classSubject.findUniqueOrThrow({ where: { id }, include: { subject: true } });
+    return this.prisma.classSubject.findUniqueOrThrow({
+      where: { id },
+      include: { subject: { include: { childSubjects: true } }, termStatuses: { include: { term: true } } },
+    });
   }
 
   update(id: string, dto: UpdateClassSubjectDto) {
