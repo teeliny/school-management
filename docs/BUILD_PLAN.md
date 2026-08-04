@@ -10,7 +10,7 @@
 - **This is a single-tenant application.** One deployment, one database, per school (PRD §2.2). That removes an entire category of foundational work a multi-tenant SaaS would need (tenant resolution, connection-pooling-per-tenant, provisioning automation, migration fleet rollout) — don't reintroduce any of it. Phase 1 below is correspondingly light.
 - **Bottom-up through the module dependency table** (ARCHITECTURE §5): `IdentityModule` before `AcademicStructureModule` before `SubjectModule` before `AssessmentModule`, etc. Building out of that order means mocking dependencies you'll throw away in a week.
 - **Build the abstractions that are still real, even with one implementation.** `StorageAdapter` (Supabase Storage today) is cheap to build correctly now and expensive to retrofit later (ARCHITECTURE §5, §15) — don't cut it to "save time." The database connection, by contrast, needs no such abstraction — it's ordinary Prisma config, nothing to build there beyond using environment variables properly.
-- **Plumbing before logic, where a pattern repeats.** The async dispatch/callback/timeout-sweep pattern is used twice (AI scheduling, ARCHITECTURE §9; Monnify reconciliation, ARCHITECTURE §10) — build it once, generically, the first time it's needed, and reuse it the second time rather than re-solving it.
+- **Plumbing before logic, where a pattern repeats.** The async dispatch/callback/timeout-sweep pattern is used twice (AI scheduling, ARCHITECTURE §9; payment-gateway reconciliation, ARCHITECTURE §10) — build it once, generically, the first time it's needed, and reuse it the second time rather than re-solving it.
 - **Resist scope creep into PRD Non-Goals** (§1.2, §10) at every phase: no self-registration screens, no in-app "list of schools" or fleet dashboard, no Vault/KMS service, no native mobile, no automated timetable optimization beyond the CP-SAT solver. If a phase's work starts drifting into one of these, that's a signal to stop and check the PRD, not a sign the plan is incomplete.
 
 ---
@@ -80,7 +80,7 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 *(maps to PRD §9 Phase 4, PRD §3.6, §3.11)*
 
-1. `AssessmentComponent` CRUD (Admin-only) with the per-(term, classLevel) structure-completeness validation (components must sum to 100 before any can open) and the three-date scheduling model (inputOpensAt/inputClosesAt/publishAt) — plus a scheduled sweep (BullMQ, same shape as the Monnify reconciliation / scheduling-timeout-sweep pattern in ARCHITECTURE.md §8–§10) that transitions status off those dates, with Admin override always available regardless of schedule.
+1. `AssessmentComponent` CRUD (Admin-only) with the per-(term, classLevel) structure-completeness validation (components must sum to 100 before any can open) and the three-date scheduling model (inputOpensAt/inputClosesAt/publishAt) — plus a scheduled sweep (BullMQ, same shape as the payment-gateway reconciliation / scheduling-timeout-sweep pattern in ARCHITECTURE.md §8–§10) that transitions status off those dates, with Admin override always available regardless of schedule.
 2. `ScoreEntry` with assignment-scoped write permission (only the `SUBJECT_TEACHER` assigned to that subject+class, or Admin override), gated on the parent component's `OPEN` status.
 3. `SubjectTermResult` aggregation job — including grouped-subject weighting via `SubjectGroupWeight` (child scores roll up into the parent's grade) — triggered when a class level's components for a term all close.
 4. `GradeScale`.
@@ -94,18 +94,21 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 ---
 
-## 7. Phase 5 — Operations: Attendance, Fees, Monnify
+## 7. Phase 5 — Operations: Attendance, Fees, Payments (Monnify default + Paystack)
 
 *(maps to PRD §9 Phase 5)*
 
 1. `AttendanceSession`/`AttendanceRecord` — daily (class teacher) and per-period (subject teacher). Also build the "school-days-opened" auto-calculation design decided during Phase 4 (PRD §3.7): term date range minus weekends minus declared public holidays (a new holiday-declaration concept, e.g. `SchoolHoliday`), counted per a school-wide `DAILY`/`MORNING_AND_AFTERNOON` granularity setting — this is what backfills the `FULL_TERM` `TermReportCard`'s attendance line that Phase 4 ships without (PRD §3.6).
-2. `FeeStructure`, `Invoice`, `InvoiceLineItem`, `Payment`, `Receipt`, `PaymentGatewayConfig` — write access scoped to Super-Admin/Bursar only, per PRD §5 footnote 3 (Admin has no visibility into this domain at all). This is the first place the Phase 0 envelope-encryption stub gets wired to a real secret (`PaymentGatewayConfig.apiKey`/`secretKey`).
-3. **Monnify integration** (PRD §6.7, ARCHITECTURE §10):
+2. `FeeStructure`, `Invoice`, `InvoiceLineItem`, `Payment`, `Receipt`, `PaymentGatewayConfig`, `DiscountRequest` — write access scoped to Super-Admin/Bursar only, per PRD §5 footnote 3 (Admin has no visibility into this domain at all); approval of `PENDING_APPROVAL` payments and `DiscountRequest`s is Super-Admin only, not Bursar (PRD §6.7). This is the first place the Phase 0 envelope-encryption stub gets wired to a real secret (`PaymentGatewayConfig.apiKey`/`secretKey`, now one encrypted row per provider rather than a single singleton row).
+3. **`PaymentGatewayAdapter` interface first, provider adapters second** (PRD §6.7, ARCHITECTURE §5, §10) — same "build the abstraction even with one implementation" principle as `StorageAdapter` (§1): define `initTransaction`/`verifyTransaction`/`verifyWebhookSignature` once, then implement `MonnifyAdapter` (bound by default, `PAYMENT_GATEWAY_PROVIDER=MONNIFY`) and `PaystackAdapter` behind it. `FeesModule` and the webhook controller call only the interface.
    - Checkout initiation (reference unique per invoice — no tenant-routing concern to design around, ARCHITECTURE §10).
-   - Webhook handler: verify signature → resolve `Payment`/`Invoice` directly by reference → idempotency check on `monnifyTransactionReference` → update → generate `Receipt` → notify.
-   - Reconciliation polling job for missed webhooks — **this is the first occurrence of the generic async dispatch/timeout-sweep pattern** that Phase 7's AI scheduling reuses; build it as a reusable pattern here rather than a one-off, so Phase 7 doesn't redesign it.
+   - Webhook handler: verify signature via the active adapter → resolve `Payment`/`Invoice` directly by reference → idempotency check on `gatewayTransactionReference` → update (recording which `gatewayProvider` handled it) → generate `Receipt` → notify.
+   - Reconciliation polling job for missed webhooks, per the `Payment`'s own recorded `gatewayProvider` — **this is the first occurrence of the generic async dispatch/timeout-sweep pattern** that Phase 7's AI scheduling reuses; build it as a reusable pattern here rather than a one-off, so Phase 7 doesn't redesign it.
+4. **Manual bank-transfer payment workflow** (PRD FR7.3a/FR7.3b, ARCHITECTURE §10.2): Bursar submits a `Payment(method=BANK_TRANSFER_MANUAL)` with a proof-of-payment file via `StorageAdapter` → `PENDING_APPROVAL`; Super-Admin reviews (approve → `SUCCESSFUL`, generate `Receipt`, notify Bursar + parent; reject → `REJECTED` with reason, notify Bursar). This is a synchronous approval action, not a queued job — it doesn't touch the `payment-reconciliation` queue from step 3.
+5. **Discount request workflow** (PRD FR7.8, ARCHITECTURE §10.3): Bursar raises a `DiscountRequest` against an invoice (termly by construction, since an invoice is already per-term); Super-Admin approves (adds a `DISCOUNT` `InvoiceLineItem`, recomputes outstanding balance) or rejects (notify Bursar with reason).
+6. **Receipts and payment history** (PRD FR7.4/FR7.4a, ARCHITECTURE §10.4): unify receipt generation across all three paths above (gateway webhook/poll, manual approval, cash entry); build the parent-facing invoice/receipt history view and the Bursar/Super-Admin school-wide payment ledger view.
 
-**Done when:** a parent can complete a real (sandbox) Monnify transaction end-to-end and see the invoice flip to paid with a receipt generated — verified via **both** paths independently: the normal webhook path, and a forced-webhook-failure test proving the polling fallback alone resolves the payment (PRD FR7.6).
+**Done when:** a parent can complete a real (sandbox) transaction end-to-end on the **default (Monnify)** gateway and see the invoice flip to paid with a receipt generated — verified via **both** paths independently: the normal webhook path, and a forced-webhook-failure test proving the polling fallback alone resolves the payment (PRD FR7.6) — **and** the same checkout flow works against the Paystack sandbox after only flipping `PAYMENT_GATEWAY_PROVIDER` (no code change), proving the adapter abstraction actually holds. Additionally: a Bursar-submitted manual bank-transfer payment reaches a parent's confirmed invoice only after Super-Admin approval (never before, and never approvable by Bursar or Admin); a rejected submission notifies the Bursar with a reason and never touches the invoice; a Bursar-raised discount request changes the invoice's outstanding balance only after Super-Admin approval, correctly scoped to that one term's invoice; and a parent, Bursar, and Super-Admin can each pull up historical payment records at the appropriate scope (own wards vs. school-wide).
 
 ---
 
@@ -127,7 +130,7 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 *(maps to PRD §9 Phase 7)* — deliberately last, since it depends on `Subject.requiresCalculation` (Phase 3), `StaffAssignment` (Phase 2), and `AssessmentComponent` (Phase 4) all already existing.
 
-1. **Async plumbing first, solver logic second**: `ScheduleGenerationRequest` (PRD §3.8) + BullMQ dispatch job + callback endpoint with per-request `callbackToken` + timeout sweep (ARCHITECTURE §9). If Phase 5's Monnify reconciliation already established this generic async pattern, this step is mostly reuse, not new design.
+1. **Async plumbing first, solver logic second**: `ScheduleGenerationRequest` (PRD §3.8) + BullMQ dispatch job + callback endpoint with per-request `callbackToken` + timeout sweep (ARCHITECTURE §9). If Phase 5's payment-gateway reconciliation already established this generic async pattern, this step is mostly reuse, not new design.
 2. `scheduling-engine` service (Python/FastAPI + OR-Tools CP-SAT): class timetable model — subject/day/period assignment honoring `SchedulingConstraint` rows, `requiresCalculation` morning-placement and spread rules.
 3. Extend to exam timetable generation (calculation-subject-first, minimum gap between calculation exams).
 4. Extend to invigilation assignment (staff eligibility exclusion: `BURSAR`/`PRINCIPAL`/`VICE_PRINCIPAL`, load balancing, no double-booking).
@@ -139,7 +142,7 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 ## 10. Cross-Cutting Work (Not Owned by One Phase)
 
-- **Observability** (ARCHITECTURE §13): start minimal in Phase 0 (health checks), extend as each phase introduces a new failure surface (queue depth once BullMQ exists in Phase 1, webhook latency once Monnify exists in Phase 5).
+- **Observability** (ARCHITECTURE §13): start minimal in Phase 0 (health checks), extend as each phase introduces a new failure surface (queue depth once BullMQ exists in Phase 1, gateway webhook latency and pending-manual-approval count once payments exist in Phase 5).
 - **Security hardening passes**: one dedicated pass after Phase 2 (once RBAC has real rules to attack — permission-boundary fuzzing, rate-limit verification), and one more before this school goes live (secret-rotation drill for the envelope-encryption master key, dependency audit).
 - **CI/CD maturity**: minimal pipeline in Phase 0; add the migration-diff gate alongside Phase 1. If this same pipeline is later templated to deploy multiple schools' independent instances (ARCHITECTURE §12), that templating work happens whenever a second deployment is actually needed — not speculatively now.
 
@@ -149,7 +152,7 @@ Not a PRD-numbered phase (PRD §9 starts at product Phase 1) — this is the tec
 
 - **Track A (backend core)**: Phase 1 foundation → Phase 3/4 academics & assessment. This track owns auth/identity and can't be parallelized much within itself — it's inherently sequential early on.
 - **Track B (frontend)**: Next.js shell + design system can start as soon as `packages/types` has stub DTOs for whatever Phase 1 exposes, and stays roughly one phase behind whichever backend phase is active — never blocking, but never far ahead either, since it needs real contracts to build against.
-- **Track C (specialists, self-contained)**: Monnify integration (Phase 5) and the AI scheduling engine (Phase 7) don't block and aren't blocked by the academics/assessment work in Phases 3–4 — a specialist (or a second engineer) can pick either up in parallel once Phase 1's async-plumbing pattern exists, rather than waiting for Phase 5/7 to come up in strict sequence.
+- **Track C (specialists, self-contained)**: the payment gateway integration (Phase 5) and the AI scheduling engine (Phase 7) don't block and aren't blocked by the academics/assessment work in Phases 3–4 — a specialist (or a second engineer) can pick either up in parallel once Phase 1's async-plumbing pattern exists, rather than waiting for Phase 5/7 to come up in strict sequence. Within Phase 5 itself, the `PaystackAdapter` is a natural second-engineer task once the `PaymentGatewayAdapter` interface and `MonnifyAdapter` exist — it doesn't touch `FeesModule`'s core invoice/receipt logic.
 
 ---
 

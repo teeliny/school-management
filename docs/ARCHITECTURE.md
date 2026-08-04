@@ -10,7 +10,7 @@
 - **Modular monolith, not microservices** — one NestJS application, internally organized into strict feature modules with clear boundaries (§5). At this stage (pre-launch, small team), microservices add deployment/ops overhead without a corresponding benefit — there's no module here that needs to scale, deploy, or fail independently of the others *except one* (below).
 - **One deliberate exception: the AI scheduling engine is a separate service.** Constraint-solving (OR-Tools CP-SAT) is best supported in Python, not Node — rather than fight the ecosystem, it's a small, stateless Python service the NestJS monolith calls internally (§9). This is the one place "microservice" is the right call, and only because of the language boundary, not for scaling reasons.
 - **Single-tenant, one application per school** — carried over from the PRD (§2.2 there). Each school's deployment talks to exactly one database. There is no dynamic tenant-resolution machinery anywhere in this codebase — no per-request "which database" step, no tenant claim, no multi-client connection pool. §6 covers what's left of that concern, which is not much.
-- **Everything else follows from the PRD's non-functional requirements** (§7 there): isolation by deployment, invitation-only auth, Monnify as the only payment integration.
+- **Everything else follows from the PRD's non-functional requirements** (§7 there): isolation by deployment, invitation-only auth, a pluggable payment gateway integration (Monnify default, Paystack also supported — §5, §10) rather than a single hardcoded provider.
 
 ---
 
@@ -28,15 +28,15 @@ flowchart LR
 
     WEB[Next.js Web App]
     API[NestJS API - modular monolith]
-    MNF[(Monnify)]
+    PGW[(Payment Gateway -<br/>Monnify default / Paystack)]
     RSD[(Resend)]
     S3[(S3-compatible storage)]
 
     SA & AD & ST & PA & SU --> WEB
     WEB -- REST + WebSocket --> API
-    API -- checkout / webhook --> MNF
+    API -- checkout / webhook --> PGW
     API -- transactional email --> RSD
-    API -- files, PDFs --> S3
+    API -- files, PDFs, proof-of-payment --> S3
 ```
 
 Every user authenticates against **this one deployment's database** — there is no multi-database resolution to reason about, and no actor in the system that spans more than one school. If the same product serves other schools, that's a structurally identical, entirely separate instance of this same diagram, not another branch inside this one.
@@ -71,7 +71,7 @@ flowchart TB
     end
 
     subgraph External
-        MNF[(Monnify)]
+        PGW[(Payment Gateway -<br/>Monnify default / Paystack)]
         RSD[(Resend)]
         S3O[(Object storage)]
     end
@@ -84,14 +84,14 @@ flowchart TB
     BQ <-- jobs --> REDIS
     BQ --> DB
     BQ --> RSD
-    BQ --> MNF
+    BQ --> PGW
     MODULES -- async dispatch --> CPSAT
     WS <-- pub/sub across instances --> REDIS
     MODULES --> S3O
-    MNF -- webhook --> HTTP
+    PGW -- webhook --> HTTP
 ```
 
-Two deployable NestJS artifacts share one codebase: an **API process** (handles HTTP + WebSocket) and a **worker process** (drains BullMQ queues). Splitting them lets a slow report-generation job or a Monnify reconciliation sweep never compete with request-handling threads, and lets you scale each independently — both still talk to the same single database.
+Two deployable NestJS artifacts share one codebase: an **API process** (handles HTTP + WebSocket) and a **worker process** (drains BullMQ queues). Splitting them lets a slow report-generation job or a payment-reconciliation sweep never compete with request-handling threads, and lets you scale each independently — both still talk to the same single database.
 
 ---
 
@@ -139,14 +139,16 @@ Each module below corresponds to a section of PRD §3. Arrows are compile-time d
 | `AttendanceModule` | `AttendanceSession`, `AttendanceRecord` | `StaffModule` |
 | `TimetableModule` | `TimetableSlot` | `SubjectModule`, `StaffModule` |
 | `ExamSchedulingModule` | `ExamSchedule`, `InvigilationAssignment`, `SchedulingConstraint`, `ScheduleGenerationRequest` | `AssessmentModule`, `StaffModule`, calls out to `scheduling-engine` (§9) |
-| `FeesModule` | `FeeStructure`, `Invoice`, `InvoiceLineItem`, `Payment`, `Receipt`, `PaymentGatewayConfig` | `AcademicStructureModule` |
-| `MonnifyModule` | (no new tables — integration logic) | `FeesModule` |
+| `FeesModule` | `FeeStructure`, `Invoice`, `InvoiceLineItem`, `Payment`, `Receipt`, `PaymentGatewayConfig`, `DiscountRequest` | `AcademicStructureModule` |
+| `PaymentGatewayModule` | (no new tables — integration logic) | `FeesModule` |
 | `NotificationsModule` | `NotificationTemplate`, `Notification`, `EmailLog`, `NotificationPreference` | `IdentityModule` |
 | `AuditModule` | `AuditLog` | injected into every write-path module as a cross-cutting interceptor |
 
 `AuditModule` is intentionally cross-cutting (a Nest interceptor, not something other modules import and call) — this is how "log who changed what" stays consistent without every module remembering to call it.
 
-**`StorageModule`** (used by `AssessmentModule` for report-card PDFs, `IdentityModule` for avatars, etc.) wraps file storage behind a small `StorageAdapter` interface (`put`, `getSignedUrl`, `delete`). Today's concrete implementation talks to Supabase Storage (S3-compatible, convenient if the database is also on Supabase — PRD §2.1), but nothing outside this one module knows that — moving to AWS S3 or another S3-compatible provider later means writing a new adapter and changing one config value, not touching every place a report card or avatar gets uploaded.
+**`StorageModule`** (used by `AssessmentModule` for report-card PDFs, `IdentityModule` for avatars, `FeesModule` for Bursar-uploaded proof-of-payment images/PDFs, etc.) wraps file storage behind a small `StorageAdapter` interface (`put`, `getSignedUrl`, `delete`). Today's concrete implementation talks to Supabase Storage (S3-compatible, convenient if the database is also on Supabase — PRD §2.1), but nothing outside this one module knows that — moving to AWS S3 or another S3-compatible provider later means writing a new adapter and changing one config value, not touching every place a report card or avatar gets uploaded.
+
+**`PaymentGatewayModule`** follows the same swap-later shape as `StorageModule`: a `PaymentGatewayAdapter` interface (`initTransaction`, `verifyTransaction`, `verifyWebhookSignature`) with one concrete implementation per provider — `MonnifyAdapter` and `PaystackAdapter` today. `FeesModule` only ever calls the interface, never a provider SDK directly. Which adapter is bound at boot is decided by `PAYMENT_GATEWAY_PROVIDER` (default `MONNIFY`), read once via NestJS DI the same way `DATABASE_URL`/storage config are — see §10 for the full flow and why credentials for more than one provider can be configured at once.
 
 ---
 
@@ -157,7 +159,7 @@ There is deliberately very little to say here, and that's the point. With one da
 - A single Prisma client is instantiated **once, at process startup**, from environment configuration (`DATABASE_URL` and friends) and reused for the lifetime of the process via normal NestJS dependency injection.
 - No middleware resolves a tenant, no request context carries a tenant identifier, no connection factory maintains a cache of per-tenant clients. A service simply injects the Prisma client and queries — the same as any ordinary single-tenant application.
 - The JWT carries `sub` (user id) and `roles` — nothing tenant-related, because there's nothing to disambiguate.
-- Environment configuration (database connection, Redis, Resend key, Monnify credentials for this school, storage credentials, the envelope-encryption master key) is exactly what any single-tenant app needs — and it's still config, not hardcoded — so moving any one of these to a different provider later is a configuration change plus a redeploy, not an application rewrite.
+- Environment configuration (database connection, Redis, Resend key, this school's payment gateway credentials plus `PAYMENT_GATEWAY_PROVIDER` selecting which one is active, storage credentials, the envelope-encryption master key) is exactly what any single-tenant app needs — and it's still config, not hardcoded — so moving any one of these to a different provider later is a configuration change plus a redeploy, not an application rewrite.
 
 ### 6.1 New School Setup
 
@@ -198,14 +200,14 @@ flowchart TB
 - **No tenant/school-selection step** — login is exactly as simple as it looks above, because there's exactly one school's `User` table to check credentials against.
 - **Invitation acceptance** is a distinct, unauthenticated-but-tokenized flow: `GET /invitations/:token` validates the hashed token server-side, and `POST /invitations/:token/accept` sets the password and activates the account — never a generic "create account" endpoint.
 - **RBAC via CASL**, not hand-rolled `if (role === 'ADMIN')` checks scattered across controllers. An `AbilityFactory` builds a per-request `Ability` from the user's roles + active `StaffAssignment`/`UserRole` rows (e.g. "can update `ScoreEntry` where `subjectId` in [ids from my active SUBJECT_TEACHER assignments]"), and a single `PoliciesGuard` enforces it. This is what makes scoped rules like "class teacher sees only her class" (PRD §5) enforceable in one place instead of re-implemented per-endpoint — this is the permission boundary that actually matters in a single-tenant app, since the tenant boundary is handled for free by deployment isolation.
-- **Secrets**: `PaymentGatewayConfig.apiKey`/`secretKey` are never stored as plaintext columns — envelope-encrypted at the application layer before being written, decrypted only in-memory when a Monnify call is made. The database connection string itself is ordinary deployment configuration (an environment variable/secret managed by the hosting platform), not something the application encrypts and stores in a table — there's no dynamic database-secret management to do when there's only ever one connection.
+- **Secrets**: `PaymentGatewayConfig.apiKey`/`secretKey` are never stored as plaintext columns, for any provider row — envelope-encrypted at the application layer before being written, decrypted only in-memory when a call to that provider's API is made (via the bound `PaymentGatewayAdapter`, §5). The database connection string itself is ordinary deployment configuration (an environment variable/secret managed by the hosting platform), not something the application encrypts and stores in a table — there's no dynamic database-secret management to do when there's only ever one connection.
 
 ---
 
 ## 8. Real-Time & Background Jobs
 
 - **WebSocket Gateway** uses the Socket.IO Redis adapter so a notification emitted from any API or worker process instance reaches a client connected to *any* other instance — relevant as soon as this school's deployment runs more than one API process behind a load balancer. Rooms are scoped `user:{userId}` — no tenant prefix needed.
-- **BullMQ queues**, each with its own concurrency/retry policy: `email` (Resend sends, exponential backoff, max 3 attempts), `report-card-generation` (PDF rendering, CPU-heavier, lower concurrency), `assessment-schedule-sweep` (transitions `AssessmentComponent`/`ReportWindow` status off their date fields, PRD §3.6 — same generic scheduled-sweep shape as `payment-reconciliation`/`scheduling-timeout-sweep` below, reused rather than redesigned per BUILD_PLAN §1's "plumbing before logic, where a pattern repeats" principle), `payment-reconciliation` (§10), `scheduling-solve-dispatch` (hands a solve request to the scheduling-engine, §9), `scheduling-timeout-sweep` (catches a `ScheduleGenerationRequest` that never got a callback, §9). The scheduling callback itself (`POST /internal/scheduling-callback/:requestId`) is handled directly by a controller, not queued — it's a single quick write, not a job. All queued work runs in the `worker` process (§3), not the API process, so a burst of report-card generation never delays a login request.
+- **BullMQ queues**, each with its own concurrency/retry policy: `email` (Resend sends, exponential backoff, max 3 attempts), `report-card-generation` (PDF rendering, CPU-heavier, lower concurrency), `assessment-schedule-sweep` (transitions `AssessmentComponent`/`ReportWindow` status off their date fields, PRD §3.6 — same generic scheduled-sweep shape as `payment-reconciliation`/`scheduling-timeout-sweep` below, reused rather than redesigned per BUILD_PLAN §1's "plumbing before logic, where a pattern repeats" principle), `payment-reconciliation` (§10 — polls whichever gateway a given `PENDING` `Payment.gatewayProvider` was made through via that provider's `PaymentGatewayAdapter`; `PENDING_APPROVAL` manual bank-transfer submissions are never enqueued here, since they resolve only through explicit Super-Admin review, not polling), `scheduling-solve-dispatch` (hands a solve request to the scheduling-engine, §9), `scheduling-timeout-sweep` (catches a `ScheduleGenerationRequest` that never got a callback, §9). The scheduling callback itself (`POST /internal/scheduling-callback/:requestId`) is handled directly by a controller, not queued — it's a single quick write, not a job. All queued work runs in the `worker` process (§3), not the API process, so a burst of report-card generation never delays a login request.
 
 ---
 
@@ -237,38 +239,104 @@ sequenceDiagram
 - **`ScheduleGenerationRequest` (PRD §3.8) is the tracking record for the in-flight request** — it's what lets the UI show "generating…" and what a timeout sweep (below) checks, since there are no `TimetableSlot`/`ExamSchedule` rows to point to until the callback arrives.
 - **The Python service is stateless and has no database credentials at all** — it receives a fully-formed constraint payload plus a callback URL/token, and calls back with a result; it never touches Postgres directly. This keeps "only NestJS talks to the database" true, and means this component holds no data belonging to this school (or any school) at rest.
 - **Callback authentication**: `callbackToken` is a single-use, per-request secret generated when the job is dispatched, not a shared static API key — so a stray or replayed callback can't be mistaken for a legitimate one, and it's scoped to exactly one `ScheduleGenerationRequest`.
-- **Timeout fallback (mirrors the Monnify reconciliation pattern in §10)**: a scheduled BullMQ job checks for any `ScheduleGenerationRequest` still `QUEUED`/`SOLVING` past a configurable threshold (default 10 minutes, PRD FR6.9) and marks it `TIMED_OUT` with a user-facing notification — a crashed or lost solver run is never silently stuck.
+- **Timeout fallback (mirrors the payment reconciliation pattern in §10)**: a scheduled BullMQ job checks for any `ScheduleGenerationRequest` still `QUEUED`/`SOLVING` past a configurable threshold (default 10 minutes, PRD FR6.9) and marks it `TIMED_OUT` with a user-facing notification — a crashed or lost solver run is never silently stuck.
 - **Hosting: serverless, scale-to-zero** (e.g. a scale-to-zero container platform or a cloud function), not an always-on container group — exam/invigilation generation is bursty and infrequent (a handful of runs per school per term), so paying only per invocation is the materially cheaper choice here versus keeping compute reserved for a workload that's idle most of the time. Because the service is stateless and holds no school-specific data, if the same team ever operates several schools' deployments, this one component is a reasonable candidate to share across them (§15) — unlike everything else in the architecture, sharing it wouldn't violate single-tenancy, since it never persists anything.
 
 ---
 
-## 10. Payments Architecture (Monnify)
+## 10. Payments Architecture (Gateway + Manual)
+
+Three distinct paths can bring a `Payment` to `SUCCESSFUL`: the online gateway checkout (default Monnify, Paystack also supported), a Bursar-recorded `CASH` entry, and a Bursar-submitted, Super-Admin-approved manual bank transfer. All three converge on the same `Invoice`/`Receipt` update and notification logic — there is exactly one place that flips an invoice to paid and generates a receipt, not three.
+
+### 10.1 Gateway checkout (default: Monnify)
 
 ```mermaid
 sequenceDiagram
     participant P as Parent (Next.js)
-    participant Nest as FeesModule / MonnifyModule
-    participant Mnf as Monnify
+    participant Nest as FeesModule / PaymentGatewayModule
+    participant Adp as PaymentGatewayAdapter<br/>(bound: Monnify or Paystack)
+    participant Gw as Active Gateway
 
     P->>Nest: Initiate payment for Invoice X
     Nest->>Nest: Generate reference INV-{invoiceId}-{ts}
-    Nest->>Mnf: Init Transaction API (amount, reference, contractCode)
-    Mnf-->>Nest: checkout URL
-    Nest-->>P: redirect to Monnify hosted checkout
-    P->>Mnf: completes payment (card/transfer/USSD)
-    Mnf->>Nest: Webhook: transaction completed (reference, transactionRef, status)
-    Nest->>Nest: Verify webhook signature (Monnify secret hash)
+    Nest->>Adp: initTransaction(amount, reference, config)
+    Adp->>Gw: provider-specific init-transaction call
+    Gw-->>Adp: checkout URL
+    Adp-->>Nest: checkout URL
+    Nest-->>P: redirect to gateway-hosted checkout
+    P->>Gw: completes payment (card/transfer/USSD)
+    Gw->>Nest: Webhook: transaction completed (reference, transactionRef, status)
+    Nest->>Adp: verifyWebhookSignature(payload, headers)
+    Adp-->>Nest: valid / invalid
     Nest->>Nest: Resolve Payment/Invoice directly by reference
-    Nest->>Nest: Idempotency check on transactionRef
-    Nest->>Nest: Update Payment/Invoice, generate Receipt
+    Nest->>Nest: Idempotency check on gatewayTransactionReference
+    Nest->>Nest: Update Payment (status=SUCCESSFUL, gatewayProvider recorded)/Invoice, generate Receipt
     Nest->>P: Notification (in-app + email)
 ```
 
-**Webhook handling is simple by construction**: a Monnify webhook arriving at this deployment can only ever mean a payment for *this* school, since there is no other school's data reachable from here. There's no tenant-slug encoding, no cross-deployment lookup, no ambiguity to resolve — the reference just needs to be unique per invoice within this one database, and the webhook handler looks it up directly. This is meaningfully simpler than a multi-tenant system would need, where the webhook has to first figure out *which* tenant it belongs to before it can do anything else.
+**Adapter selection**: `PaymentGatewayModule` binds a single `PaymentGatewayAdapter` implementation at process boot, chosen by the `PAYMENT_GATEWAY_PROVIDER` environment variable (default `MONNIFY`; `PAYSTACK` also supported) — the same "interface + config-selected implementation" shape as `StorageAdapter` (§5). `FeesModule` calls only the interface (`initTransaction`, `verifyTransaction`, `verifyWebhookSignature`); it never imports a provider SDK directly. Adding a third provider later (e.g. Flutterwave, PRD §10 open questions) means writing one more adapter class, not touching `FeesModule`.
 
-**Reconciliation fallback:** a scheduled BullMQ job polls Monnify's transaction-status API for any `Payment` still `PENDING` past 15 minutes — covers the case where a webhook is lost to a network blip, so a parent's payment is never silently stuck.
+**Webhook handling is simple by construction**: a gateway webhook arriving at this deployment can only ever mean a payment for *this* school, since there is no other school's data reachable from here. There's no tenant-slug encoding, no cross-deployment lookup, no ambiguity to resolve — the reference just needs to be unique per invoice within this one database, and the webhook handler looks it up directly. This is meaningfully simpler than a multi-tenant system would need, where the webhook has to first figure out *which* tenant it belongs to before it can do anything else. Each adapter implements its own `verifyWebhookSignature` against that provider's own scheme (Monnify's secret-hash header, Paystack's `x-paystack-signature`) — the webhook controller itself is provider-agnostic, dispatching to whichever adapter is active.
 
-**Per-school credentials:** the school owns its Monnify merchant account (`PaymentGatewayConfig`, PRD §3.9) — nothing outside this deployment ever touches or intermediates the school's fee money.
+**Reconciliation fallback:** a scheduled BullMQ job polls the active gateway's transaction-status API (via the same adapter) for any `Payment` still `PENDING` past 15 minutes — covers the case where a webhook is lost to a network blip, so a parent's payment is never silently stuck. Each `Payment` records which `gatewayProvider` it went through, so the sweep always polls the correct provider's API even for a payment initiated before the school last switched its default.
+
+**Per-school credentials:** the school owns its own merchant account per configured provider (`PaymentGatewayConfig`, PRD §3.9) — nothing outside this deployment ever touches or intermediates the school's fee money. A school can keep both Monnify and Paystack credentials configured simultaneously; only the env-selected one is used for new checkouts, so cutting over is a redeploy, not a re-onboarding.
+
+### 10.2 Manual bank-transfer payment (Bursar upload + Super-Admin approval)
+
+Some parents pay directly into the school's bank account outside the platform entirely and send proof to the Bursar — this path has no webhook to rely on, so it's a Bursar-initiated submission plus an explicit human approval step instead of the async webhook/poll pattern above.
+
+```mermaid
+sequenceDiagram
+    participant Par as Parent (offline)
+    participant Bur as Bursar (Next.js)
+    participant Nest as FeesModule
+    participant S3 as StorageAdapter
+    participant SA as Super-Admin (Next.js)
+
+    Par->>Bur: Pays into school bank account,<br/>sends proof (screenshot/receipt)
+    Bur->>Nest: Submit Payment for Invoice X<br/>(method=BANK_TRANSFER_MANUAL, file)
+    Nest->>S3: put(proof file)
+    S3-->>Nest: proofOfPaymentUrl
+    Nest->>Nest: Create Payment (status=PENDING_APPROVAL)
+    Nest->>SA: Notification: payment pending review
+    SA->>Nest: Approve or Reject (+ reason if rejected)
+    alt Approved
+        Nest->>Nest: Payment.status=SUCCESSFUL, update Invoice, generate Receipt
+        Nest->>Bur: Notification: approved
+        Nest->>Par: Notification: payment confirmed, receipt available
+    else Rejected
+        Nest->>Nest: Payment.status=REJECTED, rejectionReason set
+        Nest->>Bur: Notification: rejected, with reason
+    end
+```
+
+This submission never enters the `payment-reconciliation` BullMQ queue (§8) — there is no gateway transaction to poll, only a human decision to wait on. Restricting approval to Super-Admin (not Bursar, who submitted it, and not Admin, who has no visibility into the finance domain at all) follows the same reporting-line rule as the rest of the fees domain (PRD §5 footnote 3): Bursar reports directly to Super-Admin, so a check the Bursar can't self-approve belongs one level up, not sideways to Admin.
+
+### 10.3 Discount requests (termly)
+
+```mermaid
+sequenceDiagram
+    participant Bur as Bursar
+    participant Nest as FeesModule
+    participant SA as Super-Admin
+
+    Bur->>Nest: Create DiscountRequest on Invoice X<br/>(type, value, reason)
+    Nest->>SA: Notification: discount request pending
+    SA->>Nest: Approve or Reject (+ reason if rejected)
+    alt Approved
+        Nest->>Nest: Add DISCOUNT InvoiceLineItem, recompute outstanding/status
+        Nest->>Bur: Notification: approved
+    else Rejected
+        Nest->>Bur: Notification: rejected, with reason
+    end
+```
+
+Because `DiscountRequest` targets a specific `Invoice`, and an `Invoice` is already generated per student per term (PRD §3.9), a discount is inherently scoped to one term without needing its own term-level table — the next term simply means a new invoice, and a fresh request against it if the Bursar wants to raise one again.
+
+### 10.4 Receipts and payment history
+
+Whichever of the three paths above lands a `Payment` on `SUCCESSFUL`, the same `Receipt`-generation step fires — a unique receipt number plus a PDF, immediately downloadable by the paying parent (the "online receipt," PRD FR7.4a). Parents retain full historical access to every past invoice/receipt for their wards (FR7.4); Bursar and Super-Admin have the equivalent school-wide historical view (a payment ledger across all students, not scoped to the current term) — both are ordinary paginated `GET` endpoints over `Payment`/`Receipt`/`Invoice`, no separate history/archive table needed, since nothing about a settled payment ever needs to be deleted or moved.
 
 ---
 
@@ -327,9 +395,9 @@ This diagram is **one school's complete, self-contained stack**. If the same pro
 ## 13. Observability
 
 - **Structured logging (pino)**: request tracing correlation IDs per request. No tenant tag is needed within one deployment's logs, since every log line already belongs to exactly one school by construction. If the same team centrally aggregates logs across several schools' independent deployments, tagging each deployment's log stream with a `schoolId`/`deploymentId` at the aggregation layer is a reasonable operational nicety — but that's an ops-tooling concern layered on top, not something the application itself needs to do.
-- **Metrics**: request latency and error rate per route, BullMQ queue depth/age per queue, Monnify webhook processing latency.
+- **Metrics**: request latency and error rate per route, BullMQ queue depth/age per queue, payment gateway webhook processing latency (tagged by `gatewayProvider` when more than one is configured), count of `Payment.status = PENDING_APPROVAL` submissions awaiting Super-Admin review (a stuck queue here is a real operational signal, not just a UX nicety).
 - **Error tracking**: Sentry (or equivalent), one project per school's deployment (or one project with a deployment tag, if centrally aggregated).
-- **Health checks**: `/health` on API and Worker checks this deployment's DB, Redis, Resend, and Monnify reachability — nothing more, since there's nothing else to check.
+- **Health checks**: `/health` on API and Worker checks this deployment's DB, Redis, Resend, and the active payment gateway's reachability — nothing more, since there's nothing else to check.
 
 ---
 
@@ -347,7 +415,9 @@ This diagram is **one school's complete, self-contained stack**. If the same pro
 | Secrets/encryption | Application-level envelope encryption (libsodium/AES-256-GCM) for `PaymentGatewayConfig`, not a paid KMS or Vault | Zero additional infrastructure cost and no extra service to operate for a handful of encrypted fields |
 | Scheduling engine | Separate stateless Python service, no DB access, called asynchronously via callback | Keeps "only NestJS touches the database" invariant; async avoids holding a request open for an unbounded solve time |
 | Scheduling engine hosting | Serverless / scale-to-zero | Bursty, infrequent workload (a few runs per school per term) — paying per-invocation beats an always-on container; stateless nature also makes it the one component that could later be shared across schools without breaking single-tenancy (§9, §15) |
-| Monnify webhook resolution | Direct lookup by reference — no tenant routing needed | Single-database deployment means no ambiguity about which school a webhook belongs to |
+| Payment gateway integration | `PaymentGatewayAdapter` interface, Monnify default + Paystack, env-selected via `PAYMENT_GATEWAY_PROVIDER` | Same swap-later pattern as `StorageAdapter` (§5) — switching or adding a gateway is a new adapter + config change, not a `FeesModule` rewrite |
+| Gateway webhook resolution | Direct lookup by reference — no tenant routing needed | Single-database deployment means no ambiguity about which school a webhook belongs to |
+| Manual bank-transfer payment | Bursar submits proof (`PENDING_APPROVAL`), only Super-Admin approves/rejects — no BullMQ polling involved | There's no transaction to poll for an off-platform transfer; the async dispatch/reconciliation pattern only fits payments the gateway actually knows about |
 | Schema migrations | Standard single-database `prisma migrate deploy` per deployment; "update every school" = redeploy each independently | No fleet-wide in-app migration runner, since the application has no concept of a fleet |
 | Real-time | Socket.IO + Redis adapter | Standard, well-supported horizontal-scaling path for WebSockets, useful if one school's deployment runs multiple API instances |
 | Redis | Serverless/pay-per-request (e.g. Upstash), per school | Matches actual low-volume usage rather than paying for a fixed-size always-on cluster |

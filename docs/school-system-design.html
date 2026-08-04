@@ -335,6 +335,27 @@
   .paydot-row{display:flex; justify-content:center; gap:10px; margin:16px 0; flex-wrap:wrap;}
   .paydot{font-size:11px; padding:6px 12px; border:1px solid rgb(var(--border)); border-radius:8px; font-family:'IBM Plex Mono',monospace;}
 
+  /* Generic pill tabs (reused for payment-method switching, matches .report-tab) */
+  .tab-row{display:flex; gap:6px; margin-bottom:14px;}
+  .tab{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;
+    padding:6px 13px; border-radius:20px; border:1px solid rgb(var(--border)); background:rgb(var(--card)); cursor:pointer; color:rgb(var(--muted));
+  }
+  .tab.active{background:rgb(var(--primary)); color:rgb(var(--primary-foreground)); border-color:rgb(var(--primary));}
+
+  /* Form select, matches .field input */
+  .field select{
+    width:100%; padding:10px 12px; border-radius:8px; border:1px solid rgb(var(--border));
+    background:rgb(var(--card-inset)); color:rgb(var(--foreground)); font-size:13px; font-family:'IBM Plex Sans',sans-serif;
+  }
+  .field select:focus{outline:2px solid rgb(var(--muted)); outline-offset:1px;}
+
+  .upload-field{
+    border:1.5px dashed rgb(var(--border)); border-radius:10px; padding:16px; text-align:center;
+    font-size:11.5px; color:rgb(var(--muted)); background:rgb(var(--card-inset)); cursor:pointer;
+  }
+  .upload-field:hover{border-color:rgb(var(--muted));}
+
   /* Notifications */
   .notif-row{display:flex; gap:12px; padding:12px 0; border-bottom:1px solid rgb(var(--border) / 0.6);}
   .notif-row:last-child{border-bottom:none;}
@@ -453,8 +474,16 @@
         <input type="text" placeholder="Search students, classes, invoices…">
       </div>
       <div class="topbar-right">
+        <!-- Illustrative only: this toggle hides/shows elements client-side so one static
+             page can preview every role's view. It is NOT the RBAC model — the real app's
+             CASL PoliciesGuard (ARCHITECTURE.md §7) is the actual authority, enforced
+             server-side regardless of what the frontend renders. Don't treat gaps here
+             (e.g. the parent-facing Fees cards staying visible under Admin/Staff/Student)
+             as spec for what the real app should permit. -->
         <select class="role-select" id="roleSelect" onchange="setRole(this.value)">
-          <option value="admin">Admin</option>
+          <option value="superadmin">Super-Admin</option>
+          <option value="admin" selected>Admin</option>
+          <option value="bursar">Bursar</option>
           <option value="staff">Staff</option>
           <option value="parent">Parent</option>
           <option value="student">Student</option>
@@ -789,17 +818,24 @@
     <!-- ============= FEES ============= -->
     <section class="panel" id="panel-fees">
       <div class="letterhead">
-        <div class="letterhead-eyebrow">Fees & Payments · Monnify</div>
+        <div class="letterhead-eyebrow">Fees & Payments</div>
         <h1 class="display">Invoices</h1>
         <div class="letterhead-rule"></div>
       </div>
+
+      <div class="grid grid-3" data-bursar-only style="margin-bottom:16px;">
+        <div class="card"><div class="roll-summary" style="margin:0;"><div><div class="roll-num">₦8.9M</div><div class="roll-label">Outstanding · school-wide</div></div></div></div>
+        <div class="card"><div class="roll-summary" style="margin:0;"><div><div class="roll-num" style="color:rgb(var(--warning))">1</div><div class="roll-label">Payments pending approval</div></div></div></div>
+        <div class="card"><div class="roll-summary" style="margin:0;"><div><div class="roll-num" style="color:rgb(var(--info))">1</div><div class="roll-label">Discount requests pending</div></div></div></div>
+      </div>
+
       <div class="grid grid-2">
         <div class="card">
-          <div class="card-head"><h3 class="card-title">Invoices — Tobi Kalu</h3><div class="card-sub">Grade 9B</div></div>
+          <div class="card-head"><h3 class="card-title">Invoices — Tobi Kalu</h3><div class="card-sub">Grade 9B · Outstanding ₦70,000 (₦5,000 discount applied to INV-2291)</div></div>
           <div class="invoice-row">
             <div class="invoice-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></div>
             <div class="invoice-info"><div class="invoice-name">Term 1 tuition</div><div class="invoice-meta">INV-2291 · due Aug 15</div></div>
-            <div class="invoice-amt">₦75,000</div>
+            <div class="invoice-amt">₦70,000</div>
             <span class="badge badge-warning">Pending</span>
           </div>
           <div class="invoice-row">
@@ -817,13 +853,162 @@
         </div>
         <div class="checkout-card">
           <div class="card-sub">PAY INVOICE INV-2291</div>
-          <div class="checkout-amt">₦75,000</div>
-          <div style="font-size:11.5px; color:rgb(var(--muted));">Term 1 tuition · due Aug 15</div>
+          <div class="checkout-amt">₦70,000</div>
+          <div style="font-size:11.5px; color:rgb(var(--muted));">Term 1 tuition · due Aug 15 · ₦5,000 discount already applied</div>
           <div class="paydot-row">
             <span class="paydot">Card</span><span class="paydot">Bank transfer</span><span class="paydot">USSD</span>
           </div>
           <button class="btn btn-primary" style="width:100%; justify-content:center;">Pay with Monnify</button>
-          <div style="font-size:10.5px; color:rgb(var(--muted)); margin-top:10px;">Redirects to Monnify's secure hosted checkout</div>
+          <div style="font-size:10.5px; color:rgb(var(--muted)); margin-top:10px;">Redirects to the school's active gateway — Monnify by default, Paystack also supported</div>
+          <div style="border-top:1px solid rgb(var(--border)); margin-top:16px; padding-top:14px; font-size:11px; color:rgb(var(--muted)); text-align:left; line-height:1.5;">
+            Already paid directly into the school's bank account? Send your receipt to the Bursar to have it recorded — it'll show as <span class="badge badge-warning" style="vertical-align:middle;">Pending approval</span> here until confirmed.
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="card-head"><h3 class="card-title">Receipt — INV-2278</h3><div class="card-sub">Generated automatically the moment a payment is confirmed, whichever way it was paid</div></div>
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;">
+          <div><div class="card-sub" style="margin:0 0 3px;">RECEIPT NO.</div><div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px;">RCPT-000482</div></div>
+          <div><div class="card-sub" style="margin:0 0 3px;">AMOUNT</div><div style="font-weight:600;">₦5,000</div></div>
+          <div><div class="card-sub" style="margin:0 0 3px;">METHOD</div><div>Card · Monnify</div></div>
+          <div><div class="card-sub" style="margin:0 0 3px;">DATE</div><div>Jul 20, 2026</div></div>
+          <button class="btn btn-sm">Download PDF</button>
+        </div>
+      </div>
+
+      <!-- ===== Bursar tools ===== -->
+      <div data-bursar-only>
+        <div class="letterhead" style="margin:30px 0 16px;">
+          <div class="letterhead-eyebrow">Bursar tools</div>
+          <h1 class="display" style="font-size:18px;">Manage fees & payments</h1>
+          <div class="letterhead-rule"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-head">
+            <div><h3 class="card-title">Fee structures</h3><div class="card-sub">Term 1 · 2025/2026</div></div>
+            <button class="btn btn-sm">Add fee structure</button>
+          </div>
+          <table>
+            <tr><th>Name</th><th>Class level</th><th>Amount</th><th>Mandatory</th><th></th></tr>
+            <tr><td class="cell-name">Tuition</td><td>Grade 9</td><td class="cell-mono">₦75,000</td><td><span class="badge badge-success">Yes</span></td><td><button class="btn btn-sm">Edit</button></td></tr>
+            <tr><td class="cell-name">Sports day levy</td><td>School-wide</td><td class="cell-mono">₦5,000</td><td><span class="badge badge-muted">No</span></td><td><button class="btn btn-sm">Edit</button></td></tr>
+            <tr><td class="cell-name">PTA levy</td><td>School-wide</td><td class="cell-mono">₦3,000</td><td><span class="badge badge-success">Yes</span></td><td><button class="btn btn-sm">Edit</button></td></tr>
+          </table>
+        </div>
+
+        <div class="grid grid-2" style="margin-bottom:16px;">
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">Record a payment</h3><div class="card-sub">Cash is confirmed immediately · bank transfer needs Super-Admin approval</div></div>
+            <div class="tab-row">
+              <span class="tab active" onclick="showPayMethod('cash', this)">Cash</span>
+              <span class="tab" onclick="showPayMethod('transfer', this)">Bank transfer proof</span>
+            </div>
+            <div id="payCash">
+              <div class="field"><label>Invoice</label><select><option>INV-2340 · Tobi Kalu · Term 2 tuition</option></select></div>
+              <div class="field"><label>Amount received</label><input type="text" placeholder="₦75,000"></div>
+              <button class="btn btn-primary" style="width:100%; justify-content:center;">Record cash payment</button>
+            </div>
+            <div id="payTransfer" style="display:none;">
+              <div class="field"><label>Invoice</label><select><option>INV-2340 · Tobi Kalu · Term 2 tuition</option></select></div>
+              <div class="field"><label>Amount</label><input type="text" placeholder="₦75,000"></div>
+              <div class="field">
+                <label>Proof of payment</label>
+                <div class="upload-field">Drop receipt image/PDF, or click to browse</div>
+              </div>
+              <button class="btn btn-primary" style="width:100%; justify-content:center;">Submit for Super-Admin approval</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3 class="card-title">My submitted payments</h3><div class="card-sub">Manual entries awaiting or past review</div></div>
+            <table>
+              <tr><th>Invoice</th><th>Amount</th><th>Method</th><th>Status</th></tr>
+              <tr><td class="cell-name">INV-2340</td><td class="cell-mono">₦75,000</td><td>Bank transfer</td><td><span class="badge badge-warning">Pending approval</span></td></tr>
+              <tr><td class="cell-name">INV-2278</td><td class="cell-mono">₦5,000</td><td>Cash</td><td><span class="badge badge-success">Successful</span></td></tr>
+              <tr><td class="cell-name">INV-2199</td><td class="cell-mono">₦20,000</td><td>Bank transfer</td><td><span class="badge badge-danger">Rejected</span></td></tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Request a discount</h3><div class="card-sub">Scoped to one invoice/term · Super-Admin approves or rejects</div></div>
+          <div class="grid grid-2" style="align-items:start;">
+            <div>
+              <div class="field"><label>Invoice</label><select><option>INV-2340 · Tobi Kalu · Term 2 tuition</option></select></div>
+              <div class="field"><label>Discount type</label><select><option>Fixed amount</option><option>Percentage</option></select></div>
+              <div class="field"><label>Value</label><input type="text" placeholder="₦10,000 or 10%"></div>
+              <div class="field"><label>Reason</label><input type="text" placeholder="Staff ward tuition waiver"></div>
+              <button class="btn btn-primary">Send for approval</button>
+            </div>
+            <table>
+              <tr><th>Invoice</th><th>Value</th><th>Status</th></tr>
+              <tr><td class="cell-name">INV-2199</td><td class="cell-mono">₦10,000</td><td><span class="badge badge-warning">Pending</span></td></tr>
+              <tr><td class="cell-name">INV-2291</td><td class="cell-mono">₦5,000</td><td><span class="badge badge-success">Approved</span></td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Super-Admin: approvals & gateway ===== -->
+      <div data-superadmin-only>
+        <div class="letterhead" style="margin:30px 0 16px;">
+          <div class="letterhead-eyebrow">Super-Admin · Fees</div>
+          <h1 class="display" style="font-size:18px;">Approvals & gateway</h1>
+          <div class="letterhead-rule"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <div class="card-head"><h3 class="card-title">Pending approvals</h3><div class="card-sub">Bursar-submitted payments & discount requests — only Super-Admin can review</div></div>
+          <table>
+            <tr><th>Type</th><th>Student</th><th>Amount / Value</th><th>Submitted by</th><th></th></tr>
+            <tr>
+              <td><span class="badge badge-info">Bank transfer</span></td>
+              <td class="cell-name">Tobi Kalu · INV-2340</td>
+              <td class="cell-mono">₦75,000</td>
+              <td>Mrs. Bello (Bursar)</td>
+              <td><button class="btn btn-sm">Approve</button> <button class="btn btn-sm">Reject</button></td>
+            </tr>
+            <tr>
+              <td><span class="badge badge-muted">Discount</span></td>
+              <td class="cell-name">David Eze · INV-2199</td>
+              <td class="cell-mono">₦10,000</td>
+              <td>Mrs. Bello (Bursar)</td>
+              <td><button class="btn btn-sm">Approve</button> <button class="btn btn-sm">Reject</button></td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3 class="card-title">Payment gateway</h3><div class="card-sub">Active provider is set by <span class="cell-mono">PAYMENT_GATEWAY_PROVIDER</span> (config + redeploy) — not editable here</div></div>
+          <table>
+            <tr><th>Provider</th><th>Environment</th><th>API key</th><th>Status</th></tr>
+            <tr>
+              <td class="cell-name">Monnify</td>
+              <td><span class="badge badge-muted">Sandbox</span></td>
+              <td class="cell-mono">••••••••MK21</td>
+              <td><span class="badge badge-success">Active default</span></td>
+            </tr>
+            <tr>
+              <td class="cell-name">Paystack</td>
+              <td><span class="badge badge-muted">Sandbox</span></td>
+              <td class="cell-mono">••••••••PK09</td>
+              <td><span class="badge badge-info">Configured</span></td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;" data-bursar-only>
+        <div class="card-head"><h3 class="card-title">Payment history</h3><div class="card-sub">School-wide ledger — Bursar &amp; Super-Admin; parents see the equivalent scoped to their own wards</div></div>
+        <div class="scroll-x">
+          <table>
+            <tr><th>Date</th><th>Student</th><th>Invoice</th><th>Amount</th><th>Method</th><th>Status</th></tr>
+            <tr><td class="cell-mono">Jul 20, 2026</td><td class="cell-name">Tobi Kalu</td><td class="cell-mono">INV-2278</td><td class="cell-mono">₦5,000</td><td>Card · Monnify</td><td><span class="badge badge-success">Successful</span></td></tr>
+            <tr><td class="cell-mono">Jul 2, 2026</td><td class="cell-name">Funke Nwosu</td><td class="cell-mono">INV-2265</td><td class="cell-mono">₦75,000</td><td>Bank transfer</td><td><span class="badge badge-success">Successful</span></td></tr>
+            <tr><td class="cell-mono">Jun 28, 2026</td><td class="cell-name">David Eze</td><td class="cell-mono">INV-2199</td><td class="cell-mono">₦20,000</td><td>Cash</td><td><span class="badge badge-danger">Rejected</span></td></tr>
+          </table>
         </div>
       </div>
     </section>
@@ -837,6 +1022,7 @@
       </div>
       <div class="card">
         <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--info))"></div><div style="flex:1;"><div class="notif-title">Exam schedule ready for review</div><div class="notif-body">Term 1 midterm draft generated — 42 slots across 5 halls</div></div><div class="notif-time">2m ago</div></div>
+        <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--warning))"></div><div style="flex:1;"><div class="notif-title">Bank transfer pending approval — Tobi Kalu</div><div class="notif-body">₦75,000 · INV-2340 · submitted by Mrs. Bello (Bursar)</div></div><div class="notif-time">40m ago</div></div>
         <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--success))"></div><div style="flex:1;"><div class="notif-title">Payment received — Tobi Kalu</div><div class="notif-body">₦75,000 confirmed via Monnify · receipt sent</div></div><div class="notif-time">1h ago</div></div>
         <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--warning))"></div><div style="flex:1;"><div class="notif-title">Attendance below target — Grade 9B</div><div class="notif-body">83% present this week, down from 91%</div></div><div class="notif-time">3h ago</div></div>
         <div class="notif-row"><div class="notif-dot" style="background:rgb(var(--muted))"></div><div style="flex:1;"><div class="notif-title">Invitation accepted</div><div class="notif-body">Mrs. Okoro (Staff) set her password and logged in</div></div><div class="notif-time">Yesterday</div></div>
@@ -853,7 +1039,8 @@
       <div class="card scroll-x">
         <div class="audit-row"><div class="audit-time">Aug 1, 11:52am</div><div class="audit-actor">Mr. Adeyemi</div><div class="audit-action">updated ScoreEntry for Tobi Kalu</div><div class="audit-diff">72 → 87</div></div>
         <div class="audit-row"><div class="audit-time">Aug 1, 10:14am</div><div class="audit-actor">Adaeze (Admin)</div><div class="audit-action">approved ExamSchedule draft #114</div><div class="audit-diff">PENDING → APPROVED</div></div>
-        <div class="audit-row"><div class="audit-time">Aug 1, 9:02am</div><div class="audit-actor">System</div><div class="audit-action">reconciled Payment INV-2278</div><div class="audit-diff">PENDING → PAID</div></div>
+        <div class="audit-row"><div class="audit-time">Aug 1, 9:02am</div><div class="audit-actor">System</div><div class="audit-action">reconciled Payment INV-2278</div><div class="audit-diff">PENDING → SUCCESSFUL</div></div>
+        <div class="audit-row"><div class="audit-time">Jul 31, 6:10pm</div><div class="audit-actor">Mr. Ojo (Super-Admin)</div><div class="audit-action">approved DiscountRequest INV-2291</div><div class="audit-diff">PENDING → APPROVED</div></div>
         <div class="audit-row"><div class="audit-time">Jul 31, 4:41pm</div><div class="audit-actor">Adaeze (Admin)</div><div class="audit-action">sent Invitation to okoro@ridgeview.edu.ng</div><div class="audit-diff">role: STAFF</div></div>
       </div>
     </section>
@@ -900,13 +1087,33 @@
   });
 
   function setRole(role){
+    // Super-Admin has every Admin permission plus owner-only ones (PRD §5 footnote 1),
+    // so Admin-gated content stays visible for both.
     const adminOnly = document.querySelectorAll('[data-admin-only]');
-    adminOnly.forEach(el => el.style.display = (role==='admin') ? '' : 'none');
-    if(role!=='admin' && document.getElementById('panel-audit').classList.contains('active')){
+    adminOnly.forEach(el => el.style.display = (role==='admin' || role==='superadmin') ? '' : 'none');
+
+    // Bursar-only tools (fee structures, recording payments, discount requests) —
+    // Super-Admin can see everything Bursar can, but not the reverse (PRD §5 footnote 3).
+    const bursarOnly = document.querySelectorAll('[data-bursar-only]');
+    bursarOnly.forEach(el => el.style.display = (role==='bursar' || role==='superadmin') ? '' : 'none');
+
+    // Approval authority (manual payments, discount requests) and gateway credentials
+    // are Super-Admin only — Bursar submits, Bursar can't self-approve (PRD §5 footnote 3).
+    const superadminOnly = document.querySelectorAll('[data-superadmin-only]');
+    superadminOnly.forEach(el => el.style.display = (role==='superadmin') ? '' : 'none');
+
+    if(role!=='admin' && role!=='superadmin' && document.getElementById('panel-audit').classList.contains('active')){
       showPanel('dashboard');
     }
   }
   setRole('admin');
+
+  function showPayMethod(method, el){
+    document.getElementById('payCash').style.display = method==='cash' ? 'block' : 'none';
+    document.getElementById('payTransfer').style.display = method==='transfer' ? 'block' : 'none';
+    el.parentElement.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    el.classList.add('active');
+  }
 </script>
 </body>
 </html>
