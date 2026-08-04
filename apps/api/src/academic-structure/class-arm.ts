@@ -16,6 +16,7 @@ export class ClassArmService {
   findAll(classLevelId?: string) {
     return this.prisma.classArm.findMany({
       where: classLevelId ? { classLevelId } : undefined,
+      include: { classLevel: { select: { category: true } } },
       orderBy: { name: "asc" },
     });
   }

@@ -36,7 +36,7 @@ function buildStorageMock() {
 const STUDENT = {
   user: { firstName: "Tobi", lastName: "Kalu" },
   admissionNumber: "STU-2291",
-  currentClass: { id: "arm-1", classLevelId: "level-1" },
+  currentClass: { id: "arm-1", classLevel: { category: "JSS" } },
 };
 const TERM_1 = { id: "term-1", name: "Term 1", academicSessionId: "session-1", startDate: new Date("2025-09-01") };
 

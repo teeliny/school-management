@@ -14,7 +14,7 @@ import { GradebookTable } from "../../components/organisms/gradebook-table";
 interface ClassArmOption {
   id: string;
   name: string;
-  classLevelId: string;
+  classLevel: { category: string };
 }
 interface SubjectOption {
   id: string;
@@ -87,14 +87,15 @@ export default function GradebookPage() {
       );
 
   useEffect(() => {
-    const classLevelId = classArms.find((a) => a.id === classArmId)?.classLevelId;
-    if (!classLevelId || !termId) {
+    const classLevelCategory = classArms.find((a) => a.id === classArmId)?.classLevel.category;
+    if (!classLevelCategory || !termId) {
       setComponents(null);
       return;
     }
-    apiFetch<AssessmentComponentOption[]>(`/assessment-components?termId=${termId}&classLevelId=${classLevelId}`, {
-      auth: true,
-    })
+    apiFetch<AssessmentComponentOption[]>(
+      `/assessment-components?termId=${termId}&classLevelCategory=${classLevelCategory}`,
+      { auth: true },
+    )
       .then((fetched) => setComponents(isAdmin ? fetched : fetched.filter((c) => c.status === "OPEN")))
       .catch(() => setComponents([]));
   }, [classArmId, termId, classArms, isAdmin]);

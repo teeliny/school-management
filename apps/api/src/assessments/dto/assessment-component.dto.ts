@@ -1,14 +1,14 @@
 import { PartialType } from "@nestjs/mapped-types";
 import { Type } from "class-transformer";
 import { IsDate, IsEnum, IsInt, IsNumber, IsString, IsUUID, Min } from "class-validator";
-import { AssessmentComponentType } from "@prisma/client";
+import { AssessmentComponentType, ClassLevelCategory } from "@prisma/client";
 
 export class CreateAssessmentComponentDto {
   @IsUUID()
   termId!: string;
 
-  @IsUUID()
-  classLevelId!: string;
+  @IsEnum(ClassLevelCategory)
+  classLevelCategory!: ClassLevelCategory;
 
   @IsEnum(AssessmentComponentType)
   type!: AssessmentComponentType;

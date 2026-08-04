@@ -36,7 +36,7 @@ export class TermService {
           await tx.assessmentComponent.createMany({
             data: priorComponents.map((component) => ({
               termId: term.id,
-              classLevelId: component.classLevelId,
+              classLevelCategory: component.classLevelCategory,
               type: component.type,
               name: component.name,
               sequence: component.sequence,

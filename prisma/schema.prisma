@@ -199,10 +199,8 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms            ClassArm[]
-  classSubjects        ClassSubject[]
-  assessmentComponents AssessmentComponent[]
-  reportWindows        ReportWindow[]
+  classArms     ClassArm[]
+  classSubjects ClassSubject[]
 
   @@map("class_levels")
 }
@@ -675,31 +673,30 @@ enum AssessmentComponentStatus {
 }
 
 model AssessmentComponent {
-  id              String                    @id @default(uuid())
-  termId          String
-  term            Term                      @relation(fields: [termId], references: [id], onDelete: Cascade)
-  classLevelId    String
-  classLevel      ClassLevel                @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
-  type            AssessmentComponentType
-  name            String
-  sequence        Int
-  maxScore        Decimal                   @db.Decimal(5, 2)
+  id                 String                    @id @default(uuid())
+  termId             String
+  term               Term                      @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelCategory ClassLevelCategory
+  type               AssessmentComponentType
+  name               String
+  sequence           Int
+  maxScore           Decimal                   @db.Decimal(5, 2)
   // Nullable so a carried-forward component (TermService.create) can exist
   // in DRAFT with no dates until Admin sets them for the new term — never
   // auto-copied from the prior term's dates (assessment-sweep.util.ts treats
   // a null date as "not yet configured," never eligible for auto-transition).
-  inputOpensAt    DateTime?
-  inputClosesAt   DateTime?
-  publishAt       DateTime?
-  status          AssessmentComponentStatus @default(DRAFT)
-  createdByUserId String
-  createdByUser   User                      @relation(fields: [createdByUserId], references: [id])
-  createdAt       DateTime                  @default(now())
-  updatedAt       DateTime                  @updatedAt
+  inputOpensAt       DateTime?
+  inputClosesAt      DateTime?
+  publishAt          DateTime?
+  status             AssessmentComponentStatus @default(DRAFT)
+  createdByUserId    String
+  createdByUser      User                      @relation(fields: [createdByUserId], references: [id])
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
 
   scoreEntries ScoreEntry[]
 
-  @@unique([termId, classLevelId, type, sequence])
+  @@unique([termId, classLevelCategory, type, sequence])
   @@map("assessment_components")
 }
 
@@ -898,20 +895,19 @@ enum ReportWindowStatus {
 // schedule. Same auto-transition-with-override shape as AssessmentComponent
 // (see the worker's assessment-sweep, extended to also sweep this table).
 model ReportWindow {
-  id              String             @id @default(uuid())
-  termId          String
-  term            Term               @relation(fields: [termId], references: [id], onDelete: Cascade)
-  classLevelId    String
-  classLevel      ClassLevel         @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
-  inputOpensAt    DateTime
-  inputClosesAt   DateTime
-  status          ReportWindowStatus @default(DRAFT)
-  createdByUserId String
-  createdByUser   User               @relation(fields: [createdByUserId], references: [id])
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  id                 String             @id @default(uuid())
+  termId             String
+  term               Term               @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelCategory ClassLevelCategory
+  inputOpensAt       DateTime
+  inputClosesAt      DateTime
+  status             ReportWindowStatus @default(DRAFT)
+  createdByUserId    String
+  createdByUser      User               @relation(fields: [createdByUserId], references: [id])
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
-  @@unique([termId, classLevelId])
+  @@unique([termId, classLevelCategory])
   @@map("report_windows")
 }
 

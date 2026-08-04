@@ -41,7 +41,7 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
           id: "comp-1",
           name: "1st CA",
           termId: "term-1",
-          classLevelId: "level-1",
+          classLevelCategory: "JSS",
           inputOpensAt: IN_RANGE,
           inputClosesAt: AFTER_RANGE,
           publishAt: AFTER_RANGE,
@@ -57,7 +57,7 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
         type: "ASSESSMENT_OPEN",
         title: "1st CA opens",
         date: IN_RANGE,
-        meta: { componentId: "comp-1", termId: "term-1", classLevelId: "level-1" },
+        meta: { componentId: "comp-1", termId: "term-1", classLevelCategory: "JSS" },
       },
     ]);
   });
@@ -70,7 +70,7 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
         {
           id: "window-1",
           termId: "term-1",
-          classLevelId: "level-1",
+          classLevelCategory: "JSS",
           inputOpensAt: IN_RANGE,
           inputClosesAt: AFTER_RANGE,
         },
@@ -84,7 +84,7 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
         type: "REPORT_WINDOW_OPEN",
         title: "Report window opens",
         date: IN_RANGE,
-        meta: { windowId: "window-1", termId: "term-1", classLevelId: "level-1" },
+        meta: { windowId: "window-1", termId: "term-1", classLevelCategory: "JSS" },
       },
     ]);
   });
@@ -100,13 +100,13 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
           id: "comp-1",
           name: "Exam",
           termId: "term-1",
-          classLevelId: "level-1",
+          classLevelCategory: "JSS",
           inputOpensAt: later,
           inputClosesAt: later,
           publishAt: later,
         },
       ],
-      [{ id: "window-1", termId: "term-1", classLevelId: "level-1", inputOpensAt: earlier, inputClosesAt: earlier }],
+      [{ id: "window-1", termId: "term-1", classLevelCategory: "JSS", inputOpensAt: earlier, inputClosesAt: earlier }],
       FROM,
       TO,
     );

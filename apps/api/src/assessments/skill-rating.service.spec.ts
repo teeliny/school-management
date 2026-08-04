@@ -38,7 +38,7 @@ describe("SkillRatingService.rate (PRD §3.6 — CLASS_TEACHER + ReportWindow ga
     staffAssignments = buildStaffAssignmentsMock();
     service = new SkillRatingService(prisma as never, staffAssignments as never);
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue({
-      currentClass: { id: "arm-1", classLevelId: "level-1" },
+      currentClass: { id: "arm-1", classLevel: { category: "JSS" } },
     });
   });
 

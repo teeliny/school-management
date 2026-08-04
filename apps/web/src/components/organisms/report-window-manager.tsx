@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -19,10 +20,6 @@ interface TermOption {
   id: string;
   name: string;
 }
-interface ClassLevelOption {
-  id: string;
-  name: string;
-}
 interface ReportWindowItem {
   id: string;
   inputOpensAt: string;
@@ -30,15 +27,9 @@ interface ReportWindowItem {
   status: WindowStatus;
 }
 
-export function ReportWindowManager({
-  terms,
-  classLevels,
-}: {
-  terms: TermOption[];
-  classLevels: ClassLevelOption[];
-}) {
+export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
   const [termId, setTermId] = useState("");
-  const [classLevelId, setClassLevelId] = useState("");
+  const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
   const [windows, setWindows] = useState<ReportWindowItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -47,14 +38,16 @@ export function ReportWindowManager({
   const [inputClosesAt, setInputClosesAt] = useState("");
 
   const load = useCallback(() => {
-    if (!termId || !classLevelId) {
+    if (!termId || !classLevelCategory) {
       setWindows(null);
       return;
     }
-    apiFetch<ReportWindowItem[]>(`/report-windows?termId=${termId}&classLevelId=${classLevelId}`, { auth: true })
+    apiFetch<ReportWindowItem[]>(`/report-windows?termId=${termId}&classLevelCategory=${classLevelCategory}`, {
+      auth: true,
+    })
       .then(setWindows)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load report windows"));
-  }, [termId, classLevelId]);
+  }, [termId, classLevelCategory]);
 
   useEffect(() => {
     load();
@@ -68,7 +61,7 @@ export function ReportWindowManager({
       await apiFetch("/report-windows", {
         method: "POST",
         auth: true,
-        body: { termId, classLevelId, inputOpensAt, inputClosesAt },
+        body: { termId, classLevelCategory, inputOpensAt, inputClosesAt },
       });
       setInputOpensAt("");
       setInputClosesAt("");
@@ -111,15 +104,15 @@ export function ReportWindowManager({
           </Select>
         </div>
         <div>
-          <Label htmlFor="rw-class-level">Class level</Label>
-          <Select value={classLevelId} onValueChange={setClassLevelId}>
-            <SelectTrigger id="rw-class-level" className="mt-1">
-              <SelectValue placeholder="Select class level" />
+          <Label htmlFor="rw-class-group">Class group</Label>
+          <Select value={classLevelCategory} onValueChange={(v) => setClassLevelCategory(v as ClassLevelCategory)}>
+            <SelectTrigger id="rw-class-group" className="mt-1">
+              <SelectValue placeholder="Select class group" />
             </SelectTrigger>
             <SelectContent>
-              {classLevels.map((level) => (
-                <SelectItem key={level.id} value={level.id}>
-                  {level.name}
+              {CLASS_LEVEL_CATEGORIES.map((category) => (
+                <SelectItem key={category} value={category}>
+                  {category}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -146,7 +139,7 @@ export function ReportWindowManager({
                 </div>
               </div>
             ))}
-            {windows.length === 0 && <p className="text-sm text-muted">No report window for this term/class level yet.</p>}
+            {windows.length === 0 && <p className="text-sm text-muted">No report window for this term/class group yet.</p>}
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
@@ -172,7 +165,7 @@ export function ReportWindowManager({
           </form>
         </>
       )}
-      {!windows && <p className="text-sm text-muted">Select a term and class level to manage its report window.</p>}
+      {!windows && <p className="text-sm text-muted">Select a term and class group to manage its report window.</p>}
     </div>
   );
 }

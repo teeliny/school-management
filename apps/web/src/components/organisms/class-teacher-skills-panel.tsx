@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 interface ClassArmOption {
   id: string;
   name: string;
-  classLevelId: string;
+  classLevel: { category: string };
 }
 interface TermOption {
   id: string;
@@ -86,7 +86,7 @@ export function ClassTeacherSkillsPanel({
     Promise.all([
       apiFetch<StudentItem[]>("/students", { auth: true }),
       apiFetch<{ status: ReportWindowStatus }[]>(
-        `/report-windows?termId=${termId}&classLevelId=${selectedArm.classLevelId}`,
+        `/report-windows?termId=${termId}&classLevelCategory=${selectedArm.classLevel.category}`,
         { auth: true },
       ),
       apiFetch<SkillItem[]>(`/skill-assessment-items?academicSessionId=${selectedTerm.academicSessionId}`, {

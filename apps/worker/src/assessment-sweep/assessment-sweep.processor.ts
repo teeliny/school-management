@@ -4,6 +4,7 @@ import type { Job, Queue } from "bullmq";
 import {
   AssessmentComponentStatus,
   AssessmentComponentType,
+  ClassLevelCategory,
   EnrollmentStatus,
   ReportWindowStatus,
   TermReportCardStatus,
@@ -51,14 +52,15 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
       new Date(),
     );
 
-    // (termId, classLevelId) groups where a component just closed this tick
-    // — candidates for "is the whole group closed now" (FR4.4 aggregation)
-    // and, separately, groups whose just-closed component was the MID_TERM
-    // one (this phase's mid-term report trigger). Keyed by group key ->
-    // the actual ids, so no re-parsing of a joined string is needed later.
+    // (termId, classLevelCategory) groups where a component just closed this
+    // tick — candidates for "is the whole group closed now" (FR4.4
+    // aggregation) and, separately, groups whose just-closed component was
+    // the MID_TERM one (this phase's mid-term report trigger). Keyed by
+    // group key -> the actual ids, so no re-parsing of a joined string is
+    // needed later.
     interface Group {
       termId: string;
-      classLevelId: string;
+      classLevelCategory: ClassLevelCategory;
     }
     const closedGroups = new Map<string, Group>();
     const midTermClosedGroups = new Map<string, Group>();
@@ -71,8 +73,8 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
       });
 
       if (component && transition.nextStatus === AssessmentComponentStatus.CLOSED) {
-        const group: Group = { termId: component.termId, classLevelId: component.classLevelId };
-        const key = `${group.termId}:${group.classLevelId}`;
+        const group: Group = { termId: component.termId, classLevelCategory: component.classLevelCategory };
+        const key = `${group.termId}:${group.classLevelCategory}`;
         closedGroups.set(key, group);
         if (component.type === AssessmentComponentType.MID_TERM) {
           midTermClosedGroups.set(key, group);
@@ -80,18 +82,20 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
       }
     }
 
-    for (const { termId, classLevelId } of closedGroups.values()) {
-      const groupComponents = await this.prisma.assessmentComponent.findMany({ where: { termId, classLevelId } });
+    for (const { termId, classLevelCategory } of closedGroups.values()) {
+      const groupComponents = await this.prisma.assessmentComponent.findMany({
+        where: { termId, classLevelCategory },
+      });
       const allClosedOrPublished = groupComponents.every(
         (c) => c.status === AssessmentComponentStatus.CLOSED || c.status === AssessmentComponentStatus.PUBLISHED,
       );
       if (allClosedOrPublished) {
-        await this.subjectTermResults.aggregateForClassLevelTerm(termId, classLevelId);
+        await this.subjectTermResults.aggregateForClassCategoryTerm(termId, classLevelCategory);
       }
     }
 
-    for (const { termId, classLevelId } of midTermClosedGroups.values()) {
-      await this.enqueueMidTermReports(termId, classLevelId);
+    for (const { termId, classLevelCategory } of midTermClosedGroups.values()) {
+      await this.enqueueMidTermReports(termId, classLevelCategory);
     }
 
     const reportWindows = await this.prisma.reportWindow.findMany({
@@ -112,10 +116,10 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
     }
   }
 
-  private async enqueueMidTermReports(termId: string, classLevelId: string): Promise<void> {
+  private async enqueueMidTermReports(termId: string, classLevelCategory: ClassLevelCategory): Promise<void> {
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
     const classArms = await this.prisma.classArm.findMany({
-      where: { classLevelId, academicSessionId: term.academicSessionId },
+      where: { classLevel: { category: classLevelCategory }, academicSessionId: term.academicSessionId },
       select: { id: true },
     });
 

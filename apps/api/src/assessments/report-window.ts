@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { ReportWindowStatus } from "@prisma/client";
+import { ClassLevelCategory, ReportWindowStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -31,7 +31,7 @@ export class ReportWindowService {
     return this.prisma.reportWindow.update({ where: { id }, data: dto });
   }
 
-  findAll(filters: { termId?: string; classLevelId?: string }) {
+  findAll(filters: { termId?: string; classLevelCategory?: ClassLevelCategory }) {
     return this.prisma.reportWindow.findMany({ where: filters });
   }
 
@@ -64,8 +64,8 @@ export class ReportWindowController {
   }
 
   @Get()
-  findAll(@Query("termId") termId?: string, @Query("classLevelId") classLevelId?: string) {
-    return this.service.findAll({ termId, classLevelId });
+  findAll(@Query("termId") termId?: string, @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory) {
+    return this.service.findAll({ termId, classLevelCategory });
   }
 
   @Get(":id")

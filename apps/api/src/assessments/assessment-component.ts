@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { AssessmentComponentStatus } from "@prisma/client";
+import { AssessmentComponentStatus, ClassLevelCategory } from "@prisma/client";
 import { isStructureComplete } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -27,20 +27,20 @@ export class AssessmentComponentService {
 
   /**
    * PRD §3.6: "the full set of components defined for that pair sums to
-   * 100" — checked before any component in the (termId, classLevelId) group
-   * can move to OPEN. Shared with the worker's sweep via the pure
+   * 100" — checked before any component in the (termId, classLevelCategory)
+   * group can move to OPEN. Shared with the worker's sweep via the pure
    * `isStructureComplete` (packages/types) so both sides apply the same
    * rule.
    */
-  async assertStructureComplete(termId: string, classLevelId: string) {
+  async assertStructureComplete(termId: string, classLevelCategory: ClassLevelCategory) {
     const components = await this.prisma.assessmentComponent.findMany({
-      where: { termId, classLevelId },
+      where: { termId, classLevelCategory },
       select: { maxScore: true },
     });
     const maxScores = components.map((c) => Number(c.maxScore));
     if (!isStructureComplete(maxScores)) {
       throw new BadRequestException(
-        `Components for this term/class level sum to ${maxScores.reduce((s, v) => s + v, 0)}, not 100 — cannot open until the structure is complete`,
+        `Components for this term/class group sum to ${maxScores.reduce((s, v) => s + v, 0)}, not 100 — cannot open until the structure is complete`,
       );
     }
   }
@@ -55,7 +55,7 @@ export class AssessmentComponentService {
     return this.prisma.assessmentComponent.update({ where: { id }, data: dto });
   }
 
-  findAll(filters: { termId?: string; classLevelId?: string }) {
+  findAll(filters: { termId?: string; classLevelCategory?: ClassLevelCategory }) {
     return this.prisma.assessmentComponent.findMany({
       where: filters,
       orderBy: [{ type: "asc" }, { sequence: "asc" }],
@@ -72,7 +72,7 @@ export class AssessmentComponentService {
 
   async forceOpen(id: string) {
     const component = await this.prisma.assessmentComponent.findUniqueOrThrow({ where: { id } });
-    await this.assertStructureComplete(component.termId, component.classLevelId);
+    await this.assertStructureComplete(component.termId, component.classLevelCategory);
     return this.prisma.assessmentComponent.update({
       where: { id },
       data: { status: AssessmentComponentStatus.OPEN },
@@ -106,8 +106,8 @@ export class AssessmentComponentController {
   }
 
   @Get()
-  findAll(@Query("termId") termId?: string, @Query("classLevelId") classLevelId?: string) {
-    return this.service.findAll({ termId, classLevelId });
+  findAll(@Query("termId") termId?: string, @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory) {
+    return this.service.findAll({ termId, classLevelCategory });
   }
 
   @Get(":id")

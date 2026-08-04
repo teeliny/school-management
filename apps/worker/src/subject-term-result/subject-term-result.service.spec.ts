@@ -20,7 +20,7 @@ const GRADE_SCALES = [
   { minScore: 0, maxScore: 49.99, grade: "F9", remark: "Fail" },
 ];
 
-describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)", () => {
+describe("SubjectTermResultService.aggregateForClassCategoryTerm (PRD §3.6/FR4.4)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let service: SubjectTermResultService;
 
@@ -46,7 +46,7 @@ describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)"
       { studentId: "student-1", subjectId: "subj-math", score: 50 },
     ]);
 
-    await service.aggregateForClassLevelTerm("term-1", "level-1");
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
 
     expect(prisma.subjectTermResult.upsert).toHaveBeenCalledTimes(1);
     expect(prisma.subjectTermResult.upsert).toHaveBeenCalledWith(
@@ -64,7 +64,7 @@ describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)"
     ]);
     prisma.scoreEntry.findMany.mockResolvedValue([{ studentId: "student-1", subjectId: "subj-math", score: 65 }]);
 
-    await service.aggregateForClassLevelTerm("term-1", "level-1");
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
 
     expect(prisma.subjectTermResult.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ grade: null }) }),
@@ -91,7 +91,7 @@ describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)"
       { studentId: "student-1", subjectId: "subj-basic-technology", score: 80 },
     ]);
 
-    await service.aggregateForClassLevelTerm("term-1", "level-1");
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
 
     // Child rows get their own SubjectTermResult...
     expect(prisma.subjectTermResult.upsert).toHaveBeenCalledWith(
@@ -116,7 +116,7 @@ describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)"
   it("does nothing when there are no components for this term/class level", async () => {
     prisma.assessmentComponent.findMany.mockResolvedValue([]);
 
-    await service.aggregateForClassLevelTerm("term-1", "level-1");
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
 
     expect(prisma.studentSubjectEnrollment.findMany).not.toHaveBeenCalled();
     expect(prisma.subjectTermResult.upsert).not.toHaveBeenCalled();
@@ -134,7 +134,7 @@ describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)"
       { studentId: "student-3", subjectId: "subj-math", score: 60 },
     ]);
 
-    await service.aggregateForClassLevelTerm("term-1", "level-1");
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
 
     expect(prisma.subjectTermResult.update).toHaveBeenCalledWith({
       where: { id: "student-1:subj-math" },
@@ -161,7 +161,7 @@ describe("SubjectTermResultService.aggregateForClassLevelTerm (PRD §3.6/FR4.4)"
       { studentId: "student-1", subjectId: "subj-english", score: 40 },
     ]);
 
-    await service.aggregateForClassLevelTerm("term-1", "level-1");
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
 
     // The only student in each subject group is always rank 1, regardless
     // of their score in the other subject.

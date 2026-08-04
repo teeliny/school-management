@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { EnrollmentStatus } from "@prisma/client";
+import { ClassLevelCategory, EnrollmentStatus } from "@prisma/client";
 import { findGradeScaleMatch } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { assignPositions } from "./position-ranking.util";
@@ -25,7 +25,7 @@ export class SubjectTermResultService {
 
   /**
    * PRD §3.6/FR4.4: sums each student's ScoreEntry rows across every
-   * AssessmentComponent for this (termId, classLevelId) into a
+   * AssessmentComponent for this (termId, classLevelCategory) into a
    * SubjectTermResult per subject, graded via GradeScale. Only the parent
    * subject of a grouped subject carries a StudentSubjectEnrollment row
    * (PRD §3.3), but scores are entered per child (PRD §3.6) under the same
@@ -39,18 +39,18 @@ export class SubjectTermResultService {
    * (subjectId, classArmId) pair is known — ranking requires the whole
    * group, not just the one row being written.
    */
-  async aggregateForClassLevelTerm(termId: string, classLevelId: string): Promise<void> {
+  async aggregateForClassCategoryTerm(termId: string, classLevelCategory: ClassLevelCategory): Promise<void> {
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
 
     const components = await this.prisma.assessmentComponent.findMany({
-      where: { termId, classLevelId },
+      where: { termId, classLevelCategory },
       select: { id: true },
     });
     const componentIds = components.map((c) => c.id);
     if (componentIds.length === 0) return;
 
     const classArms = await this.prisma.classArm.findMany({
-      where: { classLevelId, academicSessionId: term.academicSessionId },
+      where: { classLevel: { category: classLevelCategory }, academicSessionId: term.academicSessionId },
       select: { id: true },
     });
     const classArmIds = classArms.map((a) => a.id);

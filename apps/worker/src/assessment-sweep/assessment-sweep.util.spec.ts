@@ -14,7 +14,7 @@ function buildComponent(overrides: Partial<SweepableComponent> = {}): SweepableC
   return {
     id: "comp-1",
     termId: "term-1",
-    classLevelId: "level-1",
+    classLevelCategory: "JSS",
     status: AssessmentComponentStatus.DRAFT,
     maxScore: 20,
     inputOpensAt: PAST,
@@ -127,12 +127,12 @@ describe("computeSweepTransitions (PRD §3.6 date-driven state machine)", () => 
     expect(computeSweepTransitions(components, NOW)).toEqual([]);
   });
 
-  it("evaluates structure-completeness per (termId, classLevelId) group independently", () => {
+  it("evaluates structure-completeness per (termId, classLevelCategory) group independently", () => {
     const components = [
       // Complete group — should open.
-      buildComponent({ id: "a", termId: "term-1", classLevelId: "level-1", maxScore: 100, inputOpensAt: PAST }),
+      buildComponent({ id: "a", termId: "term-1", classLevelCategory: "JSS", maxScore: 100, inputOpensAt: PAST }),
       // Incomplete group — should not open, even though it shares a termId.
-      buildComponent({ id: "b", termId: "term-1", classLevelId: "level-2", maxScore: 40, inputOpensAt: PAST }),
+      buildComponent({ id: "b", termId: "term-1", classLevelCategory: "SSS", maxScore: 40, inputOpensAt: PAST }),
     ];
 
     expect(computeSweepTransitions(components, NOW)).toEqual([

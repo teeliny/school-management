@@ -18,7 +18,7 @@ function buildStaffAssignmentsMock() {
 }
 
 const USER: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: [] };
-const STUDENT_WITH_CLASS = { currentClass: { id: "arm-1", classLevelId: "level-1" } };
+const STUDENT_WITH_CLASS = { currentClass: { id: "arm-1", classLevel: { category: "JSS" } } };
 
 function buildDto(overrides: Partial<CreateReportCommentDto> = {}): CreateReportCommentDto {
   return {

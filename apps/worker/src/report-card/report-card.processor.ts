@@ -53,7 +53,7 @@ export class ReportCardProcessor extends WorkerHost {
     const [student, term] = await Promise.all([
       this.prisma.studentProfile.findUniqueOrThrow({
         where: { id: studentId },
-        include: { user: true, currentClass: true },
+        include: { user: true, currentClass: { include: { classLevel: true } } },
       }),
       this.prisma.term.findUniqueOrThrow({ where: { id: termId } }),
     ]);
@@ -62,13 +62,13 @@ export class ReportCardProcessor extends WorkerHost {
       throw new Error(`Student ${studentId} has no current class — cannot generate a mid-term report`);
     }
     const classArmId = student.currentClass.id;
-    const classLevelId = student.currentClass.classLevelId;
+    const classLevelCategory = student.currentClass.classLevel.category;
 
     const midTermComponent = await this.prisma.assessmentComponent.findFirst({
-      where: { termId, classLevelId, type: AssessmentComponentType.MID_TERM },
+      where: { termId, classLevelCategory, type: AssessmentComponentType.MID_TERM },
     });
     if (!midTermComponent) {
-      throw new Error(`No MID_TERM component found for term ${termId}, class level ${classLevelId}`);
+      throw new Error(`No MID_TERM component found for term ${termId}, class group ${classLevelCategory}`);
     }
 
     const enrollments = await this.prisma.studentSubjectEnrollment.findMany({
@@ -159,7 +159,7 @@ export class ReportCardProcessor extends WorkerHost {
     const [student, term] = await Promise.all([
       this.prisma.studentProfile.findUniqueOrThrow({
         where: { id: studentId },
-        include: { user: true, currentClass: true },
+        include: { user: true, currentClass: { include: { classLevel: true } } },
       }),
       this.prisma.term.findUniqueOrThrow({ where: { id: termId } }),
     ]);
@@ -167,7 +167,7 @@ export class ReportCardProcessor extends WorkerHost {
     if (!student.currentClass) {
       throw new Error(`Student ${studentId} has no current class — cannot generate a full-term report`);
     }
-    const classLevelId = student.currentClass.classLevelId;
+    const classLevelCategory = student.currentClass.classLevel.category;
 
     const sessionTerms = await this.prisma.term.findMany({
       where: { academicSessionId: term.academicSessionId },
@@ -177,7 +177,7 @@ export class ReportCardProcessor extends WorkerHost {
     const priorTerms = currentIndex > 0 ? sessionTerms.slice(0, currentIndex) : [];
 
     const components = await this.prisma.assessmentComponent.findMany({
-      where: { termId, classLevelId },
+      where: { termId, classLevelCategory },
       orderBy: [{ type: "asc" }, { sequence: "asc" }],
     });
 

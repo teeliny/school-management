@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -23,10 +24,6 @@ interface TermOption {
   id: string;
   name: string;
 }
-interface ClassLevelOption {
-  id: string;
-  name: string;
-}
 interface AssessmentComponentItem {
   id: string;
   type: ComponentType;
@@ -45,15 +42,9 @@ function toDatetimeLocalValue(iso: string | null): string {
   return iso ? iso.slice(0, 16) : "";
 }
 
-export function AssessmentComponentManager({
-  terms,
-  classLevels,
-}: {
-  terms: TermOption[];
-  classLevels: ClassLevelOption[];
-}) {
+export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
   const [termId, setTermId] = useState("");
-  const [classLevelId, setClassLevelId] = useState("");
+  const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
   const [components, setComponents] = useState<AssessmentComponentItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -69,16 +60,17 @@ export function AssessmentComponentManager({
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    if (!termId || !classLevelId) {
+    if (!termId || !classLevelCategory) {
       setComponents(null);
       return;
     }
-    apiFetch<AssessmentComponentItem[]>(`/assessment-components?termId=${termId}&classLevelId=${classLevelId}`, {
-      auth: true,
-    })
+    apiFetch<AssessmentComponentItem[]>(
+      `/assessment-components?termId=${termId}&classLevelCategory=${classLevelCategory}`,
+      { auth: true },
+    )
       .then(setComponents)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load assessment components"));
-  }, [termId, classLevelId]);
+  }, [termId, classLevelCategory]);
 
   useEffect(() => {
     load();
@@ -117,7 +109,7 @@ export function AssessmentComponentManager({
     try {
       const body = {
         termId,
-        classLevelId,
+        classLevelCategory,
         type,
         name,
         sequence: Number(sequence),
@@ -173,15 +165,15 @@ export function AssessmentComponentManager({
           </Select>
         </div>
         <div>
-          <Label htmlFor="ac-class-level">Class level</Label>
-          <Select value={classLevelId} onValueChange={setClassLevelId}>
-            <SelectTrigger id="ac-class-level" className="mt-1">
-              <SelectValue placeholder="Select class level" />
+          <Label htmlFor="ac-class-group">Class group</Label>
+          <Select value={classLevelCategory} onValueChange={(v) => setClassLevelCategory(v as ClassLevelCategory)}>
+            <SelectTrigger id="ac-class-group" className="mt-1">
+              <SelectValue placeholder="Select class group" />
             </SelectTrigger>
             <SelectContent>
-              {classLevels.map((level) => (
-                <SelectItem key={level.id} value={level.id}>
-                  {level.name}
+              {CLASS_LEVEL_CATEGORIES.map((category) => (
+                <SelectItem key={category} value={category}>
+                  {category}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -280,7 +272,7 @@ export function AssessmentComponentManager({
               onChange={(e) => setPublishAt(e.target.value)}
             />
             <div className="col-span-3 flex gap-2">
-              <Button type="submit" disabled={submitting || !termId || !classLevelId} className="w-full">
+              <Button type="submit" disabled={submitting || !termId || !classLevelCategory} className="w-full">
                 {submitting ? "Saving…" : editingId ? "Save changes" : "Create component"}
               </Button>
               {editingId && (
@@ -292,7 +284,7 @@ export function AssessmentComponentManager({
           </form>
         </>
       )}
-      {!components && <p className="text-sm text-muted">Select a term and class level to manage components.</p>}
+      {!components && <p className="text-sm text-muted">Select a term and class group to manage components.</p>}
     </div>
   );
 }

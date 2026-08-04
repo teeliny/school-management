@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
@@ -21,28 +22,25 @@ import {
   AlertDialogTrigger,
 } from "../molecules/alert-dialog";
 
-type Category = "CRECHE" | "NURSERY" | "PRIMARY" | "JSS" | "SSS";
-const CATEGORIES: Category[] = ["CRECHE", "NURSERY", "PRIMARY", "JSS", "SSS"];
-
 interface ClassLevelItem {
   id: string;
   name: string;
   order: number;
-  category: Category;
+  category: ClassLevelCategory;
 }
 
 export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
   const [levels, setLevels] = useState<ClassLevelItem[] | null>(null);
   const [name, setName] = useState("");
   const [order, setOrder] = useState("");
-  const [category, setCategory] = useState<Category>("SSS");
+  const [category, setCategory] = useState<ClassLevelCategory>("SSS");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editOrder, setEditOrder] = useState("");
-  const [editCategory, setEditCategory] = useState<Category>("SSS");
+  const [editCategory, setEditCategory] = useState<ClassLevelCategory>("SSS");
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -123,12 +121,12 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
               <FormField label="Order" id={`level-edit-order-${level.id}`} type="number" value={editOrder} onChange={(e) => setEditOrder(e.target.value)} />
               <div>
                 <Label htmlFor={`level-edit-category-${level.id}`}>Category</Label>
-                <Select value={editCategory} onValueChange={(v) => setEditCategory(v as Category)}>
+                <Select value={editCategory} onValueChange={(v) => setEditCategory(v as ClassLevelCategory)}>
                   <SelectTrigger id={`level-edit-category-${level.id}`} className="mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CATEGORIES.map((c) => (
+                    {CLASS_LEVEL_CATEGORIES.map((c) => (
                       <SelectItem key={c} value={c}>
                         {c}
                       </SelectItem>
@@ -184,12 +182,12 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
         <FormField label="Order" id="level-order" type="number" required value={order} onChange={(e) => setOrder(e.target.value)} />
         <div>
           <Label htmlFor="level-category">Category</Label>
-          <Select value={category} onValueChange={(v) => setCategory(v as Category)}>
+          <Select value={category} onValueChange={(v) => setCategory(v as ClassLevelCategory)}>
             <SelectTrigger id="level-category" className="mt-1">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {CATEGORIES.map((c) => (
+              {CLASS_LEVEL_CATEGORIES.map((c) => (
                 <SelectItem key={c} value={c}>
                   {c}
                 </SelectItem>

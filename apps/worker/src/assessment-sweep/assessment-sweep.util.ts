@@ -4,7 +4,7 @@ import { isStructureComplete } from "@school/types";
 export interface SweepableComponent {
   id: string;
   termId: string;
-  classLevelId: string;
+  classLevelCategory: string;
   status: AssessmentComponentStatus;
   maxScore: number;
   // Null on a freshly carried-forward component (TermService.create) until
@@ -27,13 +27,14 @@ export interface SweepTransition {
  * it's directly unit-testable as a date-driven state machine, independent of
  * BullMQ scheduling or DB access (mirrors timetable-slot.ts's overlaps()
  * extraction). A DRAFT component past its open date only advances if the
- * whole (termId, classLevelId) group's components sum to 100 — otherwise it
- * stays DRAFT until Admin completes the structure or forces it open.
+ * whole (termId, classLevelCategory) group's components sum to 100 —
+ * otherwise it stays DRAFT until Admin completes the structure or forces it
+ * open.
  */
 export function computeSweepTransitions(components: SweepableComponent[], now: Date): SweepTransition[] {
   const groups = new Map<string, SweepableComponent[]>();
   for (const component of components) {
-    const key = `${component.termId}:${component.classLevelId}`;
+    const key = `${component.termId}:${component.classLevelCategory}`;
     const group = groups.get(key) ?? [];
     group.push(component);
     groups.set(key, group);

@@ -47,7 +47,7 @@ export class ReportCommentService {
     } else if (dto.commentType === ReportCommentType.SUBJECT) {
       const student = await this.prisma.studentProfile.findUniqueOrThrow({
         where: { id: dto.studentId },
-        include: { currentClass: true },
+        include: { currentClass: { include: { classLevel: true } } },
       });
       if (!student.currentClass) {
         throw new BadRequestException("Student has no current class — cannot write a subject comment");
@@ -65,7 +65,7 @@ export class ReportCommentService {
       authorStaffId = assignment.staffId;
 
       const components = await this.prisma.assessmentComponent.findMany({
-        where: { termId: dto.termId, classLevelId: student.currentClass.classLevelId },
+        where: { termId: dto.termId, classLevelCategory: student.currentClass.classLevel.category },
       });
       const allClosedOrPublished =
         components.length > 0 &&
@@ -74,13 +74,13 @@ export class ReportCommentService {
         );
       if (!allClosedOrPublished) {
         throw new BadRequestException(
-          "Subject comments open once every assessment component for this term/class level has closed",
+          "Subject comments open once every assessment component for this term/class group has closed",
         );
       }
     } else if (dto.commentType === ReportCommentType.CLASS_TEACHER) {
       const student = await this.prisma.studentProfile.findUniqueOrThrow({
         where: { id: dto.studentId },
-        include: { currentClass: true },
+        include: { currentClass: { include: { classLevel: true } } },
       });
       if (!student.currentClass) {
         throw new BadRequestException("Student has no current class — cannot write a class-teacher comment");
@@ -97,7 +97,7 @@ export class ReportCommentService {
       authorStaffId = assignment.staffId;
 
       const reportWindow = await this.prisma.reportWindow.findFirst({
-        where: { termId: dto.termId, classLevelId: student.currentClass.classLevelId },
+        where: { termId: dto.termId, classLevelCategory: student.currentClass.classLevel.category },
       });
       if (!reportWindow || reportWindow.status !== ReportWindowStatus.OPEN) {
         throw new BadRequestException("The report window is not open for class-teacher comments");

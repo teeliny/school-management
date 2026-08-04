@@ -32,7 +32,7 @@ describe("TermService.create — carrying AssessmentComponent structure forward"
     tx.term.findFirst.mockResolvedValue({ id: "term-prev", startDate: new Date("2026-09-01") });
     tx.assessmentComponent.findMany.mockResolvedValue([
       {
-        classLevelId: "level-1",
+        classLevelCategory: "JSS",
         type: AssessmentComponentType.CA,
         name: "1st CA",
         sequence: 1,
@@ -51,7 +51,7 @@ describe("TermService.create — carrying AssessmentComponent structure forward"
       data: [
         {
           termId: "term-new",
-          classLevelId: "level-1",
+          classLevelCategory: "JSS",
           type: AssessmentComponentType.CA,
           name: "1st CA",
           sequence: 1,

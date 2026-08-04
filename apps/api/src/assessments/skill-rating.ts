@@ -31,7 +31,7 @@ export class SkillRatingService {
     } else {
       const student = await this.prisma.studentProfile.findUniqueOrThrow({
         where: { id: dto.studentId },
-        include: { currentClass: true },
+        include: { currentClass: { include: { classLevel: true } } },
       });
       if (!student.currentClass) {
         throw new BadRequestException("Student has no current class — cannot rate skills");
@@ -48,7 +48,7 @@ export class SkillRatingService {
       ratedByStaffId = assignment.staffId;
 
       const reportWindow = await this.prisma.reportWindow.findFirst({
-        where: { termId: dto.termId, classLevelId: student.currentClass.classLevelId },
+        where: { termId: dto.termId, classLevelCategory: student.currentClass.classLevel.category },
       });
       if (!reportWindow || reportWindow.status !== ReportWindowStatus.OPEN) {
         throw new BadRequestException("The report window is not open for skill ratings");

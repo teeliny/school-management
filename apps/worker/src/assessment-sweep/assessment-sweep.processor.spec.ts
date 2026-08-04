@@ -22,7 +22,7 @@ function buildComponent(overrides: Record<string, unknown> = {}) {
   return {
     id: "comp-1",
     termId: "term-1",
-    classLevelId: "level-1",
+    classLevelCategory: "JSS",
     type: AssessmentComponentType.CA,
     status: AssessmentComponentStatus.OPEN,
     maxScore: 20,
@@ -35,14 +35,14 @@ function buildComponent(overrides: Record<string, unknown> = {}) {
 
 describe("AssessmentSweepProcessor.process (orchestration)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
-  let subjectTermResults: { aggregateForClassLevelTerm: jest.Mock };
+  let subjectTermResults: { aggregateForClassCategoryTerm: jest.Mock };
   let sweepQueue: ReturnType<typeof buildQueueMock>;
   let reportCardQueue: ReturnType<typeof buildQueueMock>;
   let processor: AssessmentSweepProcessor;
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    subjectTermResults = { aggregateForClassLevelTerm: jest.fn() };
+    subjectTermResults = { aggregateForClassCategoryTerm: jest.fn() };
     sweepQueue = buildQueueMock();
     reportCardQueue = buildQueueMock();
     processor = new AssessmentSweepProcessor(
@@ -70,7 +70,7 @@ describe("AssessmentSweepProcessor.process (orchestration)", () => {
     await processor.process({} as never);
 
     expect(prisma.assessmentComponent.update).toHaveBeenCalledTimes(2);
-    expect(subjectTermResults.aggregateForClassLevelTerm).toHaveBeenCalledWith("term-1", "level-1");
+    expect(subjectTermResults.aggregateForClassCategoryTerm).toHaveBeenCalledWith("term-1", "JSS");
   });
 
   it("does not aggregate while a sibling component in the group is still open", async () => {
@@ -89,7 +89,7 @@ describe("AssessmentSweepProcessor.process (orchestration)", () => {
 
     await processor.process({} as never);
 
-    expect(subjectTermResults.aggregateForClassLevelTerm).not.toHaveBeenCalled();
+    expect(subjectTermResults.aggregateForClassCategoryTerm).not.toHaveBeenCalled();
   });
 
   it("enqueues a MID_TERM report-card job per enrolled student when the MID_TERM component closes", async () => {

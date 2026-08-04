@@ -15,19 +15,13 @@ interface TermOption {
   id: string;
   name: string;
 }
-interface ClassLevelOption {
-  id: string;
-  name: string;
-}
 
 export default function AssessmentSetupPage() {
   const { user, loading, logout } = useCurrentUser();
   const [terms, setTerms] = useState<TermOption[]>([]);
-  const [classLevels, setClassLevels] = useState<ClassLevelOption[]>([]);
 
   useEffect(() => {
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
-    apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }).then(setClassLevels).catch(() => setClassLevels([]));
   }, []);
 
   if (loading) {
@@ -60,9 +54,9 @@ export default function AssessmentSetupPage() {
         <Card>
           <CardHeader
             title="Assessment components"
-            sub="Must sum to 100 per term + class level before any component can open (PRD §3.6)"
+            sub="Must sum to 100 per term + class group before any component can open (PRD §3.6)"
           />
-          <AssessmentComponentManager terms={terms} classLevels={classLevels} />
+          <AssessmentComponentManager terms={terms} />
         </Card>
 
         <Card>
@@ -77,7 +71,7 @@ export default function AssessmentSetupPage() {
 
         <Card>
           <CardHeader title="Report windows" sub="Gates skill ratings and the class-teacher comment (PRD §3.6)" />
-          <ReportWindowManager terms={terms} classLevels={classLevels} />
+          <ReportWindowManager terms={terms} />
         </Card>
       </div>
     </AppShell>
