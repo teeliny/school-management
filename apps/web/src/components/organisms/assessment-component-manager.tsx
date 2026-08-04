@@ -42,34 +42,41 @@ function toDatetimeLocalValue(iso: string | null): string {
   return iso ? iso.slice(0, 16) : "";
 }
 
-interface ExistingComponentOption {
-  key: string;
-  type: ComponentType;
-  name: string;
-  sequence: number;
-  maxScore: number;
+// Raw shape returned by GET /assessment-components with no filters — every
+// component ever defined, any class group/term/session.
+interface ExistingComponentRow extends AssessmentComponentItem {
+  termId: string;
+  classLevelCategory: ClassLevelCategory;
 }
 
-// A component's identity for reuse purposes is (type, name, sequence,
-// maxScore) — everything else (dates, status) is term-specific and never
-// part of what's being "copied", same as TermService.create's carry-forward
-// never copying dates.
-function dedupeExistingOptions(items: AssessmentComponentItem[]): ExistingComponentOption[] {
-  const seen = new Map<string, ExistingComponentOption>();
+interface ExistingStructure {
+  key: string;
+  termId: string;
+  classLevelCategory: ClassLevelCategory;
+  components: ExistingComponentRow[];
+}
+
+// A full "structure" (the complete related set — 1st CA, 2nd CA, Mid-Term,
+// Exam, etc.) is everything sharing one (termId, classLevelCategory) — that's
+// the natural unit to copy wholesale, dates included, onto a new term/group.
+function groupIntoStructures(items: ExistingComponentRow[]): ExistingStructure[] {
+  const groups = new Map<string, ExistingStructure>();
   for (const item of items) {
-    const key = `${item.type}|${item.name}|${item.sequence}|${item.maxScore}`;
-    if (!seen.has(key)) {
-      seen.set(key, { key, type: item.type, name: item.name, sequence: item.sequence, maxScore: item.maxScore });
-    }
+    const key = `${item.termId}|${item.classLevelCategory}`;
+    const group = groups.get(key) ?? { key, termId: item.termId, classLevelCategory: item.classLevelCategory, components: [] };
+    group.components.push(item);
+    groups.set(key, group);
   }
-  return [...seen.values()];
+  return [...groups.values()];
 }
 
 export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
   const [termId, setTermId] = useState("");
   const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
   const [components, setComponents] = useState<AssessmentComponentItem[] | null>(null);
-  const [existingOptions, setExistingOptions] = useState<ExistingComponentOption[]>([]);
+  const [existingStructures, setExistingStructures] = useState<ExistingStructure[]>([]);
+  const [copyFromKey, setCopyFromKey] = useState("");
+  const [copying, setCopying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -100,23 +107,61 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
     load();
   }, [load]);
 
-  // Every AC ever defined, across every class group/term/session — unique by
-  // (type, name, sequence, maxScore) — powers the "copy from existing"
-  // picker below, independent of which class group/term is currently
-  // selected.
-  useEffect(() => {
-    apiFetch<AssessmentComponentItem[]>("/assessment-components", { auth: true })
-      .then((items) => setExistingOptions(dedupeExistingOptions(items)))
-      .catch(() => setExistingOptions([]));
+  // Every full structure (a term+class group's complete related set of
+  // components) ever defined, across every class group/term/session —
+  // powers the "copy an existing structure" action below, independent of
+  // which class group/term is currently selected.
+  const loadExistingStructures = useCallback(() => {
+    apiFetch<ExistingComponentRow[]>("/assessment-components", { auth: true })
+      .then((items) => setExistingStructures(groupIntoStructures(items)))
+      .catch(() => setExistingStructures([]));
   }, []);
 
-  function applyExisting(key: string) {
-    const option = existingOptions.find((o) => o.key === key);
-    if (!option) return;
-    setType(option.type);
-    setName(option.name);
-    setSequence(String(option.sequence));
-    setMaxScore(String(option.maxScore));
+  useEffect(() => {
+    loadExistingStructures();
+  }, [loadExistingStructures]);
+
+  const copyableStructures = existingStructures.filter(
+    (s) => !(s.termId === termId && s.classLevelCategory === classLevelCategory),
+  );
+
+  async function copyStructure() {
+    const structure = copyableStructures.find((s) => s.key === copyFromKey);
+    if (!structure || !termId || !classLevelCategory) return;
+    setError(null);
+    setCopying(true);
+    const failures: string[] = [];
+    try {
+      for (const source of structure.components) {
+        try {
+          await apiFetch("/assessment-components", {
+            method: "POST",
+            auth: true,
+            body: {
+              termId,
+              classLevelCategory,
+              type: source.type,
+              name: source.name,
+              sequence: source.sequence,
+              maxScore: source.maxScore,
+              inputOpensAt: source.inputOpensAt,
+              inputClosesAt: source.inputClosesAt,
+              publishAt: source.publishAt,
+            },
+          });
+        } catch (err) {
+          failures.push(`${source.name}: ${err instanceof ApiError ? err.message : "failed"}`);
+        }
+      }
+      if (failures.length > 0) {
+        setError(`Some components couldn't be copied — ${failures.join("; ")}`);
+      }
+      setCopyFromKey("");
+      load();
+      loadExistingStructures();
+    } finally {
+      setCopying(false);
+    }
   }
 
   function resetForm() {
@@ -271,24 +316,32 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
             {components.length === 0 && <p className="mt-2 text-sm text-muted">No assessment components yet.</p>}
           </div>
 
-          <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
-            {!editingId && existingOptions.length > 0 && (
-              <div className="col-span-3">
-                <Label htmlFor="ac-copy-from">Copy from existing (any class group, any term)</Label>
-                <Select value="" onValueChange={applyExisting}>
+          {copyableStructures.length > 0 && (
+            <div className="flex items-end gap-2 rounded-lg border border-border p-2.5">
+              <div className="flex-1">
+                <Label htmlFor="ac-copy-from">Copy a full structure from existing (any class group, any term)</Label>
+                <Select value={copyFromKey} onValueChange={setCopyFromKey}>
                   <SelectTrigger id="ac-copy-from" className="mt-1">
-                    <SelectValue placeholder="Select a previously used component…" />
+                    <SelectValue placeholder="Select a previous term/class group's structure…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {existingOptions.map((option) => (
-                      <SelectItem key={option.key} value={option.key}>
-                        {option.name} ({option.type}, seq {option.sequence}, max {option.maxScore})
+                    {copyableStructures.map((structure) => (
+                      <SelectItem key={structure.key} value={structure.key}>
+                        {structure.classLevelCategory} · {terms.find((t) => t.id === structure.termId)?.name ?? structure.termId} (
+                        {structure.components.length} component{structure.components.length === 1 ? "" : "s"}:{" "}
+                        {structure.components.map((c) => c.name).join(", ")})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            )}
+              <Button type="button" variant="outline" disabled={!copyFromKey || copying} onClick={copyStructure}>
+                {copying ? "Copying…" : "Copy structure"}
+              </Button>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
             <div>
               <Label htmlFor="ac-type">Type</Label>
               <Select value={type} onValueChange={(v) => setType(v as ComponentType)}>
