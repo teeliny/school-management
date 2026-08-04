@@ -143,7 +143,7 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
               type: source.type,
               name: source.name,
               sequence: source.sequence,
-              maxScore: source.maxScore,
+              maxScore: Number(source.maxScore),
               inputOpensAt: source.inputOpensAt,
               inputClosesAt: source.inputClosesAt,
               publishAt: source.publishAt,
