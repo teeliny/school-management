@@ -131,9 +131,11 @@ export class SubjectService {
         departmentId: filters.departmentId,
         isGroup: filters.isGroup,
         // Children of a group are only ever listed via their parent's detail
-        // view, not the top-level catalogue.
+        // view, not the top-level catalogue — but are included inline below
+        // so the catalogue UI can expand a group row to show them.
         parentSubjectId: null,
       },
+      include: { childSubjects: true },
       orderBy: { name: "asc" },
     });
   }

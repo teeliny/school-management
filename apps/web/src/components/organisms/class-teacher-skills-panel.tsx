@@ -173,7 +173,7 @@ export function ClassTeacherSkillsPanel({
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <Label htmlFor="cts-class-arm">Class arm</Label>
           <Select value={classArmId} onValueChange={setClassArmId}>
@@ -225,7 +225,7 @@ export function ClassTeacherSkillsPanel({
         <div className="space-y-3">
           {students.map((student) => (
             <div key={student.id} className="rounded-lg border border-border p-3">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[13px] font-medium">
                   {student.user.firstName} {student.user.lastName}{" "}
                   <span className="font-mono text-muted">({student.admissionNumber})</span>
@@ -240,7 +240,7 @@ export function ClassTeacherSkillsPanel({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {(Object.keys(itemsByCategory) as SkillCategory[]).map((category) =>
                   itemsByCategory[category].length > 0 ? (
                     <div key={category}>

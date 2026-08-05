@@ -115,7 +115,7 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
       <div className="space-y-1.5">
         {departments?.map((dept) =>
           editingId === dept.id ? (
-            <div key={dept.id} className="grid grid-cols-[1fr_auto_auto] items-end gap-2 rounded-lg border border-border p-2.5">
+            <div key={dept.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_auto_auto]">
               <FormField
                 label={`Description (${dept.name})`}
                 id={`dept-edit-description-${dept.id}`}
@@ -130,12 +130,12 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
               </Button>
             </div>
           ) : (
-            <div key={dept.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
+            <div key={dept.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
               <span>
                 {dept.name}
                 {dept.description && <span className="text-muted"> — {dept.description}</span>}
               </span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <Button type="button" variant="outline" size="sm" onClick={() => startEdit(dept)}>
                   Edit
                 </Button>
@@ -166,7 +166,7 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
       </div>
 
       {remaining.length > 0 && (
-        <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-3">
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <Label htmlFor="dept-name">Department</Label>
             <Select value={name} onValueChange={(v) => setName(v as DepartmentName)}>
@@ -183,7 +183,7 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
             </Select>
           </div>
           <FormField label="Description (optional)" id="dept-description" value={description} onChange={(e) => setDescription(e.target.value)} />
-          <Button type="submit" disabled={submitting} className="col-span-2">
+          <Button type="submit" disabled={submitting} className="sm:col-span-2">
             {submitting ? "Creating…" : "Create department"}
           </Button>
         </form>

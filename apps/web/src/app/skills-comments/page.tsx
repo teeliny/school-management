@@ -5,7 +5,8 @@ import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
-import { Card, CardHeader } from "../../components/molecules/card";
+import { Card } from "../../components/molecules/card";
+import { CollapsibleCard } from "../../components/molecules/collapsible-card";
 import { ClassTeacherSkillsPanel } from "../../components/organisms/class-teacher-skills-panel";
 import { SubjectCommentPanel } from "../../components/organisms/subject-comment-panel";
 import { PrincipalCommentPanel } from "../../components/organisms/principal-comment-panel";
@@ -101,34 +102,33 @@ export default function SkillsCommentsPage() {
       <Letterhead eyebrow="Assessment · Skills & Comments" title="Skills & Comments" />
 
       {showClassTeacherSection && (
-        <Card className="mb-4">
-          <CardHeader
-            title="Skill ratings & class-teacher comment"
-            sub="Only editable while the class level's report window is OPEN"
-          />
+        <CollapsibleCard
+          title="Skill ratings & class-teacher comment"
+          sub="Only editable while the class level's report window is OPEN"
+          className="mb-4"
+        >
           <ClassTeacherSkillsPanel classArmOptions={classTeacherClassArmOptions} terms={terms} isAdmin={isAdmin} />
-        </Card>
+        </CollapsibleCard>
       )}
 
       {showSubjectSection && (
-        <Card className="mb-4">
-          <CardHeader
-            title="Subject comment"
-            sub="Opens once every assessment component for the term/class level has closed"
-          />
+        <CollapsibleCard
+          title="Subject comment"
+          sub="Opens once every assessment component for the term/class level has closed"
+          className="mb-4"
+        >
           <SubjectCommentPanel
             classArmOptions={subjectClassArmOptions}
             subjectOptions={subjectSubjectOptions}
             terms={terms}
           />
-        </Card>
+        </CollapsibleCard>
       )}
 
       {showPrincipalSection && (
-        <Card>
-          <CardHeader title="Principal / Headteacher comment" sub="Available for any student, any time" />
+        <CollapsibleCard title="Principal / Headteacher comment" sub="Available for any student, any time">
           <PrincipalCommentPanel terms={terms} />
-        </Card>
+        </CollapsibleCard>
       )}
     </AppShell>
   );

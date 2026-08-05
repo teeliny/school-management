@@ -35,6 +35,10 @@ export async function apiFetch<T>(
     throw new ApiError(res.status, body.message ?? "Request failed");
   }
 
-  if (res.status === 204) return undefined as T;
-  return res.json();
+  // Some success responses (e.g. 201 from a queue-backed "generate" action)
+  // carry an empty body — res.json() throws SyntaxError on "", which read as
+  // a generic failure even though the request succeeded. Parse from text so
+  // any empty body (204 or otherwise) resolves to undefined instead.
+  const text = await res.text();
+  return text ? JSON.parse(text) : (undefined as T);
 }

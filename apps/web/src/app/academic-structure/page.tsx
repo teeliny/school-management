@@ -3,7 +3,8 @@
 import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
-import { Card, CardHeader } from "../../components/molecules/card";
+import { Card } from "../../components/molecules/card";
+import { CollapsibleCard } from "../../components/molecules/collapsible-card";
 import { AcademicSessionManager } from "../../components/organisms/academic-session-manager";
 import { TermManager } from "../../components/organisms/term-manager";
 import { ClassLevelManager } from "../../components/organisms/class-level-manager";
@@ -40,31 +41,29 @@ export default function AcademicStructurePage() {
       <Letterhead eyebrow="Academics · Structure" title="Academic structure" />
 
       <div className="space-y-4">
-        <Card>
-          <CardHeader title="Academic sessions" sub="Exactly one is current at a time (PRD §3.2)" />
+        <CollapsibleCard title="Academic sessions" sub="Exactly one is current at a time (PRD §3.2)">
           <AcademicSessionManager />
-        </Card>
+        </CollapsibleCard>
 
-        <Card>
-          <CardHeader title="Terms" sub="One current term per session — required for compulsory subject auto-enrollment" />
+        <CollapsibleCard
+          title="Terms"
+          sub="One current term per session — required for compulsory subject auto-enrollment"
+        >
           <TermManager />
-        </Card>
+        </CollapsibleCard>
 
         <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
-          <Card>
-            <CardHeader title="Class levels" />
+          <CollapsibleCard title="Class levels">
             <ClassLevelManager />
-          </Card>
-          <Card>
-            <CardHeader title="Departments" sub="SSS-only (PRD §3.2)" />
+          </CollapsibleCard>
+          <CollapsibleCard title="Departments" sub="SSS-only (PRD §3.2)">
             <DepartmentManager />
-          </Card>
+          </CollapsibleCard>
         </div>
 
-        <Card>
-          <CardHeader title="Class arms" />
+        <CollapsibleCard title="Class arms">
           <ClassArmManager />
-        </Card>
+        </CollapsibleCard>
       </div>
     </AppShell>
   );

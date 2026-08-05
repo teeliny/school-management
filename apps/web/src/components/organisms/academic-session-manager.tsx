@@ -129,7 +129,7 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
       <div className="space-y-1.5">
         {sessions?.map((session) =>
           editingId === session.id ? (
-            <div key={session.id} className="grid grid-cols-[1fr_1fr_1fr_auto_auto] items-end gap-2 rounded-lg border border-border p-2.5">
+            <div key={session.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto_auto]">
               <FormField label="Name" id={`session-edit-name-${session.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
               <FormField label="Start date" id={`session-edit-start-${session.id}`} type="date" value={editStart} onChange={(e) => setEditStart(e.target.value)} />
               <FormField label="End date" id={`session-edit-end-${session.id}`} type="date" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} />
@@ -141,12 +141,12 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
               </Button>
             </div>
           ) : (
-            <div key={session.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
+            <div key={session.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
               <div>
                 <span className="font-medium">{session.name}</span>{" "}
                 {session.isCurrent && <Badge variant="success">Current</Badge>}
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {!session.isCurrent && (
                   <Button type="button" variant="outline" size="sm" onClick={() => setCurrent(session.id)}>
                     Set current
@@ -182,11 +182,11 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
         {sessions?.length === 0 && <p className="text-sm text-muted">No academic sessions yet.</p>}
       </div>
 
-      <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <FormField label="Name (e.g. 2025/2026)" id="session-name" required value={name} onChange={(e) => setName(e.target.value)} />
         <FormField label="Start date" id="session-start" type="date" required value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         <FormField label="End date" id="session-end" type="date" required value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        <Button type="submit" disabled={submitting} className="col-span-3">
+        <Button type="submit" disabled={submitting} className="sm:col-span-3">
           {submitting ? "Creating…" : "Create session"}
         </Button>
       </form>

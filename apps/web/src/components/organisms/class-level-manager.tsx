@@ -116,7 +116,7 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
       <div className="space-y-1.5">
         {levels?.map((level) =>
           editingId === level.id ? (
-            <div key={level.id} className="grid grid-cols-[1fr_90px_1fr_auto_auto] items-end gap-2 rounded-lg border border-border p-2.5">
+            <div key={level.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_90px_1fr_auto_auto]">
               <FormField label="Name" id={`level-edit-name-${level.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
               <FormField label="Order" id={`level-edit-order-${level.id}`} type="number" value={editOrder} onChange={(e) => setEditOrder(e.target.value)} />
               <div>
@@ -142,11 +142,11 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
               </Button>
             </div>
           ) : (
-            <div key={level.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
+            <div key={level.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
               <span>
                 {level.name} <span className="text-muted">({level.category}, order {level.order})</span>
               </span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <Button type="button" variant="outline" size="sm" onClick={() => startEdit(level)}>
                   Edit
                 </Button>
@@ -177,7 +177,7 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
         {levels?.length === 0 && <p className="text-sm text-muted">No class levels yet.</p>}
       </div>
 
-      <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
+      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <FormField label="Name (e.g. SSS1)" id="level-name" required value={name} onChange={(e) => setName(e.target.value)} />
         <FormField label="Order" id="level-order" type="number" required value={order} onChange={(e) => setOrder(e.target.value)} />
         <div>
@@ -195,7 +195,7 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
             </SelectContent>
           </Select>
         </div>
-        <Button type="submit" disabled={submitting} className="col-span-3">
+        <Button type="submit" disabled={submitting} className="sm:col-span-3">
           {submitting ? "Creating…" : "Create class level"}
         </Button>
       </form>

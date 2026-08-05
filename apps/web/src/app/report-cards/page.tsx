@@ -42,6 +42,7 @@ export default function ReportCardsPage() {
   }, []);
 
   const isAdmin = user ? user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") : false;
+  const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
 
   async function handleGenerate() {
     setGenError(null);
@@ -165,6 +166,7 @@ export default function ReportCardsPage() {
           students={students}
           terms={terms}
           canManage={isAdmin}
+          canDelete={isSuperAdmin}
           refreshKey={refreshKey}
         />
       </Card>

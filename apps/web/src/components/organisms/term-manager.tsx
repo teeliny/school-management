@@ -173,7 +173,7 @@ export function TermManager() {
           <div className="space-y-1.5">
             {terms.map((term) =>
               editingId === term.id ? (
-                <div key={term.id} className="grid grid-cols-[1fr_1fr_1fr_auto_auto] items-end gap-2 rounded-lg border border-border p-2.5">
+                <div key={term.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto_auto]">
                   <FormField label="Name" id={`term-edit-name-${term.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
                   <FormField label="Start date" id={`term-edit-start-${term.id}`} type="date" value={editStart} onChange={(e) => setEditStart(e.target.value)} />
                   <FormField label="End date" id={`term-edit-end-${term.id}`} type="date" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} />
@@ -185,12 +185,12 @@ export function TermManager() {
                   </Button>
                 </div>
               ) : (
-                <div key={term.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
+                <div key={term.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
                   <div>
                     <span className="font-medium">{term.name}</span>{" "}
                     {term.isCurrent && <Badge variant="success">Current</Badge>}
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {!term.isCurrent && (
                       <Button type="button" variant="outline" size="sm" onClick={() => setCurrent(term.id)}>
                         Set current
@@ -226,11 +226,11 @@ export function TermManager() {
             {terms.length === 0 && <p className="text-sm text-muted">No terms in this session yet.</p>}
           </div>
 
-          <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
+          <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <FormField label="Name (e.g. Term 1)" id="term-name" required value={name} onChange={(e) => setName(e.target.value)} />
             <FormField label="Start date" id="term-start" type="date" required value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             <FormField label="End date" id="term-end" type="date" required value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            <Button type="submit" disabled={submitting} className="col-span-3">
+            <Button type="submit" disabled={submitting} className="sm:col-span-3">
               {submitting ? "Creating…" : "Create term"}
             </Button>
           </form>

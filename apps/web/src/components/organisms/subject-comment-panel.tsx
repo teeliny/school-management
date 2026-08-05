@@ -99,7 +99,7 @@ export function SubjectCommentPanel({
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <Label htmlFor="sc-class-arm">Class arm</Label>
           <Select value={classArmId} onValueChange={setClassArmId}>
@@ -154,7 +154,7 @@ export function SubjectCommentPanel({
         <div className="space-y-3">
           {students.map((student) => (
             <div key={student.id} className="rounded-lg border border-border p-3">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[13px] font-medium">
                   {student.user.firstName} {student.user.lastName}{" "}
                   <span className="font-mono text-muted">({student.admissionNumber})</span>

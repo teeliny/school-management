@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
-import { Card, CardHeader } from "../../components/molecules/card";
+import { CollapsibleCard } from "../../components/molecules/collapsible-card";
 import { SubjectList, type SubjectListItem } from "../../components/organisms/subject-list";
 import { CreateSubjectForm, type EditableSubject } from "../../components/organisms/create-subject-form";
 import { ClassSubjectAssignment } from "../../components/organisms/class-subject-assignment";
@@ -44,23 +44,21 @@ export default function SubjectsPage() {
 
       <div className="space-y-4">
         <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
-          <Card>
-            <CardHeader title="Subject catalogue" />
+          <CollapsibleCard title="Subject catalogue">
             <SubjectList canManage={canManage} refreshKey={refreshKey} onEdit={handleEdit} />
-          </Card>
+          </CollapsibleCard>
 
           {canManage && (
-            <Card>
-              <CardHeader
-                title={editingSubject ? `Edit ${editingSubject.name}` : "Create subject"}
-                sub={
-                  editingSubject
-                    ? editingSubject.isGroup
-                      ? "Child subjects can be edited, disabled, or added to below"
-                      : undefined
-                    : "Including grouped subjects with independently-scored children"
-                }
-              />
+            <CollapsibleCard
+              title={editingSubject ? `Edit ${editingSubject.name}` : "Create subject"}
+              sub={
+                editingSubject
+                  ? editingSubject.isGroup
+                    ? "Child subjects can be edited, disabled, or added to below"
+                    : undefined
+                  : "Including grouped subjects with independently-scored children"
+              }
+            >
               <CreateSubjectForm
                 editingSubject={editingSubject}
                 onCreated={() => setRefreshKey((k) => k + 1)}
@@ -70,22 +68,23 @@ export default function SubjectsPage() {
                 }}
                 onCancelEdit={() => setEditingSubject(null)}
               />
-            </Card>
+            </CollapsibleCard>
           )}
         </div>
 
         {canManage && (
-          <Card>
-            <CardHeader title="Assign subjects to a class" sub="Per class level, per academic session" />
+          <CollapsibleCard title="Assign subjects to a class" sub="Per class level, per academic session">
             <ClassSubjectAssignment />
-          </Card>
+          </CollapsibleCard>
         )}
 
         {canManage && (
-          <Card>
-            <CardHeader title="Student departments" sub="SSS-only — required for department-restricted subjects" />
+          <CollapsibleCard
+            title="Student departments"
+            sub="SSS-only — required for department-restricted subjects"
+          >
             <StudentDepartmentForm />
-          </Card>
+          </CollapsibleCard>
         )}
       </div>
     </AppShell>

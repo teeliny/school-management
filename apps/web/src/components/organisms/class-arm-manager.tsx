@@ -137,7 +137,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
       <div className="space-y-1.5">
         {arms?.map((arm) =>
           editingId === arm.id ? (
-            <div key={arm.id} className="grid grid-cols-[1fr_120px_auto_auto] items-end gap-2 rounded-lg border border-border p-2.5">
+            <div key={arm.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_120px_auto_auto]">
               <FormField label="Name" id={`arm-edit-name-${arm.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
               <FormField label="Capacity" id={`arm-edit-capacity-${arm.id}`} type="number" value={editCapacity} onChange={(e) => setEditCapacity(e.target.value)} />
               <Button type="button" size="sm" disabled={editSubmitting} onClick={() => saveEdit(arm.id)}>
@@ -148,7 +148,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
               </Button>
             </div>
           ) : (
-            <div key={arm.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
+            <div key={arm.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
               <span>
                 {arm.name}{" "}
                 <span className="text-muted">
@@ -156,7 +156,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
                   {arm.capacity ? ` · cap ${arm.capacity}` : ""})
                 </span>
               </span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <Button type="button" variant="outline" size="sm" onClick={() => startEdit(arm)}>
                   Edit
                 </Button>
@@ -188,7 +188,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <Label htmlFor="arm-level">Class level</Label>
             <Select value={classLevelId} onValueChange={setClassLevelId}>
@@ -220,7 +220,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
             </Select>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <FormField label="Name (e.g. SSS1 Gold)" id="arm-name" required value={name} onChange={(e) => setName(e.target.value)} />
           <FormField label="Capacity (optional)" id="arm-capacity" type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
         </div>

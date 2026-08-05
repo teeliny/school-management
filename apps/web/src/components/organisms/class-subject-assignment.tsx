@@ -153,7 +153,7 @@ export function ClassSubjectAssignment() {
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
           <Label htmlFor="cs-class-level">Class level</Label>
           <Select value={classLevelId} onValueChange={setClassLevelId}>
@@ -203,7 +203,8 @@ export function ClassSubjectAssignment() {
 
       {assigned && (
         <>
-          <table className="w-full text-left text-[12.5px]">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-left text-[12.5px]">
             <thead>
               <tr className="border-b border-border text-muted">
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Subject</th>
@@ -297,8 +298,9 @@ export function ClassSubjectAssignment() {
               )}
             </tbody>
           </table>
+          </div>
 
-          <div className="flex items-end gap-3">
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end">
             <div className="flex-1">
               <Label htmlFor="cs-add-subject">Assign a subject</Label>
               <Select value={subjectToAdd} onValueChange={setSubjectToAdd}>

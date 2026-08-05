@@ -281,12 +281,12 @@ export function CreateSubjectForm({
       {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-success">{success}</p>}
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <FormField label="Name" id="subject-name" required value={name} onChange={(e) => setName(e.target.value)} />
         <FormField label="Code" id="subject-code" required value={code} onChange={(e) => setCode(e.target.value)} />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <Label htmlFor="subject-type">Type</Label>
           <Select value={type} onValueChange={(value) => setType(value as SubjectType)}>
@@ -338,7 +338,7 @@ export function CreateSubjectForm({
                   {child.isActive ? "Active" : "Disabled"}
                 </Badge>
               </div>
-              <div className="grid grid-cols-[1fr_1fr_90px_auto_auto] items-end gap-2">
+              <div className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_1fr_90px_auto_auto]">
                 <FormField
                   label="Name"
                   id={`existing-child-${child.subjectId}-name`}
@@ -380,7 +380,7 @@ export function CreateSubjectForm({
             </div>
           ))}
 
-          <div className="grid grid-cols-[1fr_1fr_90px_auto] items-end gap-2 rounded-lg border border-dashed border-border p-3">
+          <div className="grid grid-cols-1 items-end gap-2 rounded-lg border border-dashed border-border p-3 sm:grid-cols-[1fr_1fr_90px_auto]">
             <FormField
               label="Name"
               id="new-existing-child-name"
@@ -430,7 +430,7 @@ export function CreateSubjectForm({
           </div>
 
           {children.map((child, index) => (
-            <div key={index} className="grid grid-cols-[1fr_1fr_90px_auto] items-end gap-2 rounded-lg border border-border p-3">
+            <div key={index} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-3 sm:grid-cols-[1fr_1fr_90px_auto]">
               <FormField
                 label="Name"
                 id={`child-${index}-name`}

@@ -4,6 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../molecules/alert-dialog";
 
 type ReportType = "MID_TERM" | "FULL_TERM";
 type ReportStatus = "GENERATING" | "READY" | "PUBLISHED" | "FAILED";
@@ -45,6 +53,7 @@ export function ReportCardList({
   students,
   terms,
   canManage,
+  canDelete,
   refreshKey,
 }: {
   studentId: string;
@@ -52,11 +61,14 @@ export function ReportCardList({
   students: StudentOption[];
   terms: TermOption[];
   canManage: boolean;
+  canDelete: boolean;
   refreshKey: number;
 }) {
   const [cards, setCards] = useState<TermReportCardItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<Record<string, boolean>>({});
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
     const params = new URLSearchParams();
@@ -82,6 +94,20 @@ export function ReportCardList({
       setError(err instanceof ApiError ? err.message : "Failed to publish report card");
     } finally {
       setPublishing((s) => ({ ...s, [id]: false }));
+    }
+  }
+
+  async function remove(id: string) {
+    setDeleting(true);
+    setError(null);
+    try {
+      await apiFetch(`/term-report-cards/${id}`, { method: "DELETE", auth: true });
+      setDeletingId(null);
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to delete report card");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -142,6 +168,35 @@ export function ReportCardList({
                     >
                       Publish
                     </Button>
+                  )}
+                  {canDelete && (
+                    <AlertDialog
+                      open={deletingId === card.id}
+                      onOpenChange={(open) => setDeletingId(open ? card.id : null)}
+                    >
+                      <AlertDialogTrigger asChild>
+                        <Button type="button" variant="outline" size="sm">
+                          Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogTitle className="text-lg font-semibold">
+                          Delete this report card?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="mt-2 text-sm text-muted">
+                          {studentLabel(card.studentId)} — {termLabel(card.termId)} (
+                          {card.reportType.replace("_", " ")}). This cannot be undone.
+                        </AlertDialogDescription>
+                        <div className="mt-4 flex justify-end gap-2">
+                          <AlertDialogCancel asChild>
+                            <Button variant="outline">Cancel</Button>
+                          </AlertDialogCancel>
+                          <Button disabled={deleting} onClick={() => remove(card.id)}>
+                            Confirm delete
+                          </Button>
+                        </div>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   )}
                 </div>
               </td>

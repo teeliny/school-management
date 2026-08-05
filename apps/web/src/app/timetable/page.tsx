@@ -5,7 +5,7 @@ import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
-import { Card, CardHeader } from "../../components/molecules/card";
+import { CollapsibleCard } from "../../components/molecules/collapsible-card";
 import { Label } from "../../components/atoms/label";
 import {
   Select,
@@ -64,9 +64,8 @@ export default function TimetablePage() {
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="Academics · Timetable" title="Class timetable" />
 
-      <Card className="mb-4">
-        <CardHeader title="Select class, session, and term" />
-        <div className="grid grid-cols-3 gap-4">
+      <CollapsibleCard title="Select class, session, and term" className="mb-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <Label htmlFor="tt-class-arm">Class arm</Label>
             <Select value={classArmId} onValueChange={setClassArmId}>
@@ -113,29 +112,27 @@ export default function TimetablePage() {
             </Select>
           </div>
         </div>
-      </Card>
+      </CollapsibleCard>
 
       <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.6fr_1fr]">
-        <Card>
-          <CardHeader title="Weekly timetable" />
+        <CollapsibleCard title="Weekly timetable">
           <TimetableGrid
             classArmId={classArmId}
             academicSessionId={academicSessionId}
             termId={termId}
             refreshKey={refreshKey}
           />
-        </Card>
+        </CollapsibleCard>
 
         {canManage && (
-          <Card>
-            <CardHeader title="Add a slot" />
+          <CollapsibleCard title="Add a slot">
             <TimetableSlotForm
               classArmId={classArmId}
               academicSessionId={academicSessionId}
               termId={termId}
               onCreated={() => setRefreshKey((k) => k + 1)}
             />
-          </Card>
+          </CollapsibleCard>
         )}
       </div>
     </AppShell>

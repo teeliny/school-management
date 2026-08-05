@@ -2,6 +2,8 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
+  ForbiddenException,
   Get,
   Injectable,
   Param,
@@ -39,7 +41,7 @@ export class TermReportCardService {
    * still-incomplete card before every piece is in.
    */
   async generateFullTerm(dto: GenerateTermReportCardDto, userId: string) {
-    await this.prisma.termReportCard.upsert({
+    const reportCard = await this.prisma.termReportCard.upsert({
       where: {
         studentId_termId_reportType: { studentId: dto.studentId, termId: dto.termId, reportType: TermReportCardType.FULL_TERM },
       },
@@ -58,6 +60,11 @@ export class TermReportCardService {
       termId: dto.termId,
       reportType: "FULL_TERM",
     });
+
+    // Returned so the response body isn't empty — an empty 201 body made
+    // apiFetch's res.json() throw on the frontend, which read as a failure
+    // even though generation had actually been queued successfully.
+    return reportCard;
   }
 
   async publish(id: string) {
@@ -174,6 +181,10 @@ export class TermReportCardService {
 
     return [];
   }
+
+  async remove(id: string) {
+    return this.prisma.termReportCard.delete({ where: { id } });
+  }
 }
 
 @Controller("term-report-cards")
@@ -200,5 +211,17 @@ export class TermReportCardController {
   @CheckPolicies((ability) => ability.can("manage", "TermReportCard"))
   publish(@Param("id") id: string) {
     return this.service.publish(id);
+  }
+
+  @Delete(":id")
+  remove(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    // Super-Admin-only carve-out, not a plain CASL "manage" check — Admin
+    // already has "manage" on TermReportCard (generate/publish), but
+    // deleting a generated report card is reserved for the owner, same
+    // pattern as the owner-only check in identity/ownership-transfer.ts.
+    if (!user.roles.includes("SUPER_ADMIN")) {
+      throw new ForbiddenException("Only the Super-Admin can delete a report card");
+    }
+    return this.service.remove(id);
   }
 }

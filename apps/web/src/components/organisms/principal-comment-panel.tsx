@@ -74,7 +74,7 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <Label htmlFor="pc-student">Student</Label>
           <Select value={studentId} onValueChange={setStudentId}>
@@ -109,7 +109,7 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
 
       {studentId && termId && (
         <div>
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <Label htmlFor="pc-comment" className="mb-0">
               Principal / Headteacher comment
             </Label>
