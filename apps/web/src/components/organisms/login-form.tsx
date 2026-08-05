@@ -2,15 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch, ApiError, tokenStorage } from "../../lib/api";
+import { login, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
 import { CrestBadge } from "../atoms/crest-badge";
-
-interface LoginResponse {
-  accessToken: string;
-  refreshToken: string;
-}
 
 export function LoginForm() {
   const router = useRouter();
@@ -24,11 +19,7 @@ export function LoginForm() {
     setError(null);
     setSubmitting(true);
     try {
-      const tokens = await apiFetch<LoginResponse>("/auth/login", {
-        method: "POST",
-        body: { email, password },
-      });
-      tokenStorage.set(tokens.accessToken, tokens.refreshToken);
+      await login(email, password);
       router.push("/dashboard");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiFetch, tokenStorage } from "./api";
+import { apiFetch } from "./api";
 
 export interface CurrentUser {
   id: string;
@@ -14,10 +14,12 @@ export interface CurrentUser {
 }
 
 /**
- * Every authenticated page needs the same three things: redirect to /login if
- * there's no token, fetch /auth/me, and offer a logout that clears tokens and
- * revokes the refresh token server-side. Centralized here since the AppShell
- * (avatar, role-gated nav) and every page under it all need it identically.
+ * Every authenticated page needs the same three things: fetch /auth/me (a 401
+ * redirects to /login — tokens live in httpOnly cookies, so there's no
+ * synchronous client-side check to short-circuit that), and offer a logout that
+ * clears cookies and revokes the refresh token server-side. Centralized here
+ * since the AppShell (avatar, role-gated nav) and every page under it all need
+ * it identically.
  */
 export function useCurrentUser() {
   const router = useRouter();
@@ -25,10 +27,6 @@ export function useCurrentUser() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!tokenStorage.accessToken) {
-      router.replace("/login");
-      return;
-    }
     apiFetch<CurrentUser>("/auth/me", { auth: true })
       .then(setUser)
       .catch(() => router.replace("/login"))
@@ -36,11 +34,7 @@ export function useCurrentUser() {
   }, [router]);
 
   async function logout() {
-    const refreshToken = tokenStorage.refreshToken;
-    tokenStorage.clear();
-    if (refreshToken) {
-      await apiFetch("/auth/logout", { method: "POST", body: { refreshToken } }).catch(() => {});
-    }
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     router.push("/login");
   }
 
