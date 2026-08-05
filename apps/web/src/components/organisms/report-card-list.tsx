@@ -124,7 +124,7 @@ export function ReportCardList({
   if (cards.length === 0) return <p className="text-sm text-muted">No report cards found.</p>;
 
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[420px] overflow-auto">
       <table className="w-full text-left text-[12.5px]">
         <thead>
           <tr className="border-b border-border text-muted">

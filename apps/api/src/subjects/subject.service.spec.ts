@@ -1,4 +1,3 @@
-import { SubjectType } from "@prisma/client";
 import { SubjectService } from "./subject";
 import type { CreateSubjectGroupDto } from "./dto/subject.dto";
 
@@ -35,7 +34,6 @@ describe("SubjectService.createGroup (PRD §3.3 — grouped subject, e.g. Basic 
   const dto: CreateSubjectGroupDto = {
     name: "Basic Science and Technology",
     code: "BST",
-    type: SubjectType.COMPULSORY,
     children: [
       { name: "Basic Science", code: "BST-BS", weight: 25 },
       { name: "Basic Technology", code: "BST-BT", weight: 25 },
@@ -63,12 +61,6 @@ describe("SubjectService.createGroup (PRD §3.3 — grouped subject, e.g. Basic 
     );
   });
 
-  it("rejects a departmentId on a non-DEPARTMENT group", async () => {
-    await expect(
-      service.createGroup({ ...dto, departmentId: "dept-1" }),
-    ).rejects.toThrow(/only valid for a DEPARTMENT subject/);
-    expect(prisma.$transaction).not.toHaveBeenCalled();
-  });
 });
 
 describe("SubjectService.addGroupChild — adding a child to an already-existing group", () => {
@@ -83,13 +75,8 @@ describe("SubjectService.addGroupChild — adding a child to an already-existing
     service = new SubjectService(prisma as never);
   });
 
-  it("creates a new child subject + weight row on the existing parent, matching its type/departmentId", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({
-      id: "parent-1",
-      isGroup: true,
-      type: SubjectType.COMPULSORY,
-      departmentId: null,
-    });
+  it("creates a new child subject + weight row on the existing parent", async () => {
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "parent-1", isGroup: true });
     tx.subject.create.mockResolvedValue({ id: "child-3" });
     tx.subject.findUniqueOrThrow.mockResolvedValue({ id: "parent-1", isGroup: true });
 
@@ -100,7 +87,6 @@ describe("SubjectService.addGroupChild — adding a child to an already-existing
         data: expect.objectContaining({
           name: "Basic Agriculture",
           code: "BST-BA",
-          type: SubjectType.COMPULSORY,
           parentSubjectId: "parent-1",
         }),
       }),

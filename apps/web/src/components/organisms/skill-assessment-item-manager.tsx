@@ -169,7 +169,7 @@ export function SkillAssessmentItemManager() {
                 <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
                   {CATEGORY_LABEL[cat]}
                 </div>
-                <div className="space-y-1.5">
+                <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
                   {catItems.map((item) => (
                     <div key={item.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
                       <span>

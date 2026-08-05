@@ -11,7 +11,6 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { SubjectType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -27,23 +26,11 @@ const SUBJECT_DETAIL_INCLUDE = {
 export class SubjectService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private assertDepartmentConsistency(type: SubjectType, departmentId?: string) {
-    if (type === SubjectType.DEPARTMENT && !departmentId) {
-      throw new BadRequestException("departmentId is required for a DEPARTMENT subject");
-    }
-    if (type !== SubjectType.DEPARTMENT && departmentId) {
-      throw new BadRequestException("departmentId is only valid for a DEPARTMENT subject");
-    }
-  }
-
   create(dto: CreateSubjectDto) {
-    this.assertDepartmentConsistency(dto.type, dto.departmentId);
     return this.prisma.subject.create({
       data: {
         name: dto.name,
         code: dto.code,
-        type: dto.type,
-        departmentId: dto.departmentId,
         requiresCalculation: dto.requiresCalculation ?? false,
       },
     });
@@ -56,15 +43,11 @@ export class SubjectService {
    * atomically so a partial group can never be persisted.
    */
   async createGroup(dto: CreateSubjectGroupDto) {
-    this.assertDepartmentConsistency(dto.type, dto.departmentId);
-
     return this.prisma.$transaction(async (tx) => {
       const parent = await tx.subject.create({
         data: {
           name: dto.name,
           code: dto.code,
-          type: dto.type,
-          departmentId: dto.departmentId,
           requiresCalculation: dto.requiresCalculation ?? false,
           isGroup: true,
         },
@@ -75,8 +58,6 @@ export class SubjectService {
           data: {
             name: child.name,
             code: child.code,
-            type: dto.type,
-            departmentId: dto.departmentId,
             parentSubjectId: parent.id,
           },
         });
@@ -96,9 +77,6 @@ export class SubjectService {
   /**
    * Adds one independently-scored child to an already-existing group (PRD
    * §3.3) — the group itself and its other children/weights are untouched.
-   * Mirrors createGroup's per-child shape (same parent type/departmentId,
-   * new SubjectGroupWeight row) so a child added later is indistinguishable
-   * from one created with the group initially.
    */
   async addGroupChild(parentId: string, dto: CreateSubjectGroupChildDto) {
     const parent = await this.prisma.subject.findUniqueOrThrow({ where: { id: parentId } });
@@ -111,8 +89,6 @@ export class SubjectService {
         data: {
           name: dto.name,
           code: dto.code,
-          type: parent.type,
-          departmentId: parent.departmentId ?? undefined,
           parentSubjectId: parent.id,
         },
       });
@@ -124,18 +100,41 @@ export class SubjectService {
     });
   }
 
-  findAll(filters: { type?: SubjectType; departmentId?: string; isGroup?: boolean }) {
+  findAll(filters: { isGroup?: boolean; search?: string }) {
     return this.prisma.subject.findMany({
       where: {
-        type: filters.type,
-        departmentId: filters.departmentId,
         isGroup: filters.isGroup,
         // Children of a group are only ever listed via their parent's detail
         // view, not the top-level catalogue — but are included inline below
         // so the catalogue UI can expand a group row to show them.
         parentSubjectId: null,
+        ...(filters.search
+          ? {
+              OR: [
+                { name: { contains: filters.search, mode: "insensitive" as const } },
+                { code: { contains: filters.search, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
       },
-      include: { childSubjects: true },
+      include: {
+        childSubjects: true,
+        // Which class group(s) this subject is assigned to, and how
+        // (type/department) — this is how the catalogue answers "what group
+        // is this subject in" without going back to one Subject row per
+        // group (that's the duplication this table move was meant to
+        // eliminate — see ClassSubject). Not session-scoped: ClassSubject
+        // isn't tied to an AcademicSession at all.
+        classSubjects: {
+          select: {
+            id: true,
+            classLevelCategory: true,
+            type: true,
+            departmentId: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
       orderBy: { name: "asc" },
     });
   }
@@ -145,9 +144,6 @@ export class SubjectService {
   }
 
   update(id: string, dto: UpdateSubjectDto) {
-    if (dto.type) {
-      this.assertDepartmentConsistency(dto.type, dto.departmentId);
-    }
     return this.prisma.subject.update({ where: { id }, data: dto });
   }
 
@@ -189,15 +185,10 @@ export class SubjectController {
   }
 
   @Get()
-  findAll(
-    @Query("type") type?: SubjectType,
-    @Query("departmentId") departmentId?: string,
-    @Query("isGroup") isGroup?: string,
-  ) {
+  findAll(@Query("isGroup") isGroup?: string, @Query("search") search?: string) {
     return this.service.findAll({
-      type,
-      departmentId,
       isGroup: isGroup === undefined ? undefined : isGroup === "true",
+      search,
     });
   }
 

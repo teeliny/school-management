@@ -66,7 +66,7 @@ export function PendingInvitationsList({ refreshKey }: { refreshKey?: unknown })
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[420px] overflow-auto">
       <table className="w-full text-left text-[12.5px]">
         <thead>
           <tr className="border-b border-border text-muted">

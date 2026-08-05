@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { ClassLevelCategory, ClassSubject, EnrollmentStatus, Prisma, Subject, SubjectType } from "@prisma/client";
+import { ClassLevelCategory, ClassSubject, EnrollmentStatus, Prisma, SubjectType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -25,11 +25,12 @@ type Tx = Prisma.TransactionClient;
  * PRD §3.3 applicability rules engine:
  *  - COMPULSORY: auto-applies to every student in the assigned class.
  *  - GENERAL: available to any student in the assigned class; opt-in.
- *  - DEPARTMENT: only students whose StudentDepartment matches the subject's
- *    department may enroll; only valid for ClassLevel.category = SSS.
+ *  - DEPARTMENT: only students whose StudentDepartment matches the
+ *    ClassSubject's department may enroll; only valid for
+ *    ClassLevel.category = SSS.
  * `resolveEffectiveType` is the single place both the auto-enroll hook
- * (student.ts's create/update) and explicit enroll() consult, so
- * ClassSubject.isCompulsoryOverride semantics can't drift between the two.
+ * (student.ts's create/update) and explicit enroll() consult, so they can't
+ * drift on how a ClassSubject's type is read.
  */
 @Injectable()
 export class StudentSubjectEnrollmentService {
@@ -38,12 +39,8 @@ export class StudentSubjectEnrollmentService {
     private readonly classSubjectTermStatus: ClassSubjectTermStatusService,
   ) {}
 
-  resolveEffectiveType(subject: Subject, classSubject: ClassSubject | null): SubjectType {
-    if (classSubject?.isCompulsoryOverride === true) return SubjectType.COMPULSORY;
-    if (classSubject?.isCompulsoryOverride === false) {
-      return subject.type === SubjectType.COMPULSORY ? SubjectType.GENERAL : subject.type;
-    }
-    return subject.type;
+  resolveEffectiveType(classSubject: ClassSubject | null): SubjectType | null {
+    return classSubject?.type ?? null;
   }
 
   /**
@@ -56,7 +53,10 @@ export class StudentSubjectEnrollmentService {
     tx: Tx,
     params: { studentId: string; classArmId: string },
   ): Promise<void> {
-    const classArm = await tx.classArm.findUniqueOrThrow({ where: { id: params.classArmId } });
+    const classArm = await tx.classArm.findUniqueOrThrow({
+      where: { id: params.classArmId },
+      include: { classLevel: true },
+    });
 
     // No enforced "current term" concept exists yet (Term.isCurrent has no
     // singleton guarantee, unlike AcademicSession.isCurrent) — a known,
@@ -66,14 +66,14 @@ export class StudentSubjectEnrollmentService {
     if (!term) return;
 
     const classSubjects = await tx.classSubject.findMany({
-      where: { classLevelId: classArm.classLevelId, academicSessionId: classArm.academicSessionId },
+      where: { classLevelCategory: classArm.classLevel.category },
       include: { subject: true },
     });
 
     for (const classSubject of classSubjects) {
       if (!classSubject.subject.isActive) continue;
 
-      const effectiveType = this.resolveEffectiveType(classSubject.subject, classSubject);
+      const effectiveType = this.resolveEffectiveType(classSubject);
       if (effectiveType !== SubjectType.COMPULSORY) continue;
 
       const status = await tx.classSubjectTermStatus.findUnique({
@@ -111,7 +111,6 @@ export class StudentSubjectEnrollmentService {
 
   /** Explicit GENERAL/DEPARTMENT opt-in (PRD FR2.5). */
   async enroll(dto: CreateEnrollmentDto) {
-    const subject = await this.prisma.subject.findUniqueOrThrow({ where: { id: dto.subjectId } });
     const classArm = await this.prisma.classArm.findUniqueOrThrow({
       where: { id: dto.classArmId },
       include: { classLevel: true },
@@ -119,18 +118,17 @@ export class StudentSubjectEnrollmentService {
 
     const classSubject = await this.prisma.classSubject.findUnique({
       where: {
-        classLevelId_subjectId_academicSessionId: {
-          classLevelId: classArm.classLevelId,
+        classLevelCategory_subjectId: {
+          classLevelCategory: classArm.classLevel.category,
           subjectId: dto.subjectId,
-          academicSessionId: dto.academicSessionId,
         },
       },
     });
     if (!classSubject) {
-      throw new NotFoundException("This subject is not assigned to that class for this session");
+      throw new NotFoundException("This subject is not assigned to that class");
     }
 
-    const effectiveType = this.resolveEffectiveType(subject, classSubject);
+    const effectiveType = this.resolveEffectiveType(classSubject);
 
     if (effectiveType === SubjectType.COMPULSORY) {
       throw new BadRequestException(
@@ -145,15 +143,14 @@ export class StudentSubjectEnrollmentService {
       const studentDepartment = await this.prisma.studentDepartment.findUnique({
         where: { studentId_academicSessionId: { studentId: dto.studentId, academicSessionId: dto.academicSessionId } },
       });
-      if (!studentDepartment || studentDepartment.departmentId !== subject.departmentId) {
+      if (!studentDepartment || studentDepartment.departmentId !== classSubject.departmentId) {
         throw new BadRequestException("Student's department does not match this subject's department");
       }
     }
 
     await this.classSubjectTermStatus.assertActiveForTerm({
       subjectId: dto.subjectId,
-      classLevelId: classArm.classLevelId,
-      academicSessionId: dto.academicSessionId,
+      classLevelCategory: classArm.classLevel.category,
       termId: dto.termId,
     });
 

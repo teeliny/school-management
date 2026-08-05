@@ -170,7 +170,7 @@ export function TermManager() {
 
       {terms && (
         <>
-          <div className="space-y-1.5">
+          <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
             {terms.map((term) =>
               editingId === term.id ? (
                 <div key={term.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto_auto]">

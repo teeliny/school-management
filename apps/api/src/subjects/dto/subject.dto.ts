@@ -4,15 +4,12 @@ import {
   ArrayMinSize,
   IsArray,
   IsBoolean,
-  IsEnum,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
   ValidateNested,
 } from "class-validator";
-import { SubjectType } from "@prisma/client";
 
 export class CreateSubjectDto {
   @IsString()
@@ -22,15 +19,6 @@ export class CreateSubjectDto {
   @IsString()
   @IsNotEmpty()
   code!: string;
-
-  @IsEnum(SubjectType)
-  type!: SubjectType;
-
-  // Required when type=DEPARTMENT, rejected otherwise (PRD §3.3) — validated
-  // in SubjectService, not here, since it depends on another field's value.
-  @IsOptional()
-  @IsUUID()
-  departmentId?: string;
 
   @IsOptional()
   @IsBoolean()
@@ -63,13 +51,6 @@ export class CreateSubjectGroupDto {
   @IsString()
   @IsNotEmpty()
   code!: string;
-
-  @IsEnum(SubjectType)
-  type!: SubjectType;
-
-  @IsOptional()
-  @IsUUID()
-  departmentId?: string;
 
   @IsOptional()
   @IsBoolean()

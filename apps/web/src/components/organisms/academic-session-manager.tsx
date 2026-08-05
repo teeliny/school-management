@@ -126,7 +126,7 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="space-y-1.5">
+      <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
         {sessions?.map((session) =>
           editingId === session.id ? (
             <div key={session.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_1fr_auto_auto]">

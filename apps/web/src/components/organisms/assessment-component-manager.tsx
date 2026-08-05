@@ -271,7 +271,7 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
 
       {components && (
         <>
-          <div className="overflow-x-auto">
+          <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-left text-[12.5px]">
               <thead>
                 <tr className="border-b border-border text-muted">

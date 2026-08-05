@@ -31,10 +31,9 @@ export default function SubjectsPage() {
       id: subject.id,
       name: subject.name,
       code: subject.code,
-      type: subject.type,
-      departmentId: subject.departmentId,
       requiresCalculation: subject.requiresCalculation,
       isGroup: subject.isGroup,
+      classSubjects: subject.classSubjects,
     });
   }
 
@@ -73,7 +72,7 @@ export default function SubjectsPage() {
         </div>
 
         {canManage && (
-          <CollapsibleCard title="Assign subjects to a class" sub="Per class level, per academic session">
+          <CollapsibleCard title="Assign subjects to a class" sub="Per class group">
             <ClassSubjectAssignment />
           </CollapsibleCard>
         )}

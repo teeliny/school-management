@@ -27,7 +27,10 @@ export class ScoreEntryService {
   async enter(dto: CreateScoreEntryDto, user: RequestUser, isOverride: boolean) {
     let enteredByStaffId: string | null = null;
 
-    const classArm = await this.prisma.classArm.findUniqueOrThrow({ where: { id: dto.classArmId } });
+    const classArm = await this.prisma.classArm.findUniqueOrThrow({
+      where: { id: dto.classArmId },
+      include: { classLevel: true },
+    });
     const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
       where: { id: dto.assessmentComponentId },
     });
@@ -37,8 +40,7 @@ export class ScoreEntryService {
     // isn't open yet" — Admin re-enables it to unblock scoring again.
     await this.classSubjectTermStatus.assertActiveForTerm({
       subjectId: dto.subjectId,
-      classLevelId: classArm.classLevelId,
-      academicSessionId: classArm.academicSessionId,
+      classLevelCategory: classArm.classLevel.category,
       termId: component.termId,
     });
 

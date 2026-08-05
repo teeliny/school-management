@@ -96,7 +96,7 @@ export function GradebookTable({
   if (students.length === 0) return <p className="text-sm text-muted">No students in this class arm.</p>;
 
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[420px] overflow-auto">
       <table className="w-full text-left text-[12.5px]">
         <thead>
           <tr className="border-b border-border text-muted">

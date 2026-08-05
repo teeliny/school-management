@@ -145,7 +145,7 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
 
       {windows && (
         <>
-          <div className="space-y-1.5">
+          <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
             {windows.map((window) => (
               <div key={window.id} className="flex items-center justify-between rounded-lg border border-border p-2.5 text-[12.5px]">
                 <span className="font-mono text-muted">

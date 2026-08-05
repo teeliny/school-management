@@ -63,7 +63,7 @@ export function TimetableGrid({
   if (!slots) return <p className="text-sm text-muted">Loading…</p>;
 
   return (
-    <div className="grid grid-cols-5 gap-2 overflow-x-auto">
+    <div className="grid grid-cols-5 gap-2 max-h-[420px] overflow-auto">
       {DAYS.map((day) => {
         const daySlots = slots
           .filter((s) => s.dayOfWeek === day)

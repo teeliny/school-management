@@ -152,7 +152,6 @@ model AcademicSession {
   staffAssignments          StaffAssignment[]
   studentPositions          StudentPosition[]
   studentDepartments        StudentDepartment[]
-  classSubjects             ClassSubject[]
   studentSubjectEnrollments StudentSubjectEnrollment[]
   timetableSlots            TimetableSlot[]
   skillAssessmentItems      SkillAssessmentItem[]
@@ -199,8 +198,7 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms     ClassArm[]
-  classSubjects ClassSubject[]
+  classArms ClassArm[]
 
   @@map("class_levels")
 }
@@ -240,7 +238,7 @@ model Department {
   createdAt   DateTime       @default(now())
 
   studentDepartments StudentDepartment[]
-  subjects           Subject[]
+  classSubjects      ClassSubject[]
 
   @@map("departments")
 }
@@ -458,9 +456,6 @@ model Subject {
   id                  String      @id @default(uuid())
   name                String
   code                String      @unique
-  type                SubjectType
-  departmentId        String?
-  department          Department? @relation(fields: [departmentId], references: [id])
   isGroup             Boolean     @default(false)
   parentSubjectId     String?
   parentSubject       Subject?    @relation("SubjectGroup", fields: [parentSubjectId], references: [id])
@@ -490,25 +485,34 @@ model Subject {
   @@map("subjects")
 }
 
-// Source of truth for "which subjects exist for which class this session"
-// (PRD §3.3). @@unique below is what prevents assigning the same subject to
-// the same class level twice in a session — no service-layer re-check needed.
+// Source of truth for "which subjects exist for which class group this
+// group, and how it applies" (PRD §3.3). Scoped to ClassLevelCategory (class
+// group: CRECHE/NURSERY/PRIMARY/JSS/SSS) rather than a concrete ClassLevel,
+// so e.g. JSS1-3 share one assignment instead of being configured three
+// times over. type/departmentId live here rather than on Subject because
+// the same subject can be GENERAL for one class group and DEPARTMENT-
+// restricted for another (e.g. CRS: GENERAL for JSS, DEPARTMENT for SSS) —
+// Subject is just the catalogue entry. Deliberately NOT scoped to an
+// AcademicSession — curriculum structure (which subjects a class group has,
+// and how) doesn't reset every session the way AssessmentComponent's CA/exam
+// structure does; it persists until an Admin explicitly changes it. @@unique
+// below is what prevents assigning the same subject to the same class group
+// twice — no service-layer re-check needed.
 model ClassSubject {
-  id                   String          @id @default(uuid())
-  classLevelId         String
-  classLevel           ClassLevel      @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
-  subjectId            String
-  subject              Subject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  academicSessionId    String
-  academicSession      AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
-  // Admin override of Subject.type's default applicability for this class
-  // this session — null means "use Subject.type as-is" (PRD §3.3).
-  isCompulsoryOverride Boolean?
-  createdAt            DateTime        @default(now())
+  id                 String             @id @default(uuid())
+  classLevelCategory ClassLevelCategory
+  subjectId          String
+  subject            Subject            @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  type               SubjectType
+  // Required iff type = DEPARTMENT, rejected otherwise — validated in
+  // ClassSubjectService, not here (depends on another field's value).
+  departmentId       String?
+  department         Department?        @relation(fields: [departmentId], references: [id])
+  createdAt          DateTime           @default(now())
 
   termStatuses ClassSubjectTermStatus[]
 
-  @@unique([classLevelId, subjectId, academicSessionId])
+  @@unique([classLevelCategory, subjectId])
   @@map("class_subjects")
 }
 

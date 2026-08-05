@@ -1,4 +1,4 @@
-import { AssessmentComponentStatus } from "@prisma/client";
+import { AssessmentComponentStatus, ClassLevelCategory } from "@prisma/client";
 import { ScoreEntryService } from "./score-entry";
 import type { RequestUser } from "../auth/jwt.strategy";
 import type { CreateScoreEntryDto } from "./dto/score-entry.dto";
@@ -44,7 +44,12 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     staffAssignments = buildStaffAssignmentsMock();
     classSubjectTermStatus = buildClassSubjectTermStatusMock();
     service = new ScoreEntryService(prisma as never, staffAssignments as never, classSubjectTermStatus as never);
-    prisma.classArm.findUniqueOrThrow.mockResolvedValue({ id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" });
+    prisma.classArm.findUniqueOrThrow.mockResolvedValue({
+      id: "arm-1",
+      classLevelId: "level-1",
+      classLevel: { category: ClassLevelCategory.JSS },
+      academicSessionId: "session-1",
+    });
     prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
       id: "comp-1",
       termId: "term-1",
@@ -110,8 +115,7 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
 
     expect(classSubjectTermStatus.assertActiveForTerm).toHaveBeenCalledWith({
       subjectId: "subj-1",
-      classLevelId: "level-1",
-      academicSessionId: "session-1",
+      classLevelCategory: ClassLevelCategory.JSS,
       termId: "term-1",
     });
   });

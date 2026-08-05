@@ -111,7 +111,7 @@ export function GradeScaleManager() {
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="space-y-1.5">
+      <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
         {scales
           ?.slice()
           .sort((a, b) => b.minScore - a.minScore)

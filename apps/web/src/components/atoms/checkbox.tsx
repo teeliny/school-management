@@ -13,7 +13,7 @@ export const Checkbox = React.forwardRef<
     ref={ref}
     className={cn(
       "flex h-4 w-4 flex-none items-center justify-center rounded border border-border bg-card-inset",
-      "focus:outline-none focus:ring-2 focus:ring-muted",
+      "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-muted",
       "data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
       "disabled:cursor-not-allowed disabled:opacity-50",
       className,

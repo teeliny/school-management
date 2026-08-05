@@ -1,3 +1,4 @@
+import { ClassLevelCategory } from "@prisma/client";
 import { ClassSubjectTermStatusService } from "./class-subject-term-status";
 
 function buildPrismaMock() {
@@ -9,7 +10,7 @@ function buildPrismaMock() {
   };
 }
 
-const classSubject = { id: "cs-1", subjectId: "subj-parent", academicSessionId: "session-1" };
+const classSubject = { id: "cs-1", subjectId: "subj-parent" };
 const parentSubject = { id: "subj-parent", name: "Basic Science and Technology", parentSubjectId: null, isActive: true };
 const childSubject = { id: "subj-child", name: "Basic Science", parentSubjectId: "subj-parent", isActive: true };
 const otherSubject = { id: "subj-other", name: "Mathematics", parentSubjectId: null, isActive: true };
@@ -71,14 +72,6 @@ describe("ClassSubjectTermStatusService.setStatus", () => {
     ).rejects.toThrow(/does not belong to this class-subject assignment/);
   });
 
-  it("rejects a term outside the class-subject's academic session", async () => {
-    prisma.subject.findUnique.mockResolvedValue(parentSubject);
-    prisma.term.findUniqueOrThrow.mockResolvedValue({ id: "term-2", academicSessionId: "other-session" });
-
-    await expect(
-      service.setStatus({ classSubjectId: "cs-1", subjectId: "subj-parent", termId: "term-2" }, false, "user-1"),
-    ).rejects.toThrow(/does not belong to this class-subject assignment's academic session/);
-  });
 });
 
 describe("ClassSubjectTermStatusService.assertActiveForTerm", () => {
@@ -98,8 +91,7 @@ describe("ClassSubjectTermStatusService.assertActiveForTerm", () => {
     await expect(
       service.assertActiveForTerm({
         subjectId: "subj-parent",
-        classLevelId: "level-1",
-        academicSessionId: "session-1",
+        classLevelCategory: ClassLevelCategory.JSS,
         termId: "term-1",
       }),
     ).resolves.toBeUndefined();
@@ -111,8 +103,7 @@ describe("ClassSubjectTermStatusService.assertActiveForTerm", () => {
     await expect(
       service.assertActiveForTerm({
         subjectId: "subj-parent",
-        classLevelId: "level-1",
-        academicSessionId: "session-1",
+        classLevelCategory: ClassLevelCategory.JSS,
         termId: "term-1",
       }),
     ).rejects.toThrow(/is disabled/);
@@ -127,8 +118,7 @@ describe("ClassSubjectTermStatusService.assertActiveForTerm", () => {
     await expect(
       service.assertActiveForTerm({
         subjectId: "subj-parent",
-        classLevelId: "level-1",
-        academicSessionId: "session-1",
+        classLevelCategory: ClassLevelCategory.JSS,
         termId: "term-1",
       }),
     ).rejects.toThrow(/is disabled for this class for this term/);
@@ -141,8 +131,7 @@ describe("ClassSubjectTermStatusService.assertActiveForTerm", () => {
     await expect(
       service.assertActiveForTerm({
         subjectId: "subj-parent",
-        classLevelId: "level-1",
-        academicSessionId: "session-1",
+        classLevelCategory: ClassLevelCategory.JSS,
         termId: "term-1",
       }),
     ).resolves.toBeUndefined();
@@ -156,17 +145,15 @@ describe("ClassSubjectTermStatusService.assertActiveForTerm", () => {
 
     await service.assertActiveForTerm({
       subjectId: "subj-child",
-      classLevelId: "level-1",
-      academicSessionId: "session-1",
+      classLevelCategory: ClassLevelCategory.JSS,
       termId: "term-1",
     });
 
     expect(prisma.classSubject.findUnique).toHaveBeenCalledWith({
       where: {
-        classLevelId_subjectId_academicSessionId: {
-          classLevelId: "level-1",
+        classLevelCategory_subjectId: {
+          classLevelCategory: ClassLevelCategory.JSS,
           subjectId: "subj-parent",
-          academicSessionId: "session-1",
         },
       },
     });

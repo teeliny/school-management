@@ -1,5 +1,5 @@
 import { BadRequestException, Controller, Injectable, NotFoundException, Param, Patch, UseGuards } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { ClassLevelCategory, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -38,12 +38,12 @@ export class ClassSubjectTermStatusService {
     isActive: boolean,
     userId: string,
   ) {
-    const { classSubject } = await this.resolveClassSubjectAndSubject(params.classSubjectId, params.subjectId);
+    await this.resolveClassSubjectAndSubject(params.classSubjectId, params.subjectId);
 
-    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: params.termId } });
-    if (term.academicSessionId !== classSubject.academicSessionId) {
-      throw new BadRequestException("Term does not belong to this class-subject assignment's academic session");
-    }
+    // No academicSessionId on ClassSubject to cross-check against — it's not
+    // session-scoped (see schema.prisma), so any term can have its status
+    // toggled here, regardless of which session it belongs to.
+    await this.prisma.term.findUniqueOrThrow({ where: { id: params.termId } });
 
     return this.prisma.classSubjectTermStatus.upsert({
       where: {
@@ -85,7 +85,7 @@ export class ClassSubjectTermStatusService {
    * (ClassSubjectTermStatus).
    */
   async assertActiveForTerm(
-    params: { subjectId: string; classLevelId: string; academicSessionId: string; termId: string },
+    params: { subjectId: string; classLevelCategory: ClassLevelCategory; termId: string },
     tx: Tx = this.prisma,
   ): Promise<void> {
     const subject = await tx.subject.findUnique({ where: { id: params.subjectId } });
@@ -98,10 +98,9 @@ export class ClassSubjectTermStatusService {
     const classSubjectSubjectId = subject.parentSubjectId ?? subject.id;
     const classSubject = await tx.classSubject.findUnique({
       where: {
-        classLevelId_subjectId_academicSessionId: {
-          classLevelId: params.classLevelId,
+        classLevelCategory_subjectId: {
+          classLevelCategory: params.classLevelCategory,
           subjectId: classSubjectSubjectId,
-          academicSessionId: params.academicSessionId,
         },
       },
     });

@@ -4,7 +4,6 @@ import type { CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 
 function buildPrismaMock() {
   return {
-    subject: { findUniqueOrThrow: jest.fn() },
     classArm: { findUniqueOrThrow: jest.fn() },
     classSubject: { findUnique: jest.fn() },
     studentDepartment: { findUnique: jest.fn() },
@@ -26,7 +25,12 @@ function buildClassSubjectTermStatusMock() {
   return { assertActiveForTerm: jest.fn() };
 }
 
-const CLASS_ARM = { id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" };
+const CLASS_ARM = {
+  id: "arm-1",
+  classLevelId: "level-1",
+  classLevel: { category: ClassLevelCategory.JSS },
+  academicSessionId: "session-1",
+};
 const TERM = { id: "term-1", academicSessionId: "session-1", isCurrent: true };
 
 describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssignment (PRD §3.3)", () => {
@@ -46,14 +50,14 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
       {
         id: "cs-1",
         subjectId: "subj-compulsory",
-        isCompulsoryOverride: null,
-        subject: { type: SubjectType.COMPULSORY, isActive: true },
+        type: SubjectType.COMPULSORY,
+        subject: { isActive: true },
       },
       {
         id: "cs-2",
         subjectId: "subj-general",
-        isCompulsoryOverride: null,
-        subject: { type: SubjectType.GENERAL, isActive: true },
+        type: SubjectType.GENERAL,
+        subject: { isActive: true },
       },
     ]);
 
@@ -70,49 +74,13 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
     );
   });
 
-  it("does not auto-enroll a COMPULSORY subject overridden to non-compulsory for this class", async () => {
-    tx.classSubject.findMany.mockResolvedValue([
-      {
-        id: "cs-1",
-        subjectId: "subj-1",
-        isCompulsoryOverride: false,
-        subject: { type: SubjectType.COMPULSORY, isActive: true },
-      },
-    ]);
-
-    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
-      studentId: "student-1",
-      classArmId: "arm-1",
-    });
-
-    expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
-  });
-
-  it("auto-enrolls a GENERAL subject overridden to compulsory for this class", async () => {
-    tx.classSubject.findMany.mockResolvedValue([
-      {
-        id: "cs-1",
-        subjectId: "subj-1",
-        isCompulsoryOverride: true,
-        subject: { type: SubjectType.GENERAL, isActive: true },
-      },
-    ]);
-
-    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
-      studentId: "student-1",
-      classArmId: "arm-1",
-    });
-
-    expect(tx.studentSubjectEnrollment.upsert).toHaveBeenCalledTimes(1);
-  });
-
   it("skips a COMPULSORY subject explicitly disabled for this class+term", async () => {
     tx.classSubject.findMany.mockResolvedValue([
       {
         id: "cs-1",
         subjectId: "subj-compulsory",
-        isCompulsoryOverride: null,
-        subject: { type: SubjectType.COMPULSORY, isActive: true },
+        type: SubjectType.COMPULSORY,
+        subject: { isActive: true },
       },
     ]);
     tx.classSubjectTermStatus.findUnique.mockResolvedValue({ isActive: false });
@@ -130,8 +98,8 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
       {
         id: "cs-1",
         subjectId: "subj-compulsory",
-        isCompulsoryOverride: null,
-        subject: { type: SubjectType.COMPULSORY, isActive: false },
+        type: SubjectType.COMPULSORY,
+        subject: { isActive: false },
       },
     ]);
 
@@ -184,8 +152,7 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   });
 
   it("allows GENERAL opt-in without any department check", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", type: SubjectType.GENERAL, departmentId: null });
-    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.GENERAL, departmentId: null });
 
     await service.enroll(buildDto());
 
@@ -196,8 +163,7 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   });
 
   it("rejects manual enroll into an effectively-compulsory subject", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", type: SubjectType.COMPULSORY, departmentId: null });
-    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.COMPULSORY, departmentId: null });
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/auto-enroll/);
     expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
@@ -208,23 +174,13 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
       ...CLASS_ARM,
       classLevel: { category: ClassLevelCategory.JSS },
     });
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({
-      id: "subj-1",
-      type: SubjectType.DEPARTMENT,
-      departmentId: "dept-science",
-    });
-    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.DEPARTMENT, departmentId: "dept-science" });
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/SSS/);
   });
 
   it("rejects a DEPARTMENT subject when the student's department doesn't match", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({
-      id: "subj-1",
-      type: SubjectType.DEPARTMENT,
-      departmentId: "dept-science",
-    });
-    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.DEPARTMENT, departmentId: "dept-science" });
     prisma.studentDepartment.findUnique.mockResolvedValue({ departmentId: "dept-commercial" });
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/department/);
@@ -232,12 +188,7 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   });
 
   it("allows a DEPARTMENT subject when the student's department matches", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({
-      id: "subj-1",
-      type: SubjectType.DEPARTMENT,
-      departmentId: "dept-science",
-    });
-    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.DEPARTMENT, departmentId: "dept-science" });
     prisma.studentDepartment.findUnique.mockResolvedValue({ departmentId: "dept-science" });
 
     await service.enroll(buildDto());
@@ -246,15 +197,13 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   });
 
   it("rejects when the subject isn't assigned to that class this session", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", type: SubjectType.GENERAL, departmentId: null });
     prisma.classSubject.findUnique.mockResolvedValue(null);
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/not assigned/);
   });
 
   it("blocks opt-in when the subject is disabled for this class+term", async () => {
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", type: SubjectType.GENERAL, departmentId: null });
-    prisma.classSubject.findUnique.mockResolvedValue({ isCompulsoryOverride: null });
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.GENERAL, departmentId: null });
     classSubjectTermStatus.assertActiveForTerm.mockRejectedValue(new Error("disabled for this class for this term"));
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/disabled for this class for this term/);
