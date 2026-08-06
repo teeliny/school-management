@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Injectable, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Injectable, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -13,9 +13,9 @@ export class ClassArmService {
     return this.prisma.classArm.create({ data: dto });
   }
 
-  findAll(classLevelId?: string) {
+  findAll(classLevelId?: string, academicSessionId?: string) {
     return this.prisma.classArm.findMany({
-      where: classLevelId ? { classLevelId } : undefined,
+      where: { classLevelId: classLevelId || undefined, academicSessionId: academicSessionId || undefined },
       include: { classLevel: { select: { category: true } } },
       orderBy: { name: "asc" },
     });
@@ -46,8 +46,8 @@ export class ClassArmController {
   }
 
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query("classLevelId") classLevelId?: string, @Query("academicSessionId") academicSessionId?: string) {
+    return this.service.findAll(classLevelId, academicSessionId);
   }
 
   @Get(":id")

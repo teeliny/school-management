@@ -1,17 +1,22 @@
 import { AssignmentType } from "@prisma/client";
 import { StaffAssignmentService } from "./staff-assignment";
-import type { CreateStaffAssignmentDto } from "./dto/staff-assignment.dto";
+import type { CreateStaffAssignmentDto, SyncSubjectTeacherAssignmentsDto } from "./dto/staff-assignment.dto";
 
 function buildPrismaMock() {
-  return {
+  const prisma = {
     staffAssignment: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     staffProfile: { update: jest.fn(), findUnique: jest.fn() },
+    $transaction: jest.fn(),
   };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return prisma;
 }
 
 function buildDto(overrides: Partial<CreateStaffAssignmentDto> = {}): CreateStaffAssignmentDto {
@@ -143,5 +148,118 @@ describe("StaffAssignmentService.findActiveAssignment (Phase 4 row-level auth he
     });
 
     expect(result).toBeNull();
+  });
+});
+
+function buildSyncDto(overrides: Partial<SyncSubjectTeacherAssignmentsDto> = {}): SyncSubjectTeacherAssignmentsDto {
+  return {
+    staffId: "staff-1",
+    subjectId: "subject-1",
+    academicSessionId: "session-1",
+    classArmIds: [],
+    ...overrides,
+  };
+}
+
+describe("StaffAssignmentService.findSubjectTeacherClassArmIds", () => {
+  it("returns only active SUBJECT_TEACHER class arm ids for the given staff+subject+session", async () => {
+    const prisma = buildPrismaMock();
+    const service = new StaffAssignmentService(prisma as never);
+    prisma.staffAssignment.findMany.mockResolvedValue([{ classArmId: "arm-1" }, { classArmId: "arm-2" }]);
+
+    const result = await service.findSubjectTeacherClassArmIds({
+      staffId: "staff-1",
+      subjectId: "subject-1",
+      academicSessionId: "session-1",
+    });
+
+    expect(result).toEqual(["arm-1", "arm-2"]);
+    expect(prisma.staffAssignment.findMany).toHaveBeenCalledWith({
+      where: {
+        staffId: "staff-1",
+        subjectId: "subject-1",
+        academicSessionId: "session-1",
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        isActive: true,
+      },
+      select: { classArmId: true },
+    });
+  });
+});
+
+describe("StaffAssignmentService.syncSubjectTeacherAssignments", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let service: StaffAssignmentService;
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    service = new StaffAssignmentService(prisma as never);
+  });
+
+  it("creates new rows for newly-checked class arms not previously present", async () => {
+    prisma.staffAssignment.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "new-row" }]);
+    prisma.staffAssignment.findFirst.mockResolvedValue(null);
+
+    await service.syncSubjectTeacherAssignments(buildSyncDto({ classArmIds: ["arm-1"] }));
+
+    expect(prisma.staffAssignment.create).toHaveBeenCalledWith({
+      data: {
+        staffId: "staff-1",
+        subjectId: "subject-1",
+        classArmId: "arm-1",
+        academicSessionId: "session-1",
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        startDate: undefined,
+      },
+    });
+    expect(prisma.staffAssignment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("reactivates (via update, not create) a class arm whose prior row is revoked for the same key", async () => {
+    prisma.staffAssignment.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    prisma.staffAssignment.findFirst.mockResolvedValue({ id: "revoked-row", startDate: null });
+
+    await service.syncSubjectTeacherAssignments(buildSyncDto({ classArmIds: ["arm-1"] }));
+
+    expect(prisma.staffAssignment.update).toHaveBeenCalledWith({
+      where: { id: "revoked-row" },
+      data: { isActive: true, endDate: null, startDate: null },
+    });
+    expect(prisma.staffAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it("soft-revokes rows for arms removed from the submitted set, and leaves untouched arms alone", async () => {
+    prisma.staffAssignment.findMany
+      .mockResolvedValueOnce([
+        { id: "keep-row", classArmId: "arm-1" },
+        { id: "remove-row", classArmId: "arm-2" },
+      ])
+      .mockResolvedValueOnce([]);
+
+    await service.syncSubjectTeacherAssignments(buildSyncDto({ classArmIds: ["arm-1"] }));
+
+    expect(prisma.staffAssignment.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["remove-row"] } },
+      data: { isActive: false, endDate: expect.any(Date) },
+    });
+    expect(prisma.staffAssignment.create).not.toHaveBeenCalled();
+    expect(prisma.staffAssignment.update).not.toHaveBeenCalled();
+  });
+
+  it("scopes existing-row lookup to the given staff+subject+session, not other combinations", async () => {
+    prisma.staffAssignment.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    await service.syncSubjectTeacherAssignments(buildSyncDto({ classArmIds: [] }));
+
+    expect(prisma.staffAssignment.findMany).toHaveBeenCalledWith({
+      where: {
+        staffId: "staff-1",
+        subjectId: "subject-1",
+        academicSessionId: "session-1",
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        isActive: true,
+      },
+    });
+    expect(prisma.staffAssignment.updateMany).not.toHaveBeenCalled();
   });
 });

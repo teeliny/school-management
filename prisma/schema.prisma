@@ -401,6 +401,14 @@ enum AssignmentType {
 // No DB-level uniqueness for "one active class teacher per class arm" — FR3.3
 // (PRD §6.3) is explicit this is a service-layer validation, not a hard
 // constraint, so Admin can deliberately override for co-teaching.
+// A plain @@unique can't stop duplicate active SUBJECT_TEACHER rows for the
+// same staff+subject+classArm+session since a revoked (isActive:false) row
+// with that exact key can legitimately already exist — the generated
+// migration hand-adds a partial unique index (WHERE "isActive" = true) on
+// (staffId, subjectId, classArmId, academicSessionId, assignmentType),
+// same precedent as the SUPER_ADMIN/AcademicSession.isCurrent/ReportComment
+// singleton indexes. See StaffAssignmentService.syncSubjectTeacherAssignments
+// for the app-layer reconcile that pairs with it.
 model StaffAssignment {
   id                String          @id @default(uuid())
   staffId           String

@@ -19,6 +19,8 @@ interface ClassArmOption {
 interface SubjectOption {
   id: string;
   name: string;
+  isGroup: boolean;
+  childSubjects?: { id: string; name: string }[];
 }
 interface TermOption {
   id: string;
@@ -80,9 +82,20 @@ export default function GradebookPage() {
     ? classArms
     : classArms.filter((arm) => mySubjectTeacherAssignments.some((a) => a.classArmId === arm.id));
 
+  // A "group" subject (e.g. Basic Science and Technology) is never itself
+  // scored — its child subjects (Basic Science, Basic Technology, …) are,
+  // each independently. The parent's aggregate is computed at report-card
+  // time from SubjectGroupWeight, not entered directly here. Mirrors the
+  // same flattening in staff-assignment-form.tsx's Subject select.
+  const selectableSubjects = subjects.flatMap((subject) =>
+    subject.isGroup && subject.childSubjects && subject.childSubjects.length > 0
+      ? subject.childSubjects.map((child) => ({ id: child.id, name: `${child.name} (${subject.name})` }))
+      : [{ id: subject.id, name: subject.name }],
+  );
+
   const subjectOptions = isAdmin
-    ? subjects
-    : subjects.filter((subject) =>
+    ? selectableSubjects
+    : selectableSubjects.filter((subject) =>
         mySubjectTeacherAssignments.some((a) => a.classArmId === classArmId && a.subjectId === subject.id),
       );
 
@@ -161,7 +174,7 @@ export default function GradebookPage() {
               <SelectTrigger id="gb-subject" className="mt-1">
                 <SelectValue placeholder="Select subject" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-72 overflow-y-auto">
                 {subjectOptions.map((subject) => (
                   <SelectItem key={subject.id} value={subject.id}>
                     {subject.name}

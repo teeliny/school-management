@@ -8,6 +8,7 @@ function buildPrismaMock() {
     staffProfile: { findUnique: jest.fn() },
     classArm: { findUniqueOrThrow: jest.fn() },
     assessmentComponent: { findUniqueOrThrow: jest.fn() },
+    subject: { findUniqueOrThrow: jest.fn() },
     scoreEntry: { upsert: jest.fn() },
   };
 }
@@ -55,6 +56,7 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
       termId: "term-1",
       status: AssessmentComponentStatus.OPEN,
     });
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: false });
   });
 
   it("allows the assigned subject teacher to score while the component is OPEN", async () => {
@@ -125,5 +127,60 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
 
     await expect(service.enter(buildDto(), USER, true)).rejects.toThrow(/disabled for this class for this term/);
     expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects score entry against a group subject for a regular teacher", async () => {
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: true });
+
+    await expect(service.enter(buildDto(), USER, false)).rejects.toThrow(/group subject/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+    expect(staffAssignments.findActiveAssignment).not.toHaveBeenCalled();
+  });
+
+  it("rejects score entry against a group subject — even as an Admin override", async () => {
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: true });
+
+    await expect(service.enter(buildDto(), USER, true)).rejects.toThrow(/group subject/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a score above the component's maxScore", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
+      id: "comp-1",
+      termId: "term-1",
+      status: AssessmentComponentStatus.OPEN,
+      maxScore: 20,
+    });
+
+    await expect(service.enter(buildDto({ score: 25 }), USER, false)).rejects.toThrow(/cannot exceed/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a score above the component's maxScore — even as an Admin override", async () => {
+    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
+      id: "comp-1",
+      termId: "term-1",
+      status: AssessmentComponentStatus.CLOSED,
+      maxScore: 20,
+    });
+
+    await expect(service.enter(buildDto({ score: 21 }), USER, true)).rejects.toThrow(/cannot exceed/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows a score exactly at the component's maxScore", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({
+      id: "comp-1",
+      termId: "term-1",
+      status: AssessmentComponentStatus.OPEN,
+      maxScore: 20,
+    });
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
+
+    await service.enter(buildDto({ score: 20 }), USER, false);
+
+    expect(prisma.scoreEntry.upsert).toHaveBeenCalled();
   });
 });

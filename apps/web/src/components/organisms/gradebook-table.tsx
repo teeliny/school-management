@@ -39,9 +39,15 @@ export function GradebookTable({
 }) {
   const [students, setStudents] = useState<StudentListItem[] | null>(null);
   const [scores, setScores] = useState<Record<string, number>>({});
-  const [saving, setSaving] = useState<Record<string, "saving" | "saved" | "error">>({});
+  const [saving, setSaving] = useState<Record<string, "saving" | "saved" | "error" | "invalid">>({});
   const [error, setError] = useState<string | null>(null);
   const draftScores = useRef<Record<string, string>>({});
+
+  // The four keys a native number input otherwise lets through that would
+  // still produce a non-sensical score: minus (negative), plus, and the two
+  // exponent-notation letters (e.g. typing "e" turns "1" into scientific
+  // notation "1e...").
+  const BLOCKED_KEYS = new Set(["-", "+", "e", "E"]);
 
   const load = useCallback(() => {
     if (!classArmId || !subjectId || !assessmentComponentId) {
@@ -71,7 +77,10 @@ export function GradebookTable({
     const raw = draftScores.current[studentId];
     if (raw === undefined || raw === "") return;
     const score = Number(raw);
-    if (Number.isNaN(score)) return;
+    if (Number.isNaN(score) || score < 0 || score > maxScore) {
+      setSaving((s) => ({ ...s, [studentId]: "invalid" }));
+      return;
+    }
 
     setSaving((s) => ({ ...s, [studentId]: "saving" }));
     try {
@@ -116,17 +125,27 @@ export function GradebookTable({
                   type="number"
                   min={0}
                   max={maxScore}
+                  step="any"
                   defaultValue={scores[student.id] ?? ""}
                   disabled={readOnly}
                   className="w-24 text-center font-mono"
+                  onKeyDown={(e) => {
+                    if (BLOCKED_KEYS.has(e.key)) e.preventDefault();
+                  }}
                   onChange={(e) => {
                     draftScores.current[student.id] = e.target.value;
+                    if (student.id in saving) {
+                      setSaving((s) => Object.fromEntries(Object.entries(s).filter(([id]) => id !== student.id)));
+                    }
                   }}
                   onBlur={() => saveScore(student.id)}
                 />
                 {saving[student.id] === "saving" && <span className="ml-2 text-[11px] text-muted">Saving…</span>}
                 {saving[student.id] === "saved" && <span className="ml-2 text-[11px] text-success">Saved</span>}
                 {saving[student.id] === "error" && <span className="ml-2 text-[11px] text-danger">Failed</span>}
+                {saving[student.id] === "invalid" && (
+                  <span className="ml-2 text-[11px] text-danger">Must be 0–{maxScore}</span>
+                )}
               </td>
             </tr>
           ))}

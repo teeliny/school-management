@@ -19,7 +19,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
-import { CreateStaffAssignmentDto } from "./dto/staff-assignment.dto";
+import { CreateStaffAssignmentDto, SyncSubjectTeacherAssignmentsDto } from "./dto/staff-assignment.dto";
 
 @Injectable()
 export class StaffAssignmentService {
@@ -100,6 +100,12 @@ export class StaffAssignmentService {
   findAll(staffId?: string) {
     return this.prisma.staffAssignment.findMany({
       where: staffId ? { staffId } : undefined,
+      include: {
+        subject: { select: { name: true } },
+        classArm: { select: { name: true } },
+        academicSession: { select: { name: true } },
+        staff: { include: { user: { select: { firstName: true, lastName: true } } } },
+      },
       orderBy: { createdAt: "desc" },
     });
   }
@@ -167,6 +173,107 @@ export class StaffAssignmentService {
 
     return [...new Set(assignments.map((a) => a.classArmId).filter((id): id is string => id !== null))];
   }
+
+  /**
+   * Active SUBJECT_TEACHER class arm ids for one staff+subject+session —
+   * used to pre-check the class-arm multi-select when the admin reopens the
+   * assignment form for a combo they've already assigned before.
+   */
+  async findSubjectTeacherClassArmIds(filters: {
+    staffId: string;
+    subjectId: string;
+    academicSessionId: string;
+  }): Promise<string[]> {
+    const rows = await this.prisma.staffAssignment.findMany({
+      where: {
+        staffId: filters.staffId,
+        subjectId: filters.subjectId,
+        academicSessionId: filters.academicSessionId,
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        isActive: true,
+      },
+      select: { classArmId: true },
+    });
+    return rows.map((r) => r.classArmId).filter((id): id is string => id !== null);
+  }
+
+  /**
+   * Reconciles a staff member's active SUBJECT_TEACHER assignments for one
+   * subject+session down to exactly the submitted classArmIds set: newly
+   * checked arms are added (or reactivated, if a revoked row already exists
+   * for that exact key — see the partial unique index on staff_assignments,
+   * which only guards active rows), unchecked ones are soft-revoked the same
+   * way revoke() does (isActive:false + endDate, never hard-deleted) so
+   * activeAssignedClassArmIds/findActiveAssignment callers see the shrink.
+   * Manual find+diff rather than prisma.staffAssignment.upsert() because the
+   * unique key is a raw partial index, not a schema-DSL @@unique Prisma's
+   * typed upsert can target.
+   */
+  async syncSubjectTeacherAssignments(dto: SyncSubjectTeacherAssignmentsDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.staffAssignment.findMany({
+        where: {
+          staffId: dto.staffId,
+          subjectId: dto.subjectId,
+          academicSessionId: dto.academicSessionId,
+          assignmentType: AssignmentType.SUBJECT_TEACHER,
+          isActive: true,
+        },
+      });
+      const desired = new Set(dto.classArmIds);
+      const existingClassArmIds = new Set(existing.map((a) => a.classArmId));
+
+      const toRevokeIds = existing.filter((a) => !a.classArmId || !desired.has(a.classArmId)).map((a) => a.id);
+      if (toRevokeIds.length > 0) {
+        await tx.staffAssignment.updateMany({
+          where: { id: { in: toRevokeIds } },
+          data: { isActive: false, endDate: new Date() },
+        });
+      }
+
+      for (const classArmId of dto.classArmIds) {
+        if (existingClassArmIds.has(classArmId)) continue;
+
+        const revoked = await tx.staffAssignment.findFirst({
+          where: {
+            staffId: dto.staffId,
+            subjectId: dto.subjectId,
+            classArmId,
+            academicSessionId: dto.academicSessionId,
+            assignmentType: AssignmentType.SUBJECT_TEACHER,
+            isActive: false,
+          },
+        });
+        if (revoked) {
+          await tx.staffAssignment.update({
+            where: { id: revoked.id },
+            data: { isActive: true, endDate: null, startDate: dto.startDate ?? revoked.startDate },
+          });
+        } else {
+          await tx.staffAssignment.create({
+            data: {
+              staffId: dto.staffId,
+              subjectId: dto.subjectId,
+              classArmId,
+              academicSessionId: dto.academicSessionId,
+              assignmentType: AssignmentType.SUBJECT_TEACHER,
+              startDate: dto.startDate,
+            },
+          });
+        }
+      }
+
+      return tx.staffAssignment.findMany({
+        where: {
+          staffId: dto.staffId,
+          subjectId: dto.subjectId,
+          academicSessionId: dto.academicSessionId,
+          assignmentType: AssignmentType.SUBJECT_TEACHER,
+          isActive: true,
+        },
+      });
+    });
+  }
 }
 
 @Controller("staff-assignments")
@@ -195,6 +302,23 @@ export class StaffAssignmentController {
   @Get("mine")
   findMine(@CurrentUser() user: RequestUser) {
     return this.service.findMine(user.id);
+  }
+
+  @Get("subject-teacher")
+  findSubjectTeacherClassArmIds(
+    @CurrentUser() user: RequestUser,
+    @Query("staffId") staffId: string,
+    @Query("subjectId") subjectId: string,
+    @Query("academicSessionId") academicSessionId: string,
+  ) {
+    this.assertCanManage(user, AssignmentType.SUBJECT_TEACHER);
+    return this.service.findSubjectTeacherClassArmIds({ staffId, subjectId, academicSessionId });
+  }
+
+  @Post("subject-teacher/sync")
+  syncSubjectTeacher(@Body() dto: SyncSubjectTeacherAssignmentsDto, @CurrentUser() user: RequestUser) {
+    this.assertCanManage(user, AssignmentType.SUBJECT_TEACHER);
+    return this.service.syncSubjectTeacherAssignments(dto);
   }
 
   @Patch(":id/revoke")

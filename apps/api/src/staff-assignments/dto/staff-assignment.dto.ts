@@ -1,6 +1,6 @@
 import { AssignmentType } from "@prisma/client";
 import { Type } from "class-transformer";
-import { IsBoolean, IsDate, IsEnum, IsOptional, IsUUID } from "class-validator";
+import { ArrayUnique, IsArray, IsBoolean, IsDate, IsEnum, IsOptional, IsUUID } from "class-validator";
 
 export class CreateStaffAssignmentDto {
   @IsUUID()
@@ -13,7 +13,6 @@ export class CreateStaffAssignmentDto {
   @IsUUID()
   classArmId?: string;
 
-  // No FK/validation yet — Subject doesn't exist until Phase 3 (BUILD_PLAN.md §5).
   @IsOptional()
   @IsUUID()
   subjectId?: string;
@@ -39,4 +38,25 @@ export class CreateStaffAssignmentDto {
   @IsOptional()
   @IsBoolean()
   allowCoTeaching?: boolean;
+}
+
+export class SyncSubjectTeacherAssignmentsDto {
+  @IsUUID()
+  staffId!: string;
+
+  @IsUUID()
+  subjectId!: string;
+
+  @IsUUID()
+  academicSessionId!: string;
+
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  classArmIds!: string[];
+
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  startDate?: Date;
 }

@@ -34,6 +34,24 @@ export class ScoreEntryService {
     const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
       where: { id: dto.assessmentComponentId },
     });
+    const subject = await this.prisma.subject.findUniqueOrThrow({ where: { id: dto.subjectId } });
+
+    // Applies regardless of override: a group subject (e.g. Basic Science and
+    // Technology) is never scored directly — only its child subjects are.
+    // The group's own SubjectTermResult is a weighted average of its
+    // children (SubjectGroupWeight), computed by the worker at report time.
+    if (subject.isGroup) {
+      throw new BadRequestException(
+        "Cannot enter a score directly against a group subject — enter scores against its child subjects instead",
+      );
+    }
+
+    // component.maxScore is per-component, not a fixed value, so the upper
+    // bound can't be a static @Max() on the DTO — it's checked here once the
+    // component is loaded. @Min(0) on the DTO already covers the lower bound.
+    if (dto.score > component.maxScore) {
+      throw new BadRequestException(`Score cannot exceed this component's max score of ${component.maxScore}`);
+    }
 
     // Applies regardless of override: an explicit per-term disable means the
     // subject doesn't apply to this class this term at all, not just "component
