@@ -34,7 +34,7 @@ function contentWidth(doc: PDFKit.PDFDocument): number {
  * explicitly rather than through the row-level style function.
  */
 function headerRow(labels: string[]): { text: string; font: { src: string } }[] {
-  return labels.map((text) => ({ text, font: { src: "Helvetica-Bold" } }));
+  return labels.map((text) => ({ text: text.toUpperCase(), font: { src: "Helvetica-Bold" } }));
 }
 
 /**
@@ -198,30 +198,50 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
       doc.font("Helvetica").fontSize(8.5);
       doc.table({
         columnStyles: [
-          { width: "*", minWidth: 85 },
-          { width: "*", minWidth: 130 },
-          { width: 45 },
-          { width: 40 },
-          { width: 65 },
-          { width: 40 },
+          { width: "*", minWidth: 74 },
+          // Wide enough for the header ("1ST TEST / 10") to wrap by whole
+          // word rather than mid-word — the data cells themselves are just
+          // a bare number now, so this column is header-width-driven, not
+          // data-width-driven.
+          ...content.components.map(() => ({ width: 48 })),
+          { width: 42 },
+          { width: 27 },
+          { width: 31 },
+          { width: 31 },
+          { width: 46 },
+          { width: "*", minWidth: 68 },
         ],
         defaultStyle: { padding: 5, border: { bottom: 0.5 }, borderColor: BORDER },
         rowStyles: (i) => (i === 0 ? { backgroundColor: NAVY, textColor: "white" } : i % 2 === 0 ? { backgroundColor: BAND } : {}),
         data: [
-          headerRow(["Subject", "Breakdown", "Total", "Grade", "Remark", "Pos."]),
+          headerRow([
+            "Subject",
+            ...content.components.map((c) => `${c.name} / ${c.maxScore}`),
+            `Total / ${content.totalObtainable}`,
+            "Min",
+            "Max",
+            "Pos.",
+            "Grade",
+            "Remark",
+          ]),
           ...content.subjects.map((subject) => {
-            const breakdown = subject.components.map((c) => `${c.name}: ${c.score ?? "-"}/${c.maxScore}`).join("   ");
             const priorLine =
               subject.priorTerms.length > 0
                 ? subject.priorTerms.map((t) => `${t.termName}: ${t.total ?? "-"}`).join("   ")
                 : null;
             return [
               { text: subject.subjectName, font: { src: "Helvetica-Bold" } },
-              { text: priorLine ? `${breakdown}\n${priorLine}` : breakdown, textColor: MUTED },
+              ...subject.components.map((c) => ({
+                text: c.score === null ? "-" : String(c.score),
+                align: "center" as const,
+                textColor: MUTED,
+              })),
               { text: String(subject.totalScore), align: "center" as const },
-              { text: subject.grade ?? "-", align: "center" as const },
-              { text: subject.remark ?? "-" },
+              { text: subject.classLowScore === null ? "-" : String(subject.classLowScore), align: "center" as const },
+              { text: subject.classHighScore === null ? "-" : String(subject.classHighScore), align: "center" as const },
               { text: subject.position ? String(subject.position) : "-", align: "center" as const },
+              { text: subject.grade ?? "-", align: "center" as const },
+              { text: priorLine ? `${subject.remark ?? "-"}\n${priorLine}` : (subject.remark ?? "-") },
             ];
           }),
         ],
@@ -248,19 +268,7 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
       doc.y = boxY + 26 + 10;
     }
 
-    sectionHeader(doc, "Psychomotor Skills");
-    if (content.psychomotorSkills.length === 0) {
-      emptyPlaceholder(doc, "No psychomotor skill ratings recorded yet.");
-    } else {
-      renderSkillTable(doc, content.psychomotorSkills);
-    }
-
-    sectionHeader(doc, "Affective/Cognitive Skills");
-    if (content.affectiveCognitiveSkills.length === 0) {
-      emptyPlaceholder(doc, "No affective/cognitive skill ratings recorded yet.");
-    } else {
-      renderSkillTable(doc, content.affectiveCognitiveSkills);
-    }
+    renderSkillSectionsSideBySide(doc, content.psychomotorSkills, content.affectiveCognitiveSkills);
 
     sectionHeader(doc, "Class Teacher's Comment");
     commentBox(doc, content.classTeacherComment);
@@ -272,13 +280,87 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
   });
 }
 
-function renderSkillTable(doc: PDFKit.PDFDocument, skills: { name: string; rating: string }[]): void {
-  doc.font("Helvetica").fontSize(9.5);
+// SkillRatingValue is an UPPER_SNAKE_CASE Prisma enum (e.g. "VERY_GOOD") —
+// this is the one place that turns it into report-facing text ("VERY GOOD").
+function humanizeRating(rating: string): string {
+  return rating.replace(/_/g, " ");
+}
+
+/** Small title + rule scoped to one column's x/width, not the full page —
+ * the full-width `sectionHeader` can't be reused for a side-by-side layout
+ * since it always spans margin-to-margin. Returns the y position right
+ * below the rule, where that column's content should start. */
+function columnHeader(doc: PDFKit.PDFDocument, label: string, x: number, width: number, y: number): number {
+  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(11).text(label, x, y, { width });
+  const ruleY = doc.y + 2;
+  doc.moveTo(x, ruleY).lineTo(x + width, ruleY).lineWidth(0.75).strokeColor(NAVY).stroke();
+  doc.fillColor("black").font("Helvetica").fontSize(10);
+  return ruleY + 8;
+}
+
+function renderSkillTable(
+  doc: PDFKit.PDFDocument,
+  skills: { name: string; rating: string }[],
+  position: { x: number; y: number },
+  width: number,
+): void {
+  doc.font("Helvetica").fontSize(8.5);
   doc.table({
-    columnStyles: [{ width: "*", minWidth: 200 }, { width: 120 }],
-    defaultStyle: { padding: 5, border: { bottom: 0.5 }, borderColor: BORDER },
+    position,
+    maxWidth: width,
+    columnStyles: [{ width: "*", minWidth: width - 66 }, { width: 66 }],
+    defaultStyle: { padding: 4, border: { bottom: 0.5 }, borderColor: BORDER },
     rowStyles: (i) => (i === 0 ? { backgroundColor: NAVY, textColor: "white" } : i % 2 === 0 ? { backgroundColor: BAND } : {}),
-    data: [headerRow(["Skill", "Rating"]), ...skills.map((skill) => [skill.name, { text: skill.rating, align: "center" as const }])],
+    data: [
+      headerRow(["Skill", "Rating"]),
+      ...skills.map((skill) => [skill.name, { text: humanizeRating(skill.rating), align: "center" as const }]),
+    ],
   });
-  doc.moveDown(0.6);
+}
+
+/**
+ * Psychomotor and Affective/Cognitive skills side by side (two columns)
+ * rather than stacked — both categories together are short enough that
+ * stacking them was pushing the report past a single page for no reason.
+ * Each column gets its own scoped title; a shared page-break check runs
+ * once up front since both columns need to land on the same page together.
+ */
+function renderSkillSectionsSideBySide(
+  doc: PDFKit.PDFDocument,
+  psychomotorSkills: { name: string; rating: string }[],
+  affectiveCognitiveSkills: { name: string; rating: string }[],
+): void {
+  if (doc.y > doc.page.height - doc.page.margins.bottom - 130) doc.addPage();
+
+  const left = doc.page.margins.left;
+  const gap = 16;
+  const colWidth = (contentWidth(doc) - gap) / 2;
+  const rightX = left + colWidth + gap;
+  const startY = doc.y + 6;
+
+  const psychTableY = columnHeader(doc, "Psychomotor Skills", left, colWidth, startY);
+  const affTableY = columnHeader(doc, "Affective/Cognitive Skills", rightX, colWidth, startY);
+  const tableY = Math.max(psychTableY, affTableY);
+
+  if (psychomotorSkills.length === 0) {
+    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No ratings recorded yet.", left, tableY, { width: colWidth });
+  } else {
+    renderSkillTable(doc, psychomotorSkills, { x: left, y: tableY }, colWidth);
+  }
+  const afterPsychY = doc.y;
+
+  if (affectiveCognitiveSkills.length === 0) {
+    doc
+      .fillColor(MUTED)
+      .font("Helvetica-Oblique")
+      .fontSize(9)
+      .text("No ratings recorded yet.", rightX, tableY, { width: colWidth });
+  } else {
+    renderSkillTable(doc, affectiveCognitiveSkills, { x: rightX, y: tableY }, colWidth);
+  }
+  const afterAffY = doc.y;
+
+  doc.fillColor("black").font("Helvetica").fontSize(10);
+  doc.x = left;
+  doc.y = Math.max(afterPsychY, afterAffY) + 10;
 }

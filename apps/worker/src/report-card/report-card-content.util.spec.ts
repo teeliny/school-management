@@ -76,6 +76,8 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
       subjectName: "Mathematics",
       components: [{ name: "1st CA", score: 17, maxScore: 20 }],
       totalScore: 87,
+      classLowScore: 40,
+      classHighScore: 87,
       priorTerms: [],
       grade: "A1",
       remark: "Excellent",
@@ -87,6 +89,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
   it("sorts subjects alphabetically by name", () => {
     const content = buildFullTermContent(
       [buildSubject({ subjectName: "Mathematics" }), buildSubject({ subjectName: "English" })],
+      [{ name: "1st CA", maxScore: 20 }],
       NO_OVERALL,
       [],
       { classTeacherComment: null, principalComment: null },
@@ -95,7 +98,28 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
     expect(content.subjects.map((s) => s.subjectName)).toEqual(["English", "Mathematics"]);
   });
 
-  it("passes each subject's component breakdown, total, prior-term columns, grade, remark and position through unchanged", () => {
+  it("carries the components through for the caller to use as column headers, and sums their maxScore into totalObtainable", () => {
+    const content = buildFullTermContent(
+      [buildSubject()],
+      [
+        { name: "1st CA", maxScore: 20 },
+        { name: "2nd CA", maxScore: 20 },
+        { name: "Exam", maxScore: 60 },
+      ],
+      NO_OVERALL,
+      [],
+      { classTeacherComment: null, principalComment: null },
+    );
+
+    expect(content.components).toEqual([
+      { name: "1st CA", maxScore: 20 },
+      { name: "2nd CA", maxScore: 20 },
+      { name: "Exam", maxScore: 60 },
+    ]);
+    expect(content.totalObtainable).toBe(100);
+  });
+
+  it("passes each subject's component breakdown, total, class low/high, prior-term columns, grade, remark and position through unchanged", () => {
     const content = buildFullTermContent(
       [
         buildSubject({
@@ -105,11 +129,18 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
             { name: "Exam", score: 52, maxScore: 60 },
           ],
           totalScore: 87,
+          classLowScore: 40,
+          classHighScore: 91,
           priorTerms: [
             { termName: "Term 1", total: 80 },
             { termName: "Term 2", total: 83 },
           ],
         }),
+      ],
+      [
+        { name: "1st CA", maxScore: 20 },
+        { name: "2nd CA", maxScore: 20 },
+        { name: "Exam", maxScore: 60 },
       ],
       NO_OVERALL,
       [],
@@ -124,6 +155,8 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
         { name: "Exam", score: 52, maxScore: 60 },
       ],
       totalScore: 87,
+      classLowScore: 40,
+      classHighScore: 91,
       priorTerms: [
         { termName: "Term 1", total: 80 },
         { termName: "Term 2", total: 83 },
@@ -137,6 +170,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
   it("passes the overall summary through, including the isAnnual flag", () => {
     const content = buildFullTermContent(
       [buildSubject()],
+      [{ name: "1st CA", maxScore: 20 }],
       { isAnnual: true, average: 83.3, grade: "A1", remark: "Excellent" },
       [],
       { classTeacherComment: null, principalComment: null },
@@ -150,6 +184,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
 
   it("splits skill ratings into PSYCHOMOTOR and AFFECTIVE_COGNITIVE buckets", () => {
     const content = buildFullTermContent(
+      [],
       [],
       NO_OVERALL,
       [
@@ -166,7 +201,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
   });
 
   it("passes the two required comments through unchanged", () => {
-    const content = buildFullTermContent([], NO_OVERALL, [], {
+    const content = buildFullTermContent([], [], NO_OVERALL, [], {
       classTeacherComment: "Well done this term.",
       principalComment: "Keep it up.",
     });
@@ -176,7 +211,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
   });
 
   it("passes through null comments when a required piece is missing (generation isn't gated)", () => {
-    const content = buildFullTermContent([], NO_OVERALL, [], { classTeacherComment: null, principalComment: null });
+    const content = buildFullTermContent([], [], NO_OVERALL, [], { classTeacherComment: null, principalComment: null });
 
     expect(content.classTeacherComment).toBeNull();
     expect(content.principalComment).toBeNull();

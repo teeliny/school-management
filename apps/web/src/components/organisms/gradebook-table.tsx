@@ -56,15 +56,18 @@ export function GradebookTable({
     }
     Promise.all([
       apiFetch<StudentListItem[]>("/students", { auth: true }),
-      apiFetch<ScoreEntryItem[]>(`/score-entries?assessmentComponentId=${assessmentComponentId}&classArmId=${classArmId}`, {
-        auth: true,
-      }),
+      apiFetch<ScoreEntryItem[]>(
+        `/score-entries?subjectId=${subjectId}&assessmentComponentId=${assessmentComponentId}&classArmId=${classArmId}`,
+        { auth: true },
+      ),
     ])
       .then(([allStudents, entries]) => {
         setStudents(allStudents.filter((s) => s.currentClassId === classArmId));
         const byStudent: Record<string, number> = {};
         for (const entry of entries) byStudent[entry.studentId] = Number(entry.score);
         setScores(byStudent);
+        draftScores.current = {};
+        setSaving({});
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load gradebook"));
   }, [classArmId, subjectId, assessmentComponentId]);
@@ -115,7 +118,10 @@ export function GradebookTable({
         </thead>
         <tbody>
           {students.map((student) => (
-            <tr key={student.id} className="border-b border-border/60 last:border-none">
+            <tr
+              key={`${subjectId}-${assessmentComponentId}-${student.id}`}
+              className="border-b border-border/60 last:border-none"
+            >
               <td className="py-2.5 pr-4 font-medium">
                 {student.user.firstName} {student.user.lastName}{" "}
                 <span className="font-mono text-muted">({student.admissionNumber})</span>

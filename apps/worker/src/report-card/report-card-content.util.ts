@@ -79,6 +79,13 @@ export interface FullTermSubjectResultInput {
   // read from ScoreEntry — not just the SubjectTermResult total.
   components: FullTermComponentScoreInput[];
   totalScore: number;
+  // Lowest/highest totalScore among every student taking this subject in the
+  // student's own class arm this term (same population SubjectTermResult's
+  // own position ranking is computed against) — null when there's only this
+  // one student's result to compare against, or the class hasn't been
+  // aggregated yet. Class-wide context, not this student's own min/max.
+  classLowScore: number | null;
+  classHighScore: number | null;
   // Additive across the session: empty for the session's first term, one
   // entry for the second, two for the third, etc.
   priorTerms: FullTermPriorTermTotalInput[];
@@ -112,8 +119,21 @@ export interface FullTermCommentsInput {
   principalComment: string | null;
 }
 
+export interface FullTermComponentHeader {
+  name: string;
+  maxScore: number;
+}
+
 export interface FullTermContent {
   subjects: FullTermSubjectResultInput[];
+  // The term's assessment components (name + obtainable score) in display
+  // order — every subject's `components` array lines up against this same
+  // list, so the PDF renders one column per component (labeled e.g. "1ST
+  // TEST / 10") instead of cramming them into a single text cell.
+  components: FullTermComponentHeader[];
+  // Sum of every component's maxScore — the obtainable score shown next to
+  // "TOTAL" in the header (e.g. "TOTAL / 100").
+  totalObtainable: number;
   isAnnual: boolean;
   overallAverage: number | null;
   overallGrade: string | null;
@@ -135,12 +155,15 @@ export interface FullTermContent {
  */
 export function buildFullTermContent(
   subjectResults: FullTermSubjectResultInput[],
+  components: FullTermComponentHeader[],
   overall: FullTermOverallInput,
   skillRatings: FullTermSkillRatingInput[],
   comments: FullTermCommentsInput,
 ): FullTermContent {
   return {
     subjects: [...subjectResults].sort((a, b) => a.subjectName.localeCompare(b.subjectName)),
+    components,
+    totalObtainable: components.reduce((sum, c) => sum + c.maxScore, 0),
     isAnnual: overall.isAnnual,
     overallAverage: overall.average,
     overallGrade: overall.grade,

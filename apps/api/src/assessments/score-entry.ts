@@ -95,7 +95,7 @@ export class ScoreEntryService {
     });
   }
 
-  findAll(filters: { assessmentComponentId?: string; classArmId?: string; studentId?: string }) {
+  findAll(filters: { subjectId?: string; assessmentComponentId?: string; classArmId?: string; studentId?: string }) {
     return this.prisma.scoreEntry.findMany({
       where: filters,
       orderBy: { enteredAt: "desc" },
@@ -120,10 +120,11 @@ export class ScoreEntryController {
 
   @Get()
   findAll(
+    @Query("subjectId") subjectId?: string,
     @Query("assessmentComponentId") assessmentComponentId?: string,
     @Query("classArmId") classArmId?: string,
     @Query("studentId") studentId?: string,
   ) {
-    return this.service.findAll({ assessmentComponentId, classArmId, studentId });
+    return this.service.findAll({ subjectId, assessmentComponentId, classArmId, studentId });
   }
 }

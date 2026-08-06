@@ -52,17 +52,26 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
       new Date(),
     );
 
-    // (termId, classLevelCategory) groups where a component just closed this
-    // tick — candidates for "is the whole group closed now" (FR4.4
-    // aggregation) and, separately, groups whose just-closed component was
-    // the MID_TERM one (this phase's mid-term report trigger). Keyed by
-    // group key -> the actual ids, so no re-parsing of a joined string is
-    // needed later.
+    // (termId, classLevelCategory) groups touched by a transition this tick
+    // — candidates for "is the whole group closed now" (FR4.4 aggregation)
+    // and, separately, groups whose just-closed component was the MID_TERM
+    // one (this phase's mid-term report trigger). Keyed by group key -> the
+    // actual ids, so no re-parsing of a joined string is needed later.
+    //
+    // aggregationCandidateGroups is populated on BOTH a CLOSED and a
+    // PUBLISHED transition, not just CLOSED — a group's last remaining
+    // not-yet-terminal component can complete the "every component is
+    // CLOSED or PUBLISHED" set via either kind of transition (e.g. its
+    // siblings already sit at PUBLISHED from an earlier tick and this
+    // component's own CLOSED→PUBLISHED step is what completes the set).
+    // Gating only on CLOSED missed that case: the group would sit fully
+    // closed/published forever with no tick ever re-checking it, so
+    // SubjectTermResult never got populated even though nothing had failed.
     interface Group {
       termId: string;
       classLevelCategory: ClassLevelCategory;
     }
-    const closedGroups = new Map<string, Group>();
+    const aggregationCandidateGroups = new Map<string, Group>();
     const midTermClosedGroups = new Map<string, Group>();
 
     for (const transition of transitions) {
@@ -72,17 +81,25 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
         data: { status: transition.nextStatus },
       });
 
-      if (component && transition.nextStatus === AssessmentComponentStatus.CLOSED) {
+      if (!component) continue;
+
+      if (
+        transition.nextStatus === AssessmentComponentStatus.CLOSED ||
+        transition.nextStatus === AssessmentComponentStatus.PUBLISHED
+      ) {
         const group: Group = { termId: component.termId, classLevelCategory: component.classLevelCategory };
         const key = `${group.termId}:${group.classLevelCategory}`;
-        closedGroups.set(key, group);
-        if (component.type === AssessmentComponentType.MID_TERM) {
-          midTermClosedGroups.set(key, group);
-        }
+        aggregationCandidateGroups.set(key, group);
+      }
+
+      if (transition.nextStatus === AssessmentComponentStatus.CLOSED && component.type === AssessmentComponentType.MID_TERM) {
+        const group: Group = { termId: component.termId, classLevelCategory: component.classLevelCategory };
+        const key = `${group.termId}:${group.classLevelCategory}`;
+        midTermClosedGroups.set(key, group);
       }
     }
 
-    for (const { termId, classLevelCategory } of closedGroups.values()) {
+    for (const { termId, classLevelCategory } of aggregationCandidateGroups.values()) {
       const groupComponents = await this.prisma.assessmentComponent.findMany({
         where: { termId, classLevelCategory },
       });

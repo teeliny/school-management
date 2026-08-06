@@ -73,6 +73,32 @@ describe("AssessmentSweepProcessor.process (orchestration)", () => {
     expect(subjectTermResults.aggregateForClassCategoryTerm).toHaveBeenCalledWith("term-1", "JSS");
   });
 
+  it("triggers aggregation when a CLOSED->PUBLISHED transition is what completes the group (not just CLOSED)", async () => {
+    // "ca" is already PUBLISHED from an earlier tick, so it's excluded from
+    // the DRAFT/OPEN/CLOSED query this tick — only "exam" (still CLOSED,
+    // past its publishAt) is fetched and transitions to PUBLISHED. That
+    // transition alone must still be enough to re-check and trigger
+    // aggregation for the group, since it's the one that completes the set.
+    prisma.assessmentComponent.findMany
+      .mockResolvedValueOnce([
+        buildComponent({
+          id: "exam",
+          type: AssessmentComponentType.EXAM,
+          status: AssessmentComponentStatus.CLOSED,
+        }),
+      ])
+      // Re-fetch inside the "is the group fully closed" check — no status
+      // filter, so it also picks up "ca" which is already PUBLISHED.
+      .mockResolvedValueOnce([
+        buildComponent({ id: "ca", type: AssessmentComponentType.CA, status: AssessmentComponentStatus.PUBLISHED }),
+        buildComponent({ id: "exam", type: AssessmentComponentType.EXAM, status: AssessmentComponentStatus.PUBLISHED }),
+      ]);
+
+    await processor.process({} as never);
+
+    expect(subjectTermResults.aggregateForClassCategoryTerm).toHaveBeenCalledWith("term-1", "JSS");
+  });
+
   it("does not aggregate while a sibling component in the group is still open", async () => {
     prisma.assessmentComponent.findMany
       .mockResolvedValueOnce([buildComponent({ id: "ca", type: AssessmentComponentType.CA })])

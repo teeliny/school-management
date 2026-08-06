@@ -186,10 +186,35 @@ export class ReportCardProcessor extends WorkerHost {
       include: { subject: true },
     });
 
+    // A grouped subject's children each carry their own SubjectTermResult
+    // row too (SubjectTermResultService.aggregateForClassCategoryTerm, "for
+    // transparency") but only the parent — never its children — belongs on
+    // the report itself (PRD §3.3: a group's children aren't independently
+    // reportable, same rule computeAnnualSummary already applies via this
+    // exact `parentSubjectId === null` filter).
+    const reportableResults = results.filter((r) => r.subject.parentSubjectId === null);
+
     const scoreEntries = await this.prisma.scoreEntry.findMany({
       where: { studentId, assessmentComponentId: { in: components.map((c) => c.id) } },
       select: { subjectId: true, assessmentComponentId: true, score: true },
     });
+
+    const groupWeights = await this.prisma.subjectGroupWeight.findMany({
+      where: { groupSubjectId: { in: reportableResults.filter((r) => r.subject.isGroup).map((r) => r.subjectId) } },
+      select: { groupSubjectId: true, childSubjectId: true, weight: true },
+    });
+
+    // Class-wide low/high context per subject — every other student's
+    // SubjectTermResult sharing the same (subjectId, classArmId, termId),
+    // the exact population SubjectTermResultService.assignPositions already
+    // ranks this student's position against.
+    const classmateResults =
+      reportableResults.length > 0
+        ? await this.prisma.subjectTermResult.findMany({
+            where: { termId, OR: reportableResults.map((r) => ({ subjectId: r.subjectId, classArmId: r.classArmId })) },
+            select: { subjectId: true, classArmId: true, totalScore: true },
+          })
+        : [];
 
     const priorResults =
       priorTerms.length > 0
@@ -214,8 +239,33 @@ export class ReportCardProcessor extends WorkerHost {
       }),
     ]);
 
-    const subjects: FullTermSubjectResultInput[] = results.map((result) => {
+    const subjects: FullTermSubjectResultInput[] = reportableResults.map((result) => {
       const componentScores = components.map((component) => {
+        if (result.subject.isGroup) {
+          // Group subjects are never directly scored (ScoreEntryService
+          // backstops it) — a parent's per-component figure is the
+          // weight-averaged score of whichever children have a score for
+          // that component, same weighting SubjectGroupWeight already
+          // applies to the total. A child with nothing entered yet is
+          // excluded from the average rather than dragging it toward zero.
+          const childWeights = groupWeights.filter((w) => w.groupSubjectId === result.subjectId);
+          let weightedSum = 0;
+          let weightTotal = 0;
+          for (const { childSubjectId, weight } of childWeights) {
+            const entry = scoreEntries.find(
+              (s) => s.subjectId === childSubjectId && s.assessmentComponentId === component.id,
+            );
+            if (entry) {
+              weightedSum += Number(entry.score) * Number(weight);
+              weightTotal += Number(weight);
+            }
+          }
+          return {
+            name: component.name,
+            score: weightTotal > 0 ? weightedSum / weightTotal : null,
+            maxScore: Number(component.maxScore),
+          };
+        }
         const entry = scoreEntries.find(
           (s) => s.subjectId === result.subjectId && s.assessmentComponentId === component.id,
         );
@@ -226,10 +276,15 @@ export class ReportCardProcessor extends WorkerHost {
         return { termName: priorTerm.name, total: prior ? Number(prior.totalScore) : null };
       });
       const annualSubject = annual?.subjects.find((s) => s.subjectId === result.subjectId);
+      const classmateTotals = classmateResults
+        .filter((c) => c.subjectId === result.subjectId && c.classArmId === result.classArmId)
+        .map((c) => Number(c.totalScore));
       return {
         subjectName: result.subject.name,
         components: componentScores,
         totalScore: Number(result.totalScore),
+        classLowScore: classmateTotals.length > 0 ? Math.min(...classmateTotals) : null,
+        classHighScore: classmateTotals.length > 0 ? Math.max(...classmateTotals) : null,
         priorTerms: priorTotals,
         grade: annualSubject ? annualSubject.grade : result.grade,
         remark: annualSubject ? annualSubject.remark : result.remark,
@@ -241,8 +296,7 @@ export class ReportCardProcessor extends WorkerHost {
     if (annual) {
       overall = { isAnnual: true, average: annual.overallAverage, grade: annual.overallGrade, remark: annual.overallRemark };
     } else {
-      const reportable = results.filter((r) => r.subject.parentSubjectId === null);
-      const totals = reportable.map((r) => Number(r.totalScore));
+      const totals = reportableResults.map((r) => Number(r.totalScore));
       const average = totals.length > 0 ? totals.reduce((sum, value) => sum + value, 0) / totals.length : null;
       const gradeScales = await this.subjectTermResults.fetchGradeScaleRows();
       const { grade, remark } = average !== null ? findGradeScaleMatch(gradeScales, average) : { grade: null, remark: null };
@@ -251,6 +305,7 @@ export class ReportCardProcessor extends WorkerHost {
 
     const content = buildFullTermContent(
       subjects,
+      components.map((c) => ({ name: c.name, maxScore: Number(c.maxScore) })),
       overall,
       ratings.map(
         (r): FullTermSkillRatingInput => ({

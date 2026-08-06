@@ -1,5 +1,6 @@
 import { AssessmentComponentType } from "@prisma/client";
 import { ReportCardProcessor } from "./report-card.processor";
+import * as reportCardPdfUtil from "./report-card-pdf.util";
 
 function buildPrismaMock() {
   return {
@@ -15,6 +16,7 @@ function buildFullPrismaMock() {
     studentSubjectEnrollment: { findMany: jest.fn() },
     scoreEntry: { findMany: jest.fn() },
     subjectTermResult: { findMany: jest.fn() },
+    subjectGroupWeight: { findMany: jest.fn().mockResolvedValue([]) },
     skillRating: { findMany: jest.fn() },
     reportComment: { findFirst: jest.fn() },
     schoolProfile: { findFirstOrThrow: jest.fn() },
@@ -253,6 +255,97 @@ describe("ReportCardProcessor.process — FULL_TERM (breakdown, prior terms, ann
     );
     // fetchGradeScaleRows isn't needed for the overall calc when annual data exists.
     expect(subjectTermResults.fetchGradeScaleRows).not.toHaveBeenCalled();
+  });
+
+  it("excludes a group subject's children from the report, keeping only the parent", async () => {
+    const renderSpy = jest.spyOn(reportCardPdfUtil, "renderFullTermPdf");
+    prisma.subjectTermResult.findMany.mockResolvedValue([
+      {
+        subjectId: "subj-basic-science",
+        totalScore: 40,
+        grade: "F9",
+        remark: "Fail",
+        position: null,
+        subject: { name: "Basic Science", parentSubjectId: "subj-bst", isGroup: false },
+      },
+      {
+        subjectId: "subj-bst",
+        totalScore: 40,
+        grade: "F9",
+        remark: "Fail",
+        position: null,
+        subject: { name: "Basic Science and Technology", parentSubjectId: null, isGroup: true },
+      },
+    ]);
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "FULL_TERM" } } as never);
+
+    // Only the parent is reportable — the child's own SubjectTermResult row
+    // (kept for transparency, per SubjectTermResultService) must not surface
+    // as a second row on the printed report.
+    const content = renderSpy.mock.calls[0]![0];
+    expect(content.subjects.map((s) => s.subjectName)).toEqual(["Basic Science and Technology"]);
+    renderSpy.mockRestore();
+  });
+
+  it("computes a group subject's per-component score as the weighted average of its children's scores for that component", async () => {
+    const renderSpy = jest.spyOn(reportCardPdfUtil, "renderFullTermPdf");
+    prisma.assessmentComponent.findMany.mockResolvedValue([{ id: "comp-1", name: "1st CA", maxScore: 20 }]);
+    prisma.scoreEntry.findMany.mockResolvedValue([
+      { subjectId: "subj-agric", assessmentComponentId: "comp-1", score: 10 },
+      { subjectId: "subj-home-econs", assessmentComponentId: "comp-1", score: 16 },
+    ]);
+    prisma.subjectGroupWeight.findMany.mockResolvedValue([
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-agric", weight: 1 },
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-home-econs", weight: 1 },
+    ]);
+    prisma.subjectTermResult.findMany.mockResolvedValue([
+      {
+        subjectId: "subj-pvs",
+        totalScore: 26,
+        grade: "F9",
+        remark: "Fail",
+        position: null,
+        subject: { name: "PVS", parentSubjectId: null, isGroup: true },
+      },
+    ]);
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "FULL_TERM" } } as never);
+
+    const content = renderSpy.mock.calls[0]![0];
+    expect(content.subjects[0]!.components).toEqual([{ name: "1st CA", score: 13, maxScore: 20 }]);
+    renderSpy.mockRestore();
+  });
+
+  it("computes class low/high as the min/max totalScore among classmates sharing the same subject+classArm", async () => {
+    const renderSpy = jest.spyOn(reportCardPdfUtil, "renderFullTermPdf");
+    const mathResult = {
+      subjectId: "subj-math",
+      classArmId: "arm-1",
+      totalScore: 70,
+      grade: "A1",
+      remark: "Excellent",
+      position: 2,
+      subject: { name: "Mathematics", parentSubjectId: null, isGroup: false },
+    };
+    prisma.subjectTermResult.findMany.mockImplementation((args: { where: { OR?: unknown } }) => {
+      if (args.where.OR) {
+        // Classmate lookup — three students' totals for the same subject/class arm.
+        return Promise.resolve([
+          { subjectId: "subj-math", classArmId: "arm-1", totalScore: 55 },
+          { subjectId: "subj-math", classArmId: "arm-1", totalScore: 70 },
+          { subjectId: "subj-math", classArmId: "arm-1", totalScore: 91 },
+        ]);
+      }
+      return Promise.resolve([mathResult]);
+    });
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "FULL_TERM" } } as never);
+
+    const content = renderSpy.mock.calls[0]![0];
+    expect(content.subjects[0]!.classLowScore).toBe(55);
+    expect(content.subjects[0]!.classHighScore).toBe(91);
+    renderSpy.mockRestore();
   });
 
   it("adds one additive prior-term column per prior term, in chronological order", async () => {
