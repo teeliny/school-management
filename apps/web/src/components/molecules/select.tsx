@@ -40,7 +40,7 @@ export const SelectContent = React.forwardRef<
       ref={ref}
       position={position}
       className={cn(
-        "z-50 overflow-hidden rounded-lg border border-border bg-card text-foreground shadow-md",
+        "z-50 max-h-[250px] overflow-y-auto rounded-lg border border-border bg-card text-foreground shadow-md",
         position === "popper" &&
           "translate-y-1 w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)]",
         className,

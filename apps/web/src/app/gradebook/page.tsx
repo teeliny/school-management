@@ -174,7 +174,7 @@ export default function GradebookPage() {
               <SelectTrigger id="gb-subject" className="mt-1">
                 <SelectValue placeholder="Select subject" />
               </SelectTrigger>
-              <SelectContent className="max-h-72 overflow-y-auto">
+              <SelectContent>
                 {subjectOptions.map((subject) => (
                   <SelectItem key={subject.id} value={subject.id}>
                     {subject.name}

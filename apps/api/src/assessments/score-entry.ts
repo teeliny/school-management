@@ -49,7 +49,7 @@ export class ScoreEntryService {
     // component.maxScore is per-component, not a fixed value, so the upper
     // bound can't be a static @Max() on the DTO — it's checked here once the
     // component is loaded. @Min(0) on the DTO already covers the lower bound.
-    if (dto.score > component.maxScore) {
+    if (dto.score > Number(component.maxScore)) {
       throw new BadRequestException(`Score cannot exceed this component's max score of ${component.maxScore}`);
     }
 

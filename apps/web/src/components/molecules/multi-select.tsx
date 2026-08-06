@@ -58,7 +58,7 @@ export function MultiSelect({
         <DropdownMenuPrimitive.Content
           align="start"
           sideOffset={4}
-          className="z-50 max-h-64 w-[var(--radix-dropdown-menu-trigger-width)] min-w-[160px] overflow-auto rounded-lg border border-border bg-card p-1 text-foreground shadow-md"
+          className="z-50 max-h-[250px] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[160px] overflow-y-auto rounded-lg border border-border bg-card p-1 text-foreground shadow-md"
         >
           {options.map((option) => {
             const checked = value.includes(option.value);

@@ -239,7 +239,7 @@ export function StaffAssignmentForm({
             <SelectTrigger id="assignment-subject" className="mt-1">
               <SelectValue placeholder="Select subject" />
             </SelectTrigger>
-            <SelectContent className="max-h-72 overflow-y-auto">
+            <SelectContent>
               <div className="p-1 pb-0">
                 <Input
                   placeholder="Search subjects…"
