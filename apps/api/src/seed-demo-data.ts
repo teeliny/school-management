@@ -563,25 +563,31 @@ async function main() {
       return req(jssArmIds[armCounters.BOTH++ % jssArmIds.length], "JSS arm id");
     }
 
-    const teacherDefs: { firstName: string; lastName: string; subjectCodes: string[] }[] = [
+    // `classTeacherOf` (a key into `arms`, e.g. "JSS 1") is only set for the
+    // six teachers doubling as their class's CLASS_TEACHER — chosen from
+    // among whoever already has a SUBJECT_TEACHER presence in that exact
+    // arm (traceable via armForSubject's round-robin above), so the pairing
+    // reads as a real teacher's real class, not an arbitrary assignment.
+    const teacherDefs: { firstName: string; lastName: string; subjectCodes: string[]; classTeacherOf?: string }[] = [
       { firstName: "Chidinma", lastName: "Eze", subjectCodes: ["ENG-01", "ENG-02"] },
       { firstName: "Tunde", lastName: "Afolabi", subjectCodes: ["MTH", "FMT"] },
       { firstName: "Ngozi", lastName: "Umeh", subjectCodes: ["BSC", "PHY"] },
       { firstName: "Bola", lastName: "Adeyemi", subjectCodes: ["BTN", "CHM"] },
       { firstName: "Fatima", lastName: "Sule", subjectCodes: ["IT", "BIO"] },
-      { firstName: "Kelechi", lastName: "Obi", subjectCodes: ["PHE", "AGR"] },
-      { firstName: "Amaka", lastName: "Nwachukwu", subjectCodes: ["SOS", "GEO"] },
-      { firstName: "Yusuf", lastName: "Abdullahi", subjectCodes: ["SEC", "ECO"] },
-      { firstName: "Blessing", lastName: "Etim", subjectCodes: ["HEC", "COM"] },
+      { firstName: "Kelechi", lastName: "Obi", subjectCodes: ["PHE", "AGR"], classTeacherOf: "JSS 1" },
+      { firstName: "Amaka", lastName: "Nwachukwu", subjectCodes: ["SOS", "GEO"], classTeacherOf: "JSS 2" },
+      { firstName: "Yusuf", lastName: "Abdullahi", subjectCodes: ["SEC", "ECO"], classTeacherOf: "JSS 3" },
+      { firstName: "Blessing", lastName: "Etim", subjectCodes: ["HEC", "COM"], classTeacherOf: "SSS 1" },
       { firstName: "Ibrahim", lastName: "Musa", subjectCodes: ["BUS", "DPS"] },
-      { firstName: "Peter", lastName: "Okafor", subjectCodes: ["GOV", "LIT"] },
+      { firstName: "Peter", lastName: "Okafor", subjectCodes: ["GOV", "LIT"], classTeacherOf: "SSS 3" },
       { firstName: "Halima", lastName: "Bello", subjectCodes: ["FRE", "CRS"] },
       { firstName: "Adaeze", lastName: "Uche", subjectCodes: ["YOR", "CIV"] },
       { firstName: "Segun", lastName: "Alabi", subjectCodes: ["MUS", "CRA"] },
-      { firstName: "Chioma", lastName: "Nnaji", subjectCodes: ["ACC", "CIVS"] },
+      { firstName: "Chioma", lastName: "Nnaji", subjectCodes: ["ACC", "CIVS"], classTeacherOf: "SSS 2" },
       { firstName: "David", lastName: "Osagie", subjectCodes: ["MKT", "FNU"] },
     ];
 
+    let classTeacherCount = 0;
     for (const def of teacherDefs) {
       const email = `${def.firstName.toLowerCase()}.${def.lastName.toLowerCase()}@${EMAIL_DOMAIN}`;
       const teacherUser = await ensureRoleUser(prisma, invitations, {
@@ -602,8 +608,17 @@ async function main() {
           academicSessionId: session.id,
         });
       }
+      if (def.classTeacherOf) {
+        await ensureStaffAssignment(prisma, staffAssignments, {
+          staffId: staffProfile.id,
+          assignmentType: AssignmentType.CLASS_TEACHER,
+          classArmId: req(arms[def.classTeacherOf], `class arm for ${def.classTeacherOf}`).id,
+          academicSessionId: session.id,
+        });
+        classTeacherCount++;
+      }
     }
-    logger.log(`${teacherDefs.length} teachers ready with subject assignments.`);
+    logger.log(`${teacherDefs.length} teachers ready with subject assignments, ${classTeacherCount} also class teachers.`);
 
     // -------------------------------------------------------------------
     // Parents + students
