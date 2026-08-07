@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { subject } from "@casl/ability";
-import { AssignmentType } from "@prisma/client";
+import { AssignmentType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -20,6 +20,20 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { CreateStaffAssignmentDto, SyncSubjectTeacherAssignmentsDto } from "./dto/staff-assignment.dto";
+
+// Same "{ClassLevel.name} {ClassArm.name}" display format as
+// academic-structure/class-arm.ts's own `withDisplayName` — duplicated
+// rather than imported since ClassArmService isn't exported from
+// AcademicStructureModule (every other consumer here queries prisma
+// directly too, see that module's comment).
+function withClassArmDisplayName<T extends { classArm: { name: string; classLevel: { name: string } } | null }>(
+  row: T,
+): T & { classArm: (T["classArm"] & { displayName: string }) | null } {
+  return {
+    ...row,
+    classArm: row.classArm ? { ...row.classArm, displayName: `${row.classArm.classLevel.name} ${row.classArm.name}` } : null,
+  };
+}
 
 @Injectable()
 export class StaffAssignmentService {
@@ -97,17 +111,54 @@ export class StaffAssignmentService {
     return revoked;
   }
 
-  findAll(staffId?: string) {
-    return this.prisma.staffAssignment.findMany({
-      where: staffId ? { staffId } : undefined,
-      include: {
-        subject: { select: { name: true } },
-        classArm: { select: { name: true } },
-        academicSession: { select: { name: true } },
-        staff: { include: { user: { select: { firstName: true, lastName: true } } } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  /**
+   * `filters.search` matches the assigned staff member's first/last name
+   * (case-insensitive); `filters.take` being present is what switches the
+   * return shape to `{ data, total }` for scroll-to-load-more pagination —
+   * same "omit take, keep the plain-array response" contract as
+   * StudentService.findAllForUser (identity/students/student.ts), so no
+   * existing caller (e.g. `findMine`, which doesn't go through this method)
+   * breaks.
+   */
+  async findAll(filters: { staffId?: string; search?: string; skip?: number; take?: number } = {}) {
+    const where: Prisma.StaffAssignmentWhereInput = {
+      staffId: filters.staffId,
+      ...(filters.search
+        ? {
+            staff: {
+              user: {
+                OR: [
+                  { firstName: { contains: filters.search, mode: "insensitive" as const } },
+                  { lastName: { contains: filters.search, mode: "insensitive" as const } },
+                ],
+              },
+            },
+          }
+        : {}),
+    };
+    const include = {
+      subject: { select: { name: true } },
+      classArm: { select: { name: true, classLevel: { select: { name: true } } } },
+      academicSession: { select: { name: true } },
+      staff: { include: { user: { select: { firstName: true, lastName: true } } } },
+    } satisfies Prisma.StaffAssignmentInclude;
+
+    if (filters.take === undefined) {
+      const rows = await this.prisma.staffAssignment.findMany({ where, include, orderBy: { createdAt: "desc" } });
+      return rows.map(withClassArmDisplayName);
+    }
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.staffAssignment.findMany({
+        where,
+        include,
+        orderBy: { createdAt: "desc" },
+        skip: filters.skip,
+        take: filters.take,
+      }),
+      this.prisma.staffAssignment.count({ where }),
+    ]);
+    return { data: rows.map(withClassArmDisplayName), total };
   }
 
   async findMine(userId: string) {
@@ -291,12 +342,23 @@ export class StaffAssignmentController {
   }
 
   @Get()
-  findAll(@CurrentUser() user: RequestUser, @Query("staffId") staffId?: string) {
+  findAll(
+    @CurrentUser() user: RequestUser,
+    @Query("staffId") staffId?: string,
+    @Query("search") search?: string,
+    @Query("skip") skip?: string,
+    @Query("take") take?: string,
+  ) {
     const ability = this.abilityFactory.createForUser(user);
     if (!ability.can("manage", "StaffAssignment")) {
       throw new ForbiddenException("Insufficient permissions");
     }
-    return this.service.findAll(staffId);
+    return this.service.findAll({
+      staffId,
+      search,
+      skip: skip === undefined ? undefined : Number(skip),
+      take: take === undefined ? undefined : Number(take),
+    });
   }
 
   @Get("mine")

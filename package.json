@@ -20,6 +20,7 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "setup:school": "pnpm --filter=@school/api run setup:school --",
+    "seed:demo": "pnpm --filter=@school/api run seed:demo",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"

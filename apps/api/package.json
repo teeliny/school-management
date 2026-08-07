@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "presetup:school": "pnpm --filter=@school/types build && nest build",
-    "setup:school": "node dist/setup-school.js"
+    "setup:school": "node dist/setup-school.js",
+    "preseed:demo": "pnpm --filter=@school/types build && nest build",
+    "seed:demo": "node dist/seed-demo-data.js"
   },
   "dependencies": {
     "@casl/ability": "^6.7.0",

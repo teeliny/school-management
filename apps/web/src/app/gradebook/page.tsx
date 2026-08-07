@@ -15,6 +15,7 @@ import { GradebookTable } from "../../components/organisms/gradebook-table";
 interface ClassArmOption {
   id: string;
   name: string;
+  displayName: string;
   classLevel: { category: string };
 }
 interface SubjectOption {
@@ -176,7 +177,7 @@ export default function GradebookPage() {
               <SelectContent>
                 {classArmOptions.map((arm) => (
                   <SelectItem key={arm.id} value={arm.id}>
-                    {arm.name}
+                    {arm.displayName}
                   </SelectItem>
                 ))}
               </SelectContent>

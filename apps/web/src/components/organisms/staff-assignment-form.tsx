@@ -53,6 +53,7 @@ interface StaffOption {
 interface ClassArmOption {
   id: string;
   name: string;
+  displayName: string;
   classLevel?: { category: string };
 }
 interface AcademicSessionOption {
@@ -273,7 +274,7 @@ export function StaffAssignmentForm({
             <SelectContent>
               {classArms.map((classArm) => (
                 <SelectItem key={classArm.id} value={classArm.id}>
-                  {classArm.name}
+                  {classArm.displayName}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -304,7 +305,7 @@ export function StaffAssignmentForm({
             id="assignment-class-arms"
             value={classArmIds}
             onValueChange={setClassArmIds}
-            options={eligibleClassArms.map((arm) => ({ value: arm.id, label: arm.name }))}
+            options={eligibleClassArms.map((arm) => ({ value: arm.id, label: arm.displayName }))}
             placeholder={
               !academicSessionId ? "Select an academic session first" : !subjectId ? "Select a subject first" : "Select class arms"
             }

@@ -32,6 +32,7 @@ interface AcademicSessionOption {
 interface ClassArmItem {
   id: string;
   name: string;
+  displayName: string;
   capacity: number | null;
   classLevelId: string;
   academicSessionId: string;
@@ -127,7 +128,6 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
     }
   }
 
-  const levelById = new Map(classLevels.map((l) => [l.id, l.name]));
   const sessionById = new Map(sessions.map((s) => [s.id, s.name]));
 
   return (
@@ -150,9 +150,9 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
           ) : (
             <div key={arm.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
               <span>
-                {arm.name}{" "}
+                {arm.displayName}{" "}
                 <span className="text-muted">
-                  ({levelById.get(arm.classLevelId) ?? "?"} · {sessionById.get(arm.academicSessionId) ?? "?"}
+                  ({sessionById.get(arm.academicSessionId) ?? "?"}
                   {arm.capacity ? ` · cap ${arm.capacity}` : ""})
                 </span>
               </span>
@@ -167,7 +167,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
-                    <AlertDialogTitle className="text-lg font-semibold">Delete {arm.name}?</AlertDialogTitle>
+                    <AlertDialogTitle className="text-lg font-semibold">Delete {arm.displayName}?</AlertDialogTitle>
                     <AlertDialogDescription className="mt-2 text-sm text-muted">
                       Students currently assigned to this class arm, plus its subject enrollments and timetable
                       slots, are affected. This cannot be undone.
@@ -221,7 +221,14 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <FormField label="Name (e.g. SSS1 Gold)" id="arm-name" required value={name} onChange={(e) => setName(e.target.value)} />
+          <FormField
+            label="Arm name"
+            id="arm-name"
+            placeholder="e.g. Topaz — just the arm, not the class level"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
           <FormField label="Capacity (optional)" id="arm-capacity" type="number" value={capacity} onChange={(e) => setCapacity(e.target.value)} />
         </div>
         <Button type="submit" disabled={submitting} className="w-full">

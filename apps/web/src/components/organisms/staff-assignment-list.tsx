@@ -15,7 +15,7 @@ interface StaffAssignment {
   academicSessionId: string;
   isActive: boolean;
   subject: { name: string } | null;
-  classArm: { name: string } | null;
+  classArm: { name: string; displayName: string } | null;
   academicSession: { name: string };
   staff: { user: { firstName: string; lastName: string } };
 }
@@ -24,7 +24,7 @@ interface TeacherSummary {
   staffId: string;
   staffName: string;
   classTeacherAssignments: StaffAssignment[];
-  subjectGroups: { subjectId: string; subjectName: string; classArms: { id: string; name: string; assignmentId: string }[] }[];
+  subjectGroups: { subjectId: string; subjectName: string; classArms: { id: string; displayName: string; assignmentId: string }[] }[];
   otherAssignments: StaffAssignment[];
 }
 
@@ -60,7 +60,7 @@ function groupByStaff(assignments: StaffAssignment[]): TeacherSummary[] {
       subjectName: subjectRowsForId[0]!.subject?.name ?? "Unknown subject",
       classArms: subjectRowsForId
         .filter((row) => row.classArmId && row.classArm)
-        .map((row) => ({ id: row.classArmId!, name: row.classArm!.name, assignmentId: row.id })),
+        .map((row) => ({ id: row.classArmId!, displayName: row.classArm!.displayName, assignmentId: row.id })),
     }));
 
     return { staffId, staffName, classTeacherAssignments, subjectGroups, otherAssignments };
@@ -114,7 +114,7 @@ export function StaffAssignmentList({ refreshKey }: { refreshKey?: unknown }) {
               summary.classTeacherAssignments.map((a) => (
                 <AssignmentChip
                   key={a.id}
-                  label={a.classArm?.name ?? "Unknown arm"}
+                  label={a.classArm?.displayName ?? "Unknown arm"}
                   revoking={revokingId === a.id}
                   onRevoke={() => handleRevoke(a.id)}
                 />
@@ -131,7 +131,7 @@ export function StaffAssignmentList({ refreshKey }: { refreshKey?: unknown }) {
                   {group.classArms.map((arm) => (
                     <AssignmentChip
                       key={arm.assignmentId}
-                      label={arm.name}
+                      label={arm.displayName}
                       revoking={revokingId === arm.assignmentId}
                       onRevoke={() => handleRevoke(arm.assignmentId)}
                     />

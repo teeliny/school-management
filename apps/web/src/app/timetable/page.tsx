@@ -20,6 +20,7 @@ import { TimetableSlotForm } from "../../components/organisms/timetable-slot-for
 interface ClassArmOption {
   id: string;
   name: string;
+  displayName: string;
 }
 interface AcademicSessionOption {
   id: string;
@@ -75,7 +76,7 @@ export default function TimetablePage() {
               <SelectContent>
                 {classArms.map((arm) => (
                   <SelectItem key={arm.id} value={arm.id}>
-                    {arm.name}
+                    {arm.displayName}
                   </SelectItem>
                 ))}
               </SelectContent>

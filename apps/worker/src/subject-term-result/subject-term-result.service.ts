@@ -34,10 +34,15 @@ export class SubjectTermResultService {
    * transparency, and the parent's result is the SubjectGroupWeight-weighted
    * average of its children's totals (normalized by the actual weight sum,
    * not assumed to be exactly 100 — Phase 3 never enforced that on the
-   * weight rows themselves). Position-in-class (PRD's optional per-subject
-   * rank) is assigned in a second pass, once every student's total for a
-   * (subjectId, classArmId) pair is known — ranking requires the whole
-   * group, not just the one row being written.
+   * weight rows themselves). A child disabled for this term
+   * (ClassSubjectTermStatus, see `disabledChildSubjectIds`) is dropped from
+   * that weight sum entirely rather than counted as a 0, so the remaining
+   * active children's weights are implicitly renormalized to the group's
+   * full 100 for this term instead of the disabled child dragging the
+   * average down by its original weight share. Position-in-class (PRD's
+   * optional per-subject rank) is assigned in a second pass, once every
+   * student's total for a (subjectId, classArmId) pair is known — ranking
+   * requires the whole group, not just the one row being written.
    */
   async aggregateForClassCategoryTerm(termId: string, classLevelCategory: ClassLevelCategory): Promise<void> {
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
@@ -74,6 +79,10 @@ export class SubjectTermResultService {
         .reduce((sum, entry) => sum + Number(entry.score), 0);
 
     const written: { id: string; subjectId: string; classArmId: string; totalScore: number }[] = [];
+    // One classSubject/status lookup per group (not per student) — every
+    // enrollment for a given group subject shares the same disabled-child
+    // set for this (classLevelCategory, termId).
+    const disabledChildCache = new Map<string, Set<string>>();
 
     const upsertResult = async (studentId: string, subjectId: string, classArmId: string, totalScore: number) => {
       const { grade, remark } = findGradeScaleMatch(gradeScales, totalScore);
@@ -96,11 +105,23 @@ export class SubjectTermResultService {
         where: { groupSubjectId: enrollment.subjectId },
       });
 
+      let disabledChildIds = disabledChildCache.get(enrollment.subjectId);
+      if (!disabledChildIds) {
+        disabledChildIds = await this.disabledChildSubjectIds(enrollment.subjectId, classLevelCategory, termId);
+        disabledChildCache.set(enrollment.subjectId, disabledChildIds);
+      }
+
       let weightedSum = 0;
       let weightTotal = 0;
       for (const weight of weights) {
         const childTotal = sumScores(enrollment.studentId, weight.childSubjectId);
         await upsertResult(enrollment.studentId, weight.childSubjectId, enrollment.classArmId, childTotal);
+        // A child disabled for this term (ClassSubjectTermStatus) is
+        // excluded from the parent's weighted average rather than counted
+        // at 0 — its weight share is implicitly redistributed across the
+        // remaining active children, since weightTotal ends up being just
+        // their own weights' sum instead of the group's full 100.
+        if (disabledChildIds.has(weight.childSubjectId)) continue;
         weightedSum += childTotal * Number(weight.weight);
         weightTotal += Number(weight.weight);
       }
@@ -205,6 +226,33 @@ export class SubjectTermResultService {
     const { grade: overallGrade, remark: overallRemark } = findGradeScaleMatch(gradeScales, overallAverage);
 
     return { subjects, overallAverage, overallGrade, overallRemark };
+  }
+
+  /**
+   * Child subjects of `groupSubjectId` disabled for this specific
+   * (classLevelCategory, termId) via ClassSubjectTermStatus — only the
+   * group's own ClassSubject row exists (its children don't get their own,
+   * see the ClassSubjectTermStatus model comment in schema.prisma), so the
+   * lookup goes: group subject -> its ClassSubject row for this class group
+   * -> any ClassSubjectTermStatus rows against it for this term. Public —
+   * ReportCardProcessor's per-component weighting (report-card.processor.ts)
+   * reuses this rather than duplicating the same lookup.
+   */
+  async disabledChildSubjectIds(
+    groupSubjectId: string,
+    classLevelCategory: ClassLevelCategory,
+    termId: string,
+  ): Promise<Set<string>> {
+    const classSubject = await this.prisma.classSubject.findUnique({
+      where: { classLevelCategory_subjectId: { classLevelCategory, subjectId: groupSubjectId } },
+    });
+    if (!classSubject) return new Set();
+
+    const statuses = await this.prisma.classSubjectTermStatus.findMany({
+      where: { classSubjectId: classSubject.id, termId, isActive: false },
+      select: { subjectId: true },
+    });
+    return new Set(statuses.map((s) => s.subjectId));
   }
 
   // Prisma's Decimal type isn't the plain `number` findGradeScaleMatch (in

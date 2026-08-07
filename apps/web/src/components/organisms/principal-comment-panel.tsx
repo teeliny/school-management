@@ -11,6 +11,7 @@ import { StudentCombobox } from "../molecules/student-combobox";
 interface ClassArmOption {
   id: string;
   name: string;
+  displayName: string;
 }
 interface TermOption {
   id: string;
@@ -115,7 +116,7 @@ export function PrincipalCommentPanel({
             <SelectContent>
               {classArmOptions.map((arm) => (
                 <SelectItem key={arm.id} value={arm.id}>
-                  {arm.name}
+                  {arm.displayName}
                 </SelectItem>
               ))}
             </SelectContent>

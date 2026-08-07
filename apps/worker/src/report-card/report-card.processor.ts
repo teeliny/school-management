@@ -199,10 +199,23 @@ export class ReportCardProcessor extends WorkerHost {
       select: { subjectId: true, assessmentComponentId: true, score: true },
     });
 
+    const groupSubjectIds = [...new Set(reportableResults.filter((r) => r.subject.isGroup).map((r) => r.subjectId))];
     const groupWeights = await this.prisma.subjectGroupWeight.findMany({
-      where: { groupSubjectId: { in: reportableResults.filter((r) => r.subject.isGroup).map((r) => r.subjectId) } },
+      where: { groupSubjectId: { in: groupSubjectIds } },
       select: { groupSubjectId: true, childSubjectId: true, weight: true },
     });
+    // A child disabled for this term is excluded from every component's
+    // weighted figure below, not just left to fall out via "no entry" —
+    // same ClassSubjectTermStatus-aware exclusion
+    // SubjectTermResultService.aggregateForClassCategoryTerm applies to the
+    // total, kept consistent here for the per-component breakdown.
+    const disabledChildrenByGroup = new Map<string, Set<string>>();
+    for (const groupId of groupSubjectIds) {
+      disabledChildrenByGroup.set(
+        groupId,
+        await this.subjectTermResults.disabledChildSubjectIds(groupId, classLevelCategory, termId),
+      );
+    }
 
     // Class-wide low/high context per subject — every other student's
     // SubjectTermResult sharing the same (subjectId, classArmId, termId),
@@ -247,11 +260,15 @@ export class ReportCardProcessor extends WorkerHost {
           // weight-averaged score of whichever children have a score for
           // that component, same weighting SubjectGroupWeight already
           // applies to the total. A child with nothing entered yet is
-          // excluded from the average rather than dragging it toward zero.
+          // excluded from the average rather than dragging it toward zero,
+          // and a child disabled for this term is excluded outright
+          // regardless of any (pre-disable) entries it might still carry.
           const childWeights = groupWeights.filter((w) => w.groupSubjectId === result.subjectId);
+          const disabledChildIds = disabledChildrenByGroup.get(result.subjectId);
           let weightedSum = 0;
           let weightTotal = 0;
           for (const { childSubjectId, weight } of childWeights) {
+            if (disabledChildIds?.has(childSubjectId)) continue;
             const entry = scoreEntries.find(
               (s) => s.subjectId === childSubjectId && s.assessmentComponentId === component.id,
             );

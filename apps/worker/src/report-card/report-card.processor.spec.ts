@@ -28,6 +28,7 @@ function buildSubjectTermResultsMock() {
   return {
     fetchGradeScaleRows: jest.fn().mockResolvedValue([{ minScore: 0, maxScore: 100, grade: "A1", remark: "Excellent" }]),
     computeAnnualSummary: jest.fn().mockResolvedValue(null),
+    disabledChildSubjectIds: jest.fn().mockResolvedValue(new Set()),
   };
 }
 
@@ -314,6 +315,39 @@ describe("ReportCardProcessor.process — FULL_TERM (breakdown, prior terms, ann
 
     const content = renderSpy.mock.calls[0]![0];
     expect(content.subjects[0]!.components).toEqual([{ name: "1st CA", score: 13, maxScore: 20 }]);
+    renderSpy.mockRestore();
+  });
+
+  it("excludes a child disabled for this term from the per-component weighted average, even if it still carries a pre-disable score entry", async () => {
+    const renderSpy = jest.spyOn(reportCardPdfUtil, "renderFullTermPdf");
+    prisma.assessmentComponent.findMany.mockResolvedValue([{ id: "comp-1", name: "1st CA", maxScore: 20 }]);
+    prisma.scoreEntry.findMany.mockResolvedValue([
+      // Both children have an entry, but subj-agric is disabled for this term —
+      // its stale/pre-disable entry must not pull the average toward it.
+      { subjectId: "subj-agric", assessmentComponentId: "comp-1", score: 2 },
+      { subjectId: "subj-home-econs", assessmentComponentId: "comp-1", score: 16 },
+    ]);
+    prisma.subjectGroupWeight.findMany.mockResolvedValue([
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-agric", weight: 1 },
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-home-econs", weight: 1 },
+    ]);
+    prisma.subjectTermResult.findMany.mockResolvedValue([
+      {
+        subjectId: "subj-pvs",
+        totalScore: 16,
+        grade: "F9",
+        remark: "Fail",
+        position: null,
+        subject: { name: "PVS", parentSubjectId: null, isGroup: true },
+      },
+    ]);
+    subjectTermResults.disabledChildSubjectIds.mockResolvedValue(new Set(["subj-agric"]));
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "FULL_TERM" } } as never);
+
+    expect(subjectTermResults.disabledChildSubjectIds).toHaveBeenCalledWith("subj-pvs", "JSS", "term-1");
+    const content = renderSpy.mock.calls[0]![0];
+    expect(content.subjects[0]!.components).toEqual([{ name: "1st CA", score: 16, maxScore: 20 }]);
     renderSpy.mockRestore();
   });
 

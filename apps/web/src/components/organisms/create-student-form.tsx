@@ -26,6 +26,7 @@ interface GuardianRow {
 interface ClassArm {
   id: string;
   name: string;
+  displayName: string;
 }
 
 function emptyGuardian(): GuardianRow {
@@ -141,7 +142,7 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
           <SelectContent>
             {classArms.map((classArm) => (
               <SelectItem key={classArm.id} value={classArm.id}>
-                {classArm.name}
+                {classArm.displayName}
               </SelectItem>
             ))}
           </SelectContent>

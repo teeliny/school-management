@@ -10,6 +10,8 @@ function buildPrismaMock() {
     gradeScale: { findMany: jest.fn() },
     subjectGroupWeight: { findMany: jest.fn() },
     subjectTermResult: { upsert: jest.fn(), update: jest.fn(), findMany: jest.fn() },
+    classSubject: { findUnique: jest.fn() },
+    classSubjectTermStatus: { findMany: jest.fn() },
   };
 }
 
@@ -35,6 +37,10 @@ describe("SubjectTermResultService.aggregateForClassCategoryTerm (PRD §3.6/FR4.
       Promise.resolve({ id: `${args.create.studentId}:${args.create.subjectId}` }),
     );
     prisma.subjectTermResult.update.mockResolvedValue({});
+    // No disabled children by default — individual tests override this to
+    // exercise the reweighting behavior.
+    prisma.classSubject.findUnique.mockResolvedValue(null);
+    prisma.classSubjectTermStatus.findMany.mockResolvedValue([]);
   });
 
   it("sums a plain (non-group) subject's scores across components and grades the total", async () => {
@@ -111,6 +117,42 @@ describe("SubjectTermResultService.aggregateForClassCategoryTerm (PRD §3.6/FR4.
       }),
     );
     expect(prisma.subjectTermResult.upsert).toHaveBeenCalledTimes(3);
+  });
+
+  it("excludes a child disabled for this term from the parent's weighted average, renormalizing across the rest", async () => {
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([
+      { studentId: "student-1", subjectId: "subj-bst", classArmId: "arm-1", subject: { isGroup: true } },
+    ]);
+    prisma.subjectGroupWeight.findMany.mockResolvedValue([
+      { groupSubjectId: "subj-bst", childSubjectId: "subj-basic-science", weight: 25 },
+      { groupSubjectId: "subj-bst", childSubjectId: "subj-basic-technology", weight: 25 },
+      { groupSubjectId: "subj-bst", childSubjectId: "subj-it", weight: 25 },
+      { groupSubjectId: "subj-bst", childSubjectId: "subj-phe", weight: 25 },
+    ]);
+    prisma.scoreEntry.findMany.mockResolvedValue([
+      { studentId: "student-1", subjectId: "subj-basic-science", score: 60 },
+      { studentId: "student-1", subjectId: "subj-basic-technology", score: 90 },
+      // subj-it: disabled for this term, no scores entered at all.
+      { studentId: "student-1", subjectId: "subj-phe", score: 90 },
+    ]);
+    prisma.classSubject.findUnique.mockResolvedValue({ id: "cs-bst" });
+    prisma.classSubjectTermStatus.findMany.mockResolvedValue([{ subjectId: "subj-it" }]);
+
+    await service.aggregateForClassCategoryTerm("term-1", "JSS");
+
+    expect(prisma.classSubjectTermStatus.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { classSubjectId: "cs-bst", termId: "term-1", isActive: false } }),
+    );
+    // The disabled child still gets its own transparency row (0, since it has no scores)...
+    expect(prisma.subjectTermResult.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ subjectId: "subj-it", totalScore: 0 }) }),
+    );
+    // ...but is excluded from the parent's weighted average, which is renormalized
+    // across the remaining three children: (60*25 + 90*25 + 90*25) / 75 = 80,
+    // not the ~60 it would be if subj-it's 0 counted toward a 100-weight total.
+    expect(prisma.subjectTermResult.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ subjectId: "subj-bst", totalScore: 80 }) }),
+    );
   });
 
   it("does nothing when there are no components for this term/class level", async () => {

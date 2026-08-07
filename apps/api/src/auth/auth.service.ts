@@ -10,6 +10,14 @@ import { UserService } from "../identity/users/user.service";
 
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const REFRESH_KEY_PREFIX = "refresh:";
+const REUSE_KEY_PREFIX = "refresh:used:";
+// The web app fires several parallel requests per page (useCurrentUser + a
+// list fetch); when the access token expires, more than one can 401 and
+// redeem the same refresh token within milliseconds of each other. Without
+// this, the loser of that race sees "already redeemed" and gets logged out
+// even though the winner succeeded. Grace window lets it replay the winner's
+// result instead of failing.
+const REUSE_GRACE_TTL_SECONDS = 10;
 
 export interface AuthTokens {
   accessToken: string;
@@ -68,11 +76,23 @@ export class AuthService {
     return assignments.map((a) => a.assignmentType);
   }
 
-  /** Rotates the refresh token: the presented one is invalidated whether or not this call succeeds past that point. */
+  /**
+   * Rotates the refresh token: the presented one is invalidated whether or
+   * not this call succeeds past that point. If it was already redeemed in
+   * the last REUSE_GRACE_TTL_SECONDS (a losing concurrent request racing the
+   * one that redeemed it first), replays that redemption's result instead of
+   * failing — see REUSE_GRACE_TTL_SECONDS comment above.
+   */
   async refresh(presentedRefreshToken: string): Promise<AuthTokens> {
-    const key = REFRESH_KEY_PREFIX + hashToken(presentedRefreshToken);
+    const hash = hashToken(presentedRefreshToken);
+    const key = REFRESH_KEY_PREFIX + hash;
     const userId = await this.redis.get(key);
-    if (!userId) throw new UnauthorizedException("Invalid or expired refresh token");
+
+    if (!userId) {
+      const reused = await this.redis.get(REUSE_KEY_PREFIX + hash);
+      if (reused) return JSON.parse(reused) as AuthTokens;
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
 
     await this.redis.del(key);
 
@@ -82,7 +102,9 @@ export class AuthService {
     }
 
     const roles = user.roles.filter((r) => r.isActive).map((r) => r.role);
-    return this.issueTokens(user.id, roles);
+    const tokens = await this.issueTokens(user.id, roles);
+    await this.redis.set(REUSE_KEY_PREFIX + hash, JSON.stringify(tokens), "EX", REUSE_GRACE_TTL_SECONDS);
+    return tokens;
   }
 
   async logout(presentedRefreshToken: string): Promise<void> {

@@ -14,6 +14,7 @@ import { PrincipalCommentPanel } from "../../components/organisms/principal-comm
 interface ClassArmOption {
   id: string;
   name: string;
+  displayName: string;
   classLevel: { category: string };
 }
 interface TermOption {

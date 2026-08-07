@@ -5,6 +5,20 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CreateClassArmDto, UpdateClassArmDto } from "./dto/class-arm.dto";
 
+const CLASS_ARM_DETAIL_INCLUDE = { classLevel: { select: { name: true, category: true } } } as const;
+
+// "{ClassLevel.name} {ClassArm.name}" (e.g. "SSS 2 Topaz") — the one place
+// this format lives; every list/detail/dropdown consumer renders
+// `displayName` instead of re-deriving it client-side. `name` itself stays
+// just the raw arm name (e.g. "Topaz"), which is what an edit form should
+// pre-fill from — the class + session are already picked separately when
+// creating an arm, so its own name never needs to repeat them.
+function withDisplayName<T extends { name: string; classLevel: { name: string } }>(
+  arm: T,
+): T & { displayName: string } {
+  return { ...arm, displayName: `${arm.classLevel.name} ${arm.name}` };
+}
+
 @Injectable()
 export class ClassArmService {
   constructor(private readonly prisma: PrismaService) {}
@@ -13,16 +27,18 @@ export class ClassArmService {
     return this.prisma.classArm.create({ data: dto });
   }
 
-  findAll(classLevelId?: string, academicSessionId?: string) {
-    return this.prisma.classArm.findMany({
+  async findAll(classLevelId?: string, academicSessionId?: string) {
+    const arms = await this.prisma.classArm.findMany({
       where: { classLevelId: classLevelId || undefined, academicSessionId: academicSessionId || undefined },
-      include: { classLevel: { select: { category: true } } },
+      include: CLASS_ARM_DETAIL_INCLUDE,
       orderBy: { name: "asc" },
     });
+    return arms.map(withDisplayName);
   }
 
-  findOne(id: string) {
-    return this.prisma.classArm.findUniqueOrThrow({ where: { id } });
+  async findOne(id: string) {
+    const arm = await this.prisma.classArm.findUniqueOrThrow({ where: { id }, include: CLASS_ARM_DETAIL_INCLUDE });
+    return withDisplayName(arm);
   }
 
   update(id: string, dto: UpdateClassArmDto) {

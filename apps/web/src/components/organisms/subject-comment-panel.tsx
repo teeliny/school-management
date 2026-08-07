@@ -13,6 +13,7 @@ import { PaginatedStudentList } from "./paginated-student-list";
 interface ClassArmOption {
   id: string;
   name: string;
+  displayName: string;
   classLevel: { category: string };
 }
 interface SubjectOption {
@@ -181,7 +182,7 @@ export function SubjectCommentPanel({
             <SelectContent>
               {classArmOptions.map((arm) => (
                 <SelectItem key={arm.id} value={arm.id}>
-                  {arm.name}
+                  {arm.displayName}
                 </SelectItem>
               ))}
             </SelectContent>
