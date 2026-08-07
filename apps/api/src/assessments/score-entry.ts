@@ -101,6 +101,18 @@ export class ScoreEntryService {
       orderBy: { enteredAt: "desc" },
     });
   }
+
+  // Powers the "X of Y students scored" indicator on the gradebook — total
+  // roster size for the class arm vs. how many of them have a ScoreEntry for
+  // this exact subject+component, independent of any search filter applied
+  // to the visible (paginated) student list.
+  async summary(filters: { classArmId: string; subjectId: string; assessmentComponentId: string }) {
+    const [totalStudents, enteredCount] = await Promise.all([
+      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.scoreEntry.count({ where: filters }),
+    ]);
+    return { totalStudents, enteredCount };
+  }
 }
 
 @Controller("score-entries")
@@ -126,5 +138,14 @@ export class ScoreEntryController {
     @Query("studentId") studentId?: string,
   ) {
     return this.service.findAll({ subjectId, assessmentComponentId, classArmId, studentId });
+  }
+
+  @Get("summary")
+  summary(
+    @Query("classArmId") classArmId: string,
+    @Query("subjectId") subjectId: string,
+    @Query("assessmentComponentId") assessmentComponentId: string,
+  ) {
+    return this.service.summary({ classArmId, subjectId, assessmentComponentId });
   }
 }

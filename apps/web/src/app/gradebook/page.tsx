@@ -9,6 +9,7 @@ import { Card, CardHeader } from "../../components/molecules/card";
 import { Label } from "../../components/atoms/label";
 import { Badge, type BadgeVariant } from "../../components/atoms/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/molecules/select";
+import { SearchableSelect } from "../../components/molecules/searchable-select";
 import { GradebookTable } from "../../components/organisms/gradebook-table";
 
 interface ClassArmOption {
@@ -62,7 +63,6 @@ export default function GradebookPage() {
 
   useEffect(() => {
     apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
-    apiFetch<SubjectOption[]>("/subjects", { auth: true }).then(setSubjects).catch(() => setSubjects([]));
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
     apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true })
       .then(setMyAssignments)
@@ -81,6 +81,21 @@ export default function GradebookPage() {
   const classArmOptions = isAdmin
     ? classArms
     : classArms.filter((arm) => mySubjectTeacherAssignments.some((a) => a.classArmId === arm.id));
+
+  // Subjects are scoped to the selected class arm's class group (Primary,
+  // JSS, …) via the ClassSubject join table — not the whole catalogue —
+  // same pattern as the Skills & Comments subject panel.
+  useEffect(() => {
+    setSubjectId("");
+    const classLevelCategory = classArms.find((a) => a.id === classArmId)?.classLevel.category;
+    if (!classLevelCategory) {
+      setSubjects([]);
+      return;
+    }
+    apiFetch<SubjectOption[]>(`/subjects?classLevelCategory=${classLevelCategory}`, { auth: true })
+      .then(setSubjects)
+      .catch(() => setSubjects([]));
+  }, [classArmId, classArms]);
 
   // A "group" subject (e.g. Basic Science and Technology) is never itself
   // scored — its child subjects (Basic Science, Basic Technology, …) are,
@@ -152,7 +167,6 @@ export default function GradebookPage() {
               value={classArmId}
               onValueChange={(v) => {
                 setClassArmId(v);
-                setSubjectId("");
                 setComponentId("");
               }}
             >
@@ -170,18 +184,14 @@ export default function GradebookPage() {
           </div>
           <div>
             <Label htmlFor="gb-subject">Subject</Label>
-            <Select value={subjectId} onValueChange={setSubjectId}>
-              <SelectTrigger id="gb-subject" className="mt-1">
-                <SelectValue placeholder="Select subject" />
-              </SelectTrigger>
-              <SelectContent>
-                {subjectOptions.map((subject) => (
-                  <SelectItem key={subject.id} value={subject.id}>
-                    {subject.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              id="gb-subject"
+              value={subjectId}
+              onValueChange={setSubjectId}
+              options={subjectOptions.map((subject) => ({ value: subject.id, label: subject.name }))}
+              placeholder={classArmId ? "Select subject" : "Select a class arm first"}
+              className="mt-1"
+            />
           </div>
           <div>
             <Label htmlFor="gb-term">Term</Label>
@@ -230,7 +240,9 @@ export default function GradebookPage() {
       <Card>
         <CardHeader
           title="Score entry"
-          sub={selectedComponent ? <Badge variant={STATUS_VARIANT[selectedComponent.status]}>{selectedComponent.status}</Badge> : undefined}
+          action={
+            selectedComponent ? <Badge variant={STATUS_VARIANT[selectedComponent.status]}>{selectedComponent.status}</Badge> : undefined
+          }
         />
         {classArmId && subjectId && componentId && selectedComponent ? (
           <GradebookTable

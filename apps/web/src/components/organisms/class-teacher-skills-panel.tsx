@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
+import { usePaginatedStudents } from "../../lib/use-paginated-students";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Textarea } from "../atoms/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { PaginatedStudentList } from "./paginated-student-list";
 
 interface ClassArmOption {
   id: string;
@@ -17,12 +19,6 @@ interface TermOption {
   id: string;
   name: string;
   academicSessionId: string;
-}
-interface StudentItem {
-  id: string;
-  admissionNumber: string;
-  currentClassId: string | null;
-  user: { firstName: string; lastName: string };
 }
 type SkillCategory = "PSYCHOMOTOR" | "AFFECTIVE_COGNITIVE";
 interface SkillItem {
@@ -43,6 +39,10 @@ interface CommentRecord {
   comment: string;
 }
 type ReportWindowStatus = "DRAFT" | "OPEN" | "CLOSED";
+interface ProgressSummary {
+  totalStudents: number;
+  completedCount: number;
+}
 
 const RATINGS: RatingValue[] = ["EXCELLENT", "VERY_GOOD", "GOOD", "FAIR", "POOR"];
 const CATEGORY_LABEL: Record<SkillCategory, string> = {
@@ -67,24 +67,36 @@ export function ClassTeacherSkillsPanel({
   const [classArmId, setClassArmId] = useState("");
   const [termId, setTermId] = useState("");
   const [windowStatus, setWindowStatus] = useState<ReportWindowStatus | null>(null);
-  const [students, setStudents] = useState<StudentItem[] | null>(null);
   const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
+  const [ratings, setRatings] = useState<RatingRecord[]>([]);
+  const [comments, setComments] = useState<CommentRecord[]>([]);
   const [ratingDrafts, setRatingDrafts] = useState<Record<string, Record<string, RatingValue | "">>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<Record<string, "saving" | "saved" | "error">>({});
   const [error, setError] = useState<string | null>(null);
+  const [commentProgress, setCommentProgress] = useState<ProgressSummary | null>(null);
+  const [ratingProgress, setRatingProgress] = useState<ProgressSummary | null>(null);
+
+  const {
+    students,
+    total,
+    loading: studentsLoading,
+    error: studentsError,
+    hasMore,
+    search,
+    setSearch,
+    loadMore,
+  } = usePaginatedStudents({ classArmId });
 
   const selectedArm = classArmOptions.find((a) => a.id === classArmId) ?? null;
   const selectedTerm = terms.find((t) => t.id === termId) ?? null;
 
+  // Rating/comment context for the whole term+class group — independent of
+  // which page of the (searched, paginated) roster is currently visible.
   const load = useCallback(() => {
-    if (!classArmId || !termId || !selectedArm || !selectedTerm) {
-      setStudents(null);
-      return;
-    }
+    if (!classArmId || !termId || !selectedArm || !selectedTerm) return;
     setError(null);
     Promise.all([
-      apiFetch<StudentItem[]>("/students", { auth: true }),
       apiFetch<{ status: ReportWindowStatus }[]>(
         `/report-windows?termId=${termId}&classLevelCategory=${selectedArm.classLevel.category}`,
         { auth: true },
@@ -94,39 +106,48 @@ export function ClassTeacherSkillsPanel({
       }),
       apiFetch<RatingRecord[]>(`/skill-ratings?termId=${termId}`, { auth: true }),
       apiFetch<CommentRecord[]>(`/report-comments?termId=${termId}`, { auth: true }),
+      apiFetch<ProgressSummary>(
+        `/report-comments/progress?classArmId=${classArmId}&termId=${termId}&commentType=CLASS_TEACHER`,
+        { auth: true },
+      ),
+      apiFetch<ProgressSummary>(
+        `/skill-ratings/progress?classArmId=${classArmId}&termId=${termId}&academicSessionId=${selectedTerm.academicSessionId}`,
+        { auth: true },
+      ),
     ])
-      .then(([allStudents, windows, items, ratings, comments]) => {
-        const classStudents = allStudents.filter((s) => s.currentClassId === classArmId);
-        setStudents(classStudents);
+      .then(([windows, items, nextRatings, nextComments, commentSummary, ratingSummary]) => {
         setWindowStatus(windows[0]?.status ?? null);
         setSkillItems(items);
-
-        const nextRatingDrafts: Record<string, Record<string, RatingValue | "">> = {};
-        for (const student of classStudents) {
-          const studentDrafts: Record<string, RatingValue | ""> = {};
-          for (const item of items) {
-            const match = ratings.find(
-              (r) => r.studentId === student.id && r.skillAssessmentItemId === item.id,
-            );
-            studentDrafts[item.id] = match?.rating ?? "";
-          }
-          nextRatingDrafts[student.id] = studentDrafts;
-        }
-        setRatingDrafts(nextRatingDrafts);
-
-        const nextCommentDrafts: Record<string, string> = {};
-        for (const student of classStudents) {
-          const match = comments.find((c) => c.studentId === student.id && c.commentType === "CLASS_TEACHER");
-          nextCommentDrafts[student.id] = match?.comment ?? "";
-        }
-        setCommentDrafts(nextCommentDrafts);
+        setRatings(nextRatings);
+        setComments(nextComments);
+        setCommentProgress(commentSummary);
+        setRatingProgress(ratingSummary);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load skills & comments"));
   }, [classArmId, termId, selectedArm, selectedTerm]);
 
   useEffect(() => {
+    setRatingDrafts({});
+    setCommentDrafts({});
+    setSaveState({});
     load();
   }, [load]);
+
+  // Seeds drafts for any newly-appended (scrolled-in or re-searched) student
+  // without touching drafts already held for students already on screen —
+  // an in-progress edit must survive "load more" firing on scroll.
+  useEffect(() => {
+    setRatingDrafts((prev) => {
+      const additions = students.filter((s) => !(s.id in prev));
+      if (additions.length === 0) return prev;
+      return { ...prev, ...buildRatingDrafts(additions, skillItems, ratings) };
+    });
+    setCommentDrafts((prev) => {
+      const additions = students.filter((s) => !(s.id in prev));
+      if (additions.length === 0) return prev;
+      return { ...prev, ...buildCommentDrafts(additions, comments) };
+    });
+  }, [students, skillItems, ratings, comments]);
 
   const itemsByCategory = useMemo(() => {
     const grouped: Record<SkillCategory, SkillItem[]> = { PSYCHOMOTOR: [], AFFECTIVE_COGNITIVE: [] };
@@ -138,6 +159,22 @@ export function ClassTeacherSkillsPanel({
   }, [skillItems]);
 
   const readOnly = !isAdmin && windowStatus !== "OPEN";
+
+  function refreshProgress() {
+    if (!classArmId || !termId || !selectedTerm) return;
+    apiFetch<ProgressSummary>(
+      `/report-comments/progress?classArmId=${classArmId}&termId=${termId}&commentType=CLASS_TEACHER`,
+      { auth: true },
+    )
+      .then(setCommentProgress)
+      .catch(() => undefined);
+    apiFetch<ProgressSummary>(
+      `/skill-ratings/progress?classArmId=${classArmId}&termId=${termId}&academicSessionId=${selectedTerm.academicSessionId}`,
+      { auth: true },
+    )
+      .then(setRatingProgress)
+      .catch(() => undefined);
+  }
 
   async function saveStudent(studentId: string) {
     setSaveState((s) => ({ ...s, [studentId]: "saving" }));
@@ -163,6 +200,7 @@ export function ClassTeacherSkillsPanel({
         : [];
       await Promise.all([...ratingCalls, ...commentCall]);
       setSaveState((s) => ({ ...s, [studentId]: "saved" }));
+      refreshProgress();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save");
       setSaveState((s) => ({ ...s, [studentId]: "error" }));
@@ -207,22 +245,41 @@ export function ClassTeacherSkillsPanel({
       </div>
 
       {classArmId && termId && (
-        <div className="flex items-center gap-2 text-[12.5px] text-muted">
-          <span>Report window:</span>
-          {windowStatus ? (
-            <Badge variant={WINDOW_VARIANT[windowStatus]}>{windowStatus}</Badge>
-          ) : (
-            <Badge variant="muted">NOT CONFIGURED</Badge>
+        <div className="flex flex-wrap items-center gap-3 text-[12.5px] text-muted">
+          <span className="flex items-center gap-2">
+            Report window:
+            {windowStatus ? (
+              <Badge variant={WINDOW_VARIANT[windowStatus]}>{windowStatus}</Badge>
+            ) : (
+              <Badge variant="muted">NOT CONFIGURED</Badge>
+            )}
+          </span>
+          {commentProgress && (
+            <span>
+              Class-teacher comments: {commentProgress.completedCount}/{commentProgress.totalStudents}
+            </span>
+          )}
+          {ratingProgress && (
+            <span>
+              Skill ratings: {ratingProgress.completedCount}/{ratingProgress.totalStudents}
+            </span>
           )}
           {readOnly && <span className="text-warning">— entry closed until the window is OPEN</span>}
         </div>
       )}
 
-      {!students && classArmId && termId && <p className="text-sm text-muted">Loading…</p>}
-      {students && students.length === 0 && <p className="text-sm text-muted">No students in this class arm.</p>}
-
-      {students && students.length > 0 && (
-        <div className="space-y-3">
+      {classArmId && termId ? (
+        <PaginatedStudentList
+          studentCount={students.length}
+          total={total}
+          loading={studentsLoading}
+          error={studentsError}
+          hasMore={hasMore}
+          search={search}
+          onSearchChange={setSearch}
+          onLoadMore={loadMore}
+          className="max-h-none space-y-3"
+        >
           {students.map((student) => (
             <div key={student.id} className="rounded-lg border border-border p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -297,10 +354,31 @@ export function ClassTeacherSkillsPanel({
               </div>
             </div>
           ))}
-        </div>
+        </PaginatedStudentList>
+      ) : (
+        <p className="text-sm text-muted">Select a class arm and term to begin.</p>
       )}
-
-      {(!classArmId || !termId) && <p className="text-sm text-muted">Select a class arm and term to begin.</p>}
     </div>
   );
+}
+
+function buildRatingDrafts(students: { id: string }[], items: SkillItem[], ratings: RatingRecord[]) {
+  const drafts: Record<string, Record<string, RatingValue | "">> = {};
+  for (const student of students) {
+    const studentDrafts: Record<string, RatingValue | ""> = {};
+    for (const item of items) {
+      const match = ratings.find((r) => r.studentId === student.id && r.skillAssessmentItemId === item.id);
+      studentDrafts[item.id] = match?.rating ?? "";
+    }
+    drafts[student.id] = studentDrafts;
+  }
+  return drafts;
+}
+function buildCommentDrafts(students: { id: string }[], comments: CommentRecord[]) {
+  const drafts: Record<string, string> = {};
+  for (const student of students) {
+    const match = comments.find((c) => c.studentId === student.id && c.commentType === "CLASS_TEACHER");
+    drafts[student.id] = match?.comment ?? "";
+  }
+  return drafts;
 }

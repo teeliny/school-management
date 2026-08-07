@@ -11,6 +11,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import type { ClassLevelCategory } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -100,7 +101,7 @@ export class SubjectService {
     });
   }
 
-  findAll(filters: { isGroup?: boolean; search?: string }) {
+  findAll(filters: { isGroup?: boolean; search?: string; classLevelCategory?: ClassLevelCategory }) {
     return this.prisma.subject.findMany({
       where: {
         isGroup: filters.isGroup,
@@ -115,6 +116,9 @@ export class SubjectService {
                 { code: { contains: filters.search, mode: "insensitive" as const } },
               ],
             }
+          : {}),
+        ...(filters.classLevelCategory
+          ? { classSubjects: { some: { classLevelCategory: filters.classLevelCategory } } }
           : {}),
       },
       include: {
@@ -185,10 +189,15 @@ export class SubjectController {
   }
 
   @Get()
-  findAll(@Query("isGroup") isGroup?: string, @Query("search") search?: string) {
+  findAll(
+    @Query("isGroup") isGroup?: string,
+    @Query("search") search?: string,
+    @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory,
+  ) {
     return this.service.findAll({
       isGroup: isGroup === undefined ? undefined : isGroup === "true",
       search,
+      classLevelCategory,
     });
   }
 

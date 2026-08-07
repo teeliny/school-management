@@ -2,18 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
+import { usePaginatedStudents } from "../../lib/use-paginated-students";
 import { Input } from "../atoms/input";
-
-interface StudentListItem {
-  id: string;
-  admissionNumber: string;
-  currentClassId: string | null;
-  user: { firstName: string; lastName: string };
-}
+import { PaginatedStudentList } from "./paginated-student-list";
 
 interface ScoreEntryItem {
   studentId: string;
   score: number;
+}
+
+interface ScoreSummary {
+  totalStudents: number;
+  enteredCount: number;
 }
 
 /**
@@ -37,10 +37,13 @@ export function GradebookTable({
   maxScore: number;
   readOnly: boolean;
 }) {
-  const [students, setStudents] = useState<StudentListItem[] | null>(null);
+  const { students, total, loading, error: listError, hasMore, search, setSearch, loadMore } = usePaginatedStudents({
+    classArmId,
+  });
   const [scores, setScores] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState<Record<string, "saving" | "saved" | "error" | "invalid">>({});
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<ScoreSummary | null>(null);
   const draftScores = useRef<Record<string, string>>({});
 
   // The four keys a native number input otherwise lets through that would
@@ -49,20 +52,13 @@ export function GradebookTable({
   // notation "1e...").
   const BLOCKED_KEYS = new Set(["-", "+", "e", "E"]);
 
-  const load = useCallback(() => {
-    if (!classArmId || !subjectId || !assessmentComponentId) {
-      setStudents(null);
-      return;
-    }
-    Promise.all([
-      apiFetch<StudentListItem[]>("/students", { auth: true }),
-      apiFetch<ScoreEntryItem[]>(
-        `/score-entries?subjectId=${subjectId}&assessmentComponentId=${assessmentComponentId}&classArmId=${classArmId}`,
-        { auth: true },
-      ),
-    ])
-      .then(([allStudents, entries]) => {
-        setStudents(allStudents.filter((s) => s.currentClassId === classArmId));
+  const loadScores = useCallback(() => {
+    if (!classArmId || !subjectId || !assessmentComponentId) return;
+    apiFetch<ScoreEntryItem[]>(
+      `/score-entries?subjectId=${subjectId}&assessmentComponentId=${assessmentComponentId}&classArmId=${classArmId}`,
+      { auth: true },
+    )
+      .then((entries) => {
         const byStudent: Record<string, number> = {};
         for (const entry of entries) byStudent[entry.studentId] = Number(entry.score);
         setScores(byStudent);
@@ -72,9 +68,23 @@ export function GradebookTable({
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load gradebook"));
   }, [classArmId, subjectId, assessmentComponentId]);
 
+  const loadSummary = useCallback(() => {
+    if (!classArmId || !subjectId || !assessmentComponentId) {
+      setSummary(null);
+      return;
+    }
+    apiFetch<ScoreSummary>(
+      `/score-entries/summary?classArmId=${classArmId}&subjectId=${subjectId}&assessmentComponentId=${assessmentComponentId}`,
+      { auth: true },
+    )
+      .then(setSummary)
+      .catch(() => setSummary(null));
+  }, [classArmId, subjectId, assessmentComponentId]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    loadScores();
+    loadSummary();
+  }, [loadScores, loadSummary]);
 
   async function saveScore(studentId: string) {
     const raw = draftScores.current[studentId];
@@ -92,7 +102,13 @@ export function GradebookTable({
         auth: true,
         body: { studentId, subjectId, assessmentComponentId, classArmId, score },
       });
-      setScores((s) => ({ ...s, [studentId]: score }));
+      setScores((s) => {
+        const wasAlreadyEntered = studentId in s;
+        if (!wasAlreadyEntered) {
+          setSummary((prev) => (prev ? { ...prev, enteredCount: prev.enteredCount + 1 } : prev));
+        }
+        return { ...s, [studentId]: score };
+      });
       setSaving((s) => ({ ...s, [studentId]: "saved" }));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save score");
@@ -104,59 +120,73 @@ export function GradebookTable({
     return <p className="text-sm text-muted">Select a class arm, subject, and assessment component to begin.</p>;
   }
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!students) return <p className="text-sm text-muted">Loading…</p>;
-  if (students.length === 0) return <p className="text-sm text-muted">No students in this class arm.</p>;
 
   return (
-    <div className="max-h-[420px] overflow-auto">
-      <table className="w-full text-left text-[12.5px]">
-        <thead>
-          <tr className="border-b border-border text-muted">
-            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Student</th>
-            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Score / {maxScore}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {students.map((student) => (
-            <tr
-              key={`${subjectId}-${assessmentComponentId}-${student.id}`}
-              className="border-b border-border/60 last:border-none"
-            >
-              <td className="py-2.5 pr-4 font-medium">
-                {student.user.firstName} {student.user.lastName}{" "}
-                <span className="font-mono text-muted">({student.admissionNumber})</span>
-              </td>
-              <td className="w-32 py-2.5">
-                <Input
-                  type="number"
-                  min={0}
-                  max={maxScore}
-                  step="any"
-                  defaultValue={scores[student.id] ?? ""}
-                  disabled={readOnly}
-                  className="w-24 text-center font-mono"
-                  onKeyDown={(e) => {
-                    if (BLOCKED_KEYS.has(e.key)) e.preventDefault();
-                  }}
-                  onChange={(e) => {
-                    draftScores.current[student.id] = e.target.value;
-                    if (student.id in saving) {
-                      setSaving((s) => Object.fromEntries(Object.entries(s).filter(([id]) => id !== student.id)));
-                    }
-                  }}
-                  onBlur={() => saveScore(student.id)}
-                />
-                {saving[student.id] === "saving" && <span className="ml-2 text-[11px] text-muted">Saving…</span>}
-                {saving[student.id] === "saved" && <span className="ml-2 text-[11px] text-success">Saved</span>}
-                {saving[student.id] === "error" && <span className="ml-2 text-[11px] text-danger">Failed</span>}
-                {saving[student.id] === "invalid" && (
-                  <span className="ml-2 text-[11px] text-danger">Must be 0–{maxScore}</span>
-                )}
-              </td>
+    <div className="space-y-2.5">
+      {summary && (
+        <p className="text-[12px] text-muted">
+          {summary.enteredCount} of {summary.totalStudents} students scored
+        </p>
+      )}
+      <PaginatedStudentList
+        studentCount={students.length}
+        total={total}
+        loading={loading}
+        error={listError}
+        hasMore={hasMore}
+        search={search}
+        onSearchChange={setSearch}
+        onLoadMore={loadMore}
+      >
+        <table className="w-full text-left text-[12.5px]">
+          <thead>
+            <tr className="border-b border-border text-muted">
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Student</th>
+              <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Score / {maxScore}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {students.map((student) => (
+              <tr
+                key={`${subjectId}-${assessmentComponentId}-${student.id}`}
+                className="border-b border-border/60 last:border-none"
+              >
+                <td className="py-2.5 pr-4 font-medium">
+                  {student.user.firstName} {student.user.lastName}{" "}
+                  <span className="font-mono text-muted">({student.admissionNumber})</span>
+                </td>
+                <td className="w-32 py-2.5">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={maxScore}
+                    step="any"
+                    defaultValue={scores[student.id] ?? ""}
+                    disabled={readOnly}
+                    className="w-24 text-center font-mono"
+                    onKeyDown={(e) => {
+                      if (BLOCKED_KEYS.has(e.key)) e.preventDefault();
+                    }}
+                    onChange={(e) => {
+                      draftScores.current[student.id] = e.target.value;
+                      if (student.id in saving) {
+                        setSaving((s) => Object.fromEntries(Object.entries(s).filter(([id]) => id !== student.id)));
+                      }
+                    }}
+                    onBlur={() => saveScore(student.id)}
+                  />
+                  {saving[student.id] === "saving" && <span className="ml-2 text-[11px] text-muted">Saving…</span>}
+                  {saving[student.id] === "saved" && <span className="ml-2 text-[11px] text-success">Saved</span>}
+                  {saving[student.id] === "error" && <span className="ml-2 text-[11px] text-danger">Failed</span>}
+                  {saving[student.id] === "invalid" && (
+                    <span className="ml-2 text-[11px] text-danger">Must be 0–{maxScore}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </PaginatedStudentList>
     </div>
   );
 }

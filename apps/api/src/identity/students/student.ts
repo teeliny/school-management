@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { AssignmentType, Prisma, Role } from "@prisma/client";
@@ -198,49 +199,83 @@ export class StudentService {
    * `where` composition, not a CASL instance check, per PRD §5's own note
    * that scoped rules need row-level checks against StaffAssignment/
    * StudentGuardian, evaluated per-request.
+   *
+   * `filters.classArmId`/`search` narrow within that row-level scope;
+   * `skip`/`take` paginate. `take` being present is what switches the return
+   * shape to `{ data, total }` — omitting it (every caller before this)
+   * keeps the plain-array response so no existing consumer breaks.
    */
-  async findAllForUser(user: RequestUser) {
-    if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) {
+  async findAllForUser(
+    user: RequestUser,
+    filters: { classArmId?: string; search?: string; skip?: number; take?: number } = {},
+  ) {
+    const scopeWhere = await this.scopeWhereForUser(user);
+    if (scopeWhere === null) return filters.take !== undefined ? { data: [], total: 0 } : [];
+
+    const mergedWhere: Prisma.StudentProfileWhereInput = {
+      ...scopeWhere,
+      ...(filters.classArmId ? { currentClassId: filters.classArmId } : {}),
+      ...(filters.search
+        ? {
+            OR: [
+              { admissionNumber: { contains: filters.search, mode: "insensitive" as const } },
+              { user: { firstName: { contains: filters.search, mode: "insensitive" as const } } },
+              { user: { lastName: { contains: filters.search, mode: "insensitive" as const } } },
+            ],
+          }
+        : {}),
+    };
+    // An empty `where` is passed as `undefined` rather than `{}` so an
+    // unscoped (Admin/school-wide) list is issued exactly as it was before
+    // filters existed — same query, same call shape.
+    const where = Object.keys(mergedWhere).length > 0 ? mergedWhere : undefined;
+
+    if (filters.take === undefined) {
       return this.prisma.studentProfile.findMany({
+        where,
         include: STUDENT_LIST_INCLUDE,
         orderBy: { admissionNumber: "asc" },
       });
     }
 
-    if (user.roles.includes("STAFF")) {
-      if (await this.hasActiveSchoolWideAssignment(user.id)) {
-        return this.prisma.studentProfile.findMany({
-          include: STUDENT_LIST_INCLUDE,
-          orderBy: { admissionNumber: "asc" },
-        });
-      }
-      const classArmIds = await this.activeAssignedClassArmIds(user.id);
-      if (classArmIds.length === 0) return [];
-      return this.prisma.studentProfile.findMany({
-        where: { currentClassId: { in: classArmIds } },
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.studentProfile.findMany({
+        where,
         include: STUDENT_LIST_INCLUDE,
         orderBy: { admissionNumber: "asc" },
-      });
+        skip: filters.skip,
+        take: filters.take,
+      }),
+      this.prisma.studentProfile.count({ where }),
+    ]);
+    return { data, total };
+  }
+
+  // Resolves just the role-level `where` scope (no class/search filters, no
+  // pagination) — `null` means "no rows visible to this user" so the caller
+  // can short-circuit rather than issuing a `where: undefined` query that
+  // would return everyone.
+  private async scopeWhereForUser(user: RequestUser): Promise<Prisma.StudentProfileWhereInput | null> {
+    if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) return {};
+
+    if (user.roles.includes("STAFF")) {
+      if (await this.hasActiveSchoolWideAssignment(user.id)) return {};
+      const classArmIds = await this.activeAssignedClassArmIds(user.id);
+      if (classArmIds.length === 0) return null;
+      return { currentClassId: { in: classArmIds } };
     }
 
     if (user.roles.includes("PARENT")) {
       const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
-      if (!parentProfile) return [];
-      return this.prisma.studentProfile.findMany({
-        where: { guardians: { some: { parentId: parentProfile.id } } },
-        include: STUDENT_LIST_INCLUDE,
-        orderBy: { admissionNumber: "asc" },
-      });
+      if (!parentProfile) return null;
+      return { guardians: { some: { parentId: parentProfile.id } } };
     }
 
     if (user.roles.includes("STUDENT")) {
-      return this.prisma.studentProfile.findMany({
-        where: { userId: user.id },
-        include: STUDENT_LIST_INCLUDE,
-      });
+      return { userId: user.id };
     }
 
-    return [];
+    return null;
   }
 
   async findOneForUser(id: string, user: RequestUser) {
@@ -313,8 +348,19 @@ export class StudentController {
   }
 
   @Get()
-  findAll(@CurrentUser() user: RequestUser) {
-    return this.service.findAllForUser(user);
+  findAll(
+    @CurrentUser() user: RequestUser,
+    @Query("classArmId") classArmId?: string,
+    @Query("search") search?: string,
+    @Query("skip") skip?: string,
+    @Query("take") take?: string,
+  ) {
+    return this.service.findAllForUser(user, {
+      classArmId,
+      search,
+      skip: skip === undefined ? undefined : Number(skip),
+      take: take === undefined ? undefined : Number(take),
+    });
   }
 
   @Get(":id")

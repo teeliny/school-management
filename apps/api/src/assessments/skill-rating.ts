@@ -71,6 +71,31 @@ export class SkillRatingService {
   findAll(filters: { studentId?: string; termId?: string }) {
     return this.prisma.skillRating.findMany({ where: filters });
   }
+
+  // Powers the "X of Y fully rated" indicator for a class arm — a student
+  // only counts as "completed" once every active SkillAssessmentItem for the
+  // session has a rating for this term, not just one.
+  async progress(filters: { classArmId: string; termId: string; academicSessionId: string }) {
+    const [totalStudents, activeItemCount, ratingCounts] = await Promise.all([
+      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.skillAssessmentItem.count({
+        where: { academicSessionId: filters.academicSessionId, isActive: true },
+      }),
+      this.prisma.skillRating.groupBy({
+        by: ["studentId"],
+        where: {
+          termId: filters.termId,
+          student: { currentClassId: filters.classArmId },
+          skillAssessmentItem: { academicSessionId: filters.academicSessionId, isActive: true },
+        },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const completedCount =
+      activeItemCount > 0 ? ratingCounts.filter((r) => r._count._all >= activeItemCount).length : 0;
+    return { totalStudents, completedCount };
+  }
 }
 
 @Controller("skill-ratings")
@@ -91,5 +116,14 @@ export class SkillRatingController {
   @Get()
   findAll(@Query("studentId") studentId?: string, @Query("termId") termId?: string) {
     return this.service.findAll({ studentId, termId });
+  }
+
+  @Get("progress")
+  progress(
+    @Query("classArmId") classArmId: string,
+    @Query("termId") termId: string,
+    @Query("academicSessionId") academicSessionId: string,
+  ) {
+    return this.service.progress({ classArmId, termId, academicSessionId });
   }
 }

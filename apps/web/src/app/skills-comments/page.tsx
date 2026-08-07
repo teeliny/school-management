@@ -16,10 +16,6 @@ interface ClassArmOption {
   name: string;
   classLevel: { category: string };
 }
-interface SubjectOption {
-  id: string;
-  name: string;
-}
 interface TermOption {
   id: string;
   name: string;
@@ -35,13 +31,11 @@ interface StaffAssignmentItem {
 export default function SkillsCommentsPage() {
   const { user, loading, logout } = useCurrentUser();
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
-  const [subjects, setSubjects] = useState<SubjectOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
   const [myAssignments, setMyAssignments] = useState<StaffAssignmentItem[]>([]);
 
   useEffect(() => {
     apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
-    apiFetch<SubjectOption[]>("/subjects", { auth: true }).then(setSubjects).catch(() => setSubjects([]));
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
     apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true })
       .then(setMyAssignments)
@@ -71,9 +65,6 @@ export default function SkillsCommentsPage() {
   const subjectClassArmOptions = isAdmin
     ? classArms
     : classArms.filter((arm) => mySubjectTeacherAssignments.some((a) => a.classArmId === arm.id));
-  const subjectSubjectOptions = isAdmin
-    ? subjects
-    : subjects.filter((subject) => mySubjectTeacherAssignments.some((a) => a.subjectId === subject.id));
 
   if (loading) {
     return (
@@ -119,15 +110,16 @@ export default function SkillsCommentsPage() {
         >
           <SubjectCommentPanel
             classArmOptions={subjectClassArmOptions}
-            subjectOptions={subjectSubjectOptions}
             terms={terms}
+            isAdmin={isAdmin}
+            mySubjectTeacherAssignments={mySubjectTeacherAssignments}
           />
         </CollapsibleCard>
       )}
 
       {showPrincipalSection && (
         <CollapsibleCard title="Principal / Headteacher comment" sub="Available for any student, any time">
-          <PrincipalCommentPanel terms={terms} />
+          <PrincipalCommentPanel classArmOptions={classArms} terms={terms} />
         </CollapsibleCard>
       )}
     </AppShell>

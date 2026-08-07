@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
+import { toDatetimeLocalInputValue, fromDatetimeLocalInputValue } from "../../lib/datetime";
 import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Label } from "../atoms/label";
@@ -27,10 +28,6 @@ interface ReportWindowItem {
   inputOpensAt: string;
   inputClosesAt: string;
   status: WindowStatus;
-}
-
-function toDatetimeLocalValue(iso: string): string {
-  return iso.slice(0, 16);
 }
 
 export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
@@ -72,8 +69,8 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
   function applyExisting(id: string) {
     const existing = existingWindows.find((w) => w.id === id);
     if (!existing) return;
-    setInputOpensAt(toDatetimeLocalValue(existing.inputOpensAt));
-    setInputClosesAt(toDatetimeLocalValue(existing.inputClosesAt));
+    setInputOpensAt(toDatetimeLocalInputValue(existing.inputOpensAt));
+    setInputClosesAt(toDatetimeLocalInputValue(existing.inputClosesAt));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -84,7 +81,12 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
       await apiFetch("/report-windows", {
         method: "POST",
         auth: true,
-        body: { termId, classLevelCategory, inputOpensAt, inputClosesAt },
+        body: {
+          termId,
+          classLevelCategory,
+          inputOpensAt: fromDatetimeLocalInputValue(inputOpensAt),
+          inputClosesAt: fromDatetimeLocalInputValue(inputClosesAt),
+        },
       });
       setInputOpensAt("");
       setInputClosesAt("");

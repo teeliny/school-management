@@ -159,6 +159,29 @@ export class ReportCommentService {
   findAll(filters: { studentId?: string; termId?: string }) {
     return this.prisma.reportComment.findMany({ where: filters });
   }
+
+  // Powers the "X of Y comments written" indicator for a class arm — total
+  // roster size vs. how many students already have a comment of this exact
+  // type (+ subjectId, for SUBJECT comments) for the term.
+  async progress(filters: {
+    classArmId: string;
+    termId: string;
+    commentType: ReportCommentType;
+    subjectId?: string;
+  }) {
+    const [totalStudents, completedCount] = await Promise.all([
+      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.reportComment.count({
+        where: {
+          termId: filters.termId,
+          commentType: filters.commentType,
+          subjectId: filters.subjectId ?? null,
+          student: { currentClassId: filters.classArmId },
+        },
+      }),
+    ]);
+    return { totalStudents, completedCount };
+  }
 }
 
 @Controller("report-comments")
@@ -179,5 +202,15 @@ export class ReportCommentController {
   @Get()
   findAll(@Query("studentId") studentId?: string, @Query("termId") termId?: string) {
     return this.service.findAll({ studentId, termId });
+  }
+
+  @Get("progress")
+  progress(
+    @Query("classArmId") classArmId: string,
+    @Query("termId") termId: string,
+    @Query("commentType") commentType: ReportCommentType,
+    @Query("subjectId") subjectId?: string,
+  ) {
+    return this.service.progress({ classArmId, termId, commentType, subjectId });
   }
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
+import { toDatetimeLocalInputValue, fromDatetimeLocalInputValue } from "../../lib/datetime";
 import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Label } from "../atoms/label";
@@ -36,10 +37,6 @@ interface AssessmentComponentItem {
   inputClosesAt: string | null;
   publishAt: string | null;
   status: ComponentStatus;
-}
-
-function toDatetimeLocalValue(iso: string | null): string {
-  return iso ? iso.slice(0, 16) : "";
 }
 
 // Raw shape returned by GET /assessment-components with no filters — every
@@ -180,9 +177,9 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
     setName(component.name);
     setSequence(String(component.sequence));
     setMaxScore(String(component.maxScore));
-    setInputOpensAt(toDatetimeLocalValue(component.inputOpensAt));
-    setInputClosesAt(toDatetimeLocalValue(component.inputClosesAt));
-    setPublishAt(toDatetimeLocalValue(component.publishAt));
+    setInputOpensAt(toDatetimeLocalInputValue(component.inputOpensAt));
+    setInputClosesAt(toDatetimeLocalInputValue(component.inputClosesAt));
+    setPublishAt(toDatetimeLocalInputValue(component.publishAt));
   }
 
   function cancelEdit() {
@@ -202,9 +199,9 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
         name,
         sequence: Number(sequence),
         maxScore: Number(maxScore),
-        inputOpensAt,
-        inputClosesAt,
-        publishAt,
+        inputOpensAt: fromDatetimeLocalInputValue(inputOpensAt),
+        inputClosesAt: fromDatetimeLocalInputValue(inputClosesAt),
+        publishAt: fromDatetimeLocalInputValue(publishAt),
       };
 
       if (editingId) {

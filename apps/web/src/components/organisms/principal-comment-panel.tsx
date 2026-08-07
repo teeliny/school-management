@@ -6,35 +6,48 @@ import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { Textarea } from "../atoms/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { StudentCombobox } from "../molecules/student-combobox";
 
-interface TermOption {
+interface ClassArmOption {
   id: string;
   name: string;
 }
-interface StudentItem {
+interface TermOption {
   id: string;
-  admissionNumber: string;
-  user: { firstName: string; lastName: string };
+  name: string;
 }
 interface CommentRecord {
   studentId: string;
   commentType: string;
   comment: string;
 }
+interface ProgressSummary {
+  totalStudents: number;
+  completedCount: number;
+}
 
-export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
-  const [students, setStudents] = useState<StudentItem[]>([]);
+// PRINCIPAL/HEADTEACHER authorization is school-wide (see
+// ReportCommentService.write's principal branch — no class-arm check at
+// all), so `classArmOptions` here is the full, unfiltered class-arm list;
+// the dropdown only narrows which students show up in the picker below.
+export function PrincipalCommentPanel({
+  classArmOptions,
+  terms,
+}: {
+  classArmOptions: ClassArmOption[];
+  terms: TermOption[];
+}) {
+  const [classArmId, setClassArmId] = useState("");
   const [studentId, setStudentId] = useState("");
   const [termId, setTermId] = useState("");
   const [comment, setComment] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ProgressSummary | null>(null);
 
   useEffect(() => {
-    apiFetch<StudentItem[]>("/students", { auth: true })
-      .then(setStudents)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load students"));
-  }, []);
+    setStudentId("");
+  }, [classArmId]);
 
   const load = useCallback(() => {
     if (!studentId || !termId) {
@@ -53,6 +66,23 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
     load();
   }, [load]);
 
+  const loadProgress = useCallback(() => {
+    if (!classArmId || !termId) {
+      setProgress(null);
+      return;
+    }
+    apiFetch<ProgressSummary>(
+      `/report-comments/progress?classArmId=${classArmId}&termId=${termId}&commentType=PRINCIPAL`,
+      { auth: true },
+    )
+      .then(setProgress)
+      .catch(() => setProgress(null));
+  }, [classArmId, termId]);
+
+  useEffect(() => {
+    loadProgress();
+  }, [loadProgress]);
+
   async function save() {
     if (!comment.trim()) return;
     setSaveState("saving");
@@ -64,6 +94,7 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
         body: { studentId, termId, commentType: "PRINCIPAL", comment },
       });
       setSaveState("saved");
+      loadProgress();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to save comment");
       setSaveState("error");
@@ -74,21 +105,31 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
-          <Label htmlFor="pc-student">Student</Label>
-          <Select value={studentId} onValueChange={setStudentId}>
-            <SelectTrigger id="pc-student" className="mt-1">
-              <SelectValue placeholder="Select student" />
+          <Label htmlFor="pc-class-arm">Class arm</Label>
+          <Select value={classArmId} onValueChange={setClassArmId}>
+            <SelectTrigger id="pc-class-arm" className="mt-1">
+              <SelectValue placeholder="Select class" />
             </SelectTrigger>
             <SelectContent>
-              {students.map((student) => (
-                <SelectItem key={student.id} value={student.id}>
-                  {student.user.firstName} {student.user.lastName} ({student.admissionNumber})
+              {classArmOptions.map((arm) => (
+                <SelectItem key={arm.id} value={arm.id}>
+                  {arm.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div>
+          <Label htmlFor="pc-student">Student</Label>
+          <StudentCombobox
+            id="pc-student"
+            classArmId={classArmId}
+            value={studentId}
+            onValueChange={(id) => setStudentId(id)}
+            className="mt-1"
+          />
         </div>
         <div>
           <Label htmlFor="pc-term">Term</Label>
@@ -106,6 +147,12 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
           </Select>
         </div>
       </div>
+
+      {classArmId && termId && progress && (
+        <p className="text-[12.5px] text-muted">
+          Principal comments: {progress.completedCount}/{progress.totalStudents}
+        </p>
+      )}
 
       {studentId && termId && (
         <div>
@@ -126,7 +173,7 @@ export function PrincipalCommentPanel({ terms }: { terms: TermOption[] }) {
         </div>
       )}
 
-      {(!studentId || !termId) && <p className="text-sm text-muted">Select a student and term to begin.</p>}
+      {(!studentId || !termId) && <p className="text-sm text-muted">Select a class arm, student, and term to begin.</p>}
     </div>
   );
 }
