@@ -20,6 +20,7 @@ import { StudentService } from "./identity/students/student";
 import { SubjectService } from "./subjects/subject";
 import { StaffAssignmentService } from "./staff-assignments/staff-assignment";
 import { AssessmentComponentService } from "./assessments/assessment-component";
+import { ReportWindowService } from "./assessments/report-window";
 
 /**
  * One-shot demo dataset for a fresh deployment (run after `pnpm setup:school`
@@ -61,6 +62,7 @@ async function main() {
   const subjects = app.get(SubjectService);
   const staffAssignments = app.get(StaffAssignmentService);
   const assessmentComponents = app.get(AssessmentComponentService);
+  const reportWindows = app.get(ReportWindowService);
 
   try {
     // -------------------------------------------------------------------
@@ -164,6 +166,38 @@ async function main() {
       }
     }
     logger.log("Assessment components ready (10/20/10/60 per term × class group).");
+
+    // -------------------------------------------------------------------
+    // Report windows per term × class group — governs both SkillRating entry
+    // and the CLASS_TEACHER ReportComment (PRD §3.6). Opens alongside the
+    // Exam component's own window (the last of the four quarters above, so
+    // class teachers can start rating/commenting once teaching wraps up)
+    // and closes a few days after the term itself ends, as grace time to
+    // finish before the FULL_TERM report card's publish gate needs it.
+    // -------------------------------------------------------------------
+    const REPORT_WINDOW_GRACE_DAYS = 3;
+    for (const term of terms) {
+      const windows = quarterWindows(term.startDate, term.endDate);
+      const examWindow = req(windows[3], "assessment window 3 (Exam)");
+      const closesAt = new Date(term.endDate.getTime() + REPORT_WINDOW_GRACE_DAYS * 24 * 60 * 60 * 1000);
+
+      for (const category of [ClassLevelCategory.JSS, ClassLevelCategory.SSS]) {
+        const existing = await prisma.reportWindow.findUnique({
+          where: { termId_classLevelCategory: { termId: term.id, classLevelCategory: category } },
+        });
+        if (existing) continue;
+        await reportWindows.create(
+          {
+            termId: term.id,
+            classLevelCategory: category,
+            inputOpensAt: examWindow.opensAt,
+            inputClosesAt: closesAt,
+          },
+          superAdmin.id,
+        );
+      }
+    }
+    logger.log("Report windows ready (skill ratings + class-teacher comments, per term × class group).");
 
     // -------------------------------------------------------------------
     // Class levels + single arm each (arm names = precious stones)
