@@ -73,6 +73,7 @@ function friendlyPublishError(message: string): string {
 export function ReportCardList({
   studentId,
   termId,
+  classArmId,
   students,
   terms,
   canManage,
@@ -81,6 +82,7 @@ export function ReportCardList({
 }: {
   studentId: string;
   termId: string;
+  classArmId: string;
   students: StudentOption[];
   terms: TermOption[];
   canManage: boolean;
@@ -98,6 +100,7 @@ export function ReportCardList({
     const params = new URLSearchParams();
     if (studentId) params.set("studentId", studentId);
     if (termId) params.set("termId", termId);
+    if (classArmId) params.set("classArmId", classArmId);
     const qs = params.toString();
     apiFetch<TermReportCardItem[]>(`/term-report-cards${qs ? `?${qs}` : ""}`, { auth: true })
       .then((data) => {
@@ -105,7 +108,7 @@ export function ReportCardList({
         setLoadError(null);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Failed to load report cards"));
-  }, [studentId, termId]);
+  }, [studentId, termId, classArmId]);
 
   useEffect(() => {
     load();

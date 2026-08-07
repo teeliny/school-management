@@ -137,10 +137,12 @@ export class TermReportCardService {
    * scoping shape as StudentService.findAllForUser (identity/students/
    * student.ts), applied here to TermReportCard instead of StudentProfile.
    */
-  async findForUser(user: RequestUser, filters: { studentId?: string; termId?: string }) {
+  async findForUser(user: RequestUser, filters: { studentId?: string; termId?: string; classArmId?: string }) {
+    const { classArmId, ...scalarFilters } = filters;
+
     if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) {
       return this.prisma.termReportCard.findMany({
-        where: filters,
+        where: { ...scalarFilters, ...(classArmId ? { student: { currentClassId: classArmId } } : {}) },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -148,11 +150,17 @@ export class TermReportCardService {
     if (user.roles.includes("STAFF")) {
       // PRD §5: class/subject teacher see report cards for their own
       // class(es) — not published-only, unlike parent/student, since staff
-      // may need to review a card before it's published.
-      const classArmIds = await this.staffAssignments.activeAssignedClassArmIds(user.id);
-      if (classArmIds.length === 0) return [];
+      // may need to review a card before it's published. A requested
+      // classArmId narrows within that assigned set (intersected, not
+      // substituted) rather than trusting an arbitrary caller-supplied id.
+      const assignedClassArmIds = await this.staffAssignments.activeAssignedClassArmIds(user.id);
+      if (assignedClassArmIds.length === 0) return [];
+      const scopedClassArmIds = classArmId
+        ? assignedClassArmIds.filter((id) => id === classArmId)
+        : assignedClassArmIds;
+      if (scopedClassArmIds.length === 0) return [];
       return this.prisma.termReportCard.findMany({
-        where: { ...filters, student: { currentClassId: { in: classArmIds } } },
+        where: { ...scalarFilters, student: { currentClassId: { in: scopedClassArmIds } } },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -162,9 +170,12 @@ export class TermReportCardService {
       if (!parentProfile) return [];
       return this.prisma.termReportCard.findMany({
         where: {
-          ...filters,
+          ...scalarFilters,
           status: TermReportCardStatus.PUBLISHED,
-          student: { guardians: { some: { parentId: parentProfile.id } } },
+          student: {
+            guardians: { some: { parentId: parentProfile.id } },
+            ...(classArmId ? { currentClassId: classArmId } : {}),
+          },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -173,8 +184,9 @@ export class TermReportCardService {
     if (user.roles.includes("STUDENT")) {
       const studentProfile = await this.prisma.studentProfile.findUnique({ where: { userId: user.id } });
       if (!studentProfile) return [];
+      if (classArmId && studentProfile.currentClassId !== classArmId) return [];
       return this.prisma.termReportCard.findMany({
-        where: { ...filters, studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED },
+        where: { ...scalarFilters, studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -184,6 +196,23 @@ export class TermReportCardService {
 
   async remove(id: string) {
     return this.prisma.termReportCard.delete({ where: { id } });
+  }
+
+  // Same shape as ReportCommentService.progress (assessments/report-comment.ts)
+  // — totalStudents is everyone currently in the arm, generatedCount is
+  // distinct students with at least one report card for the term (either
+  // reportType), so it reflects "does this student have something on file",
+  // not raw row count (a student can hold both a MID_TERM and FULL_TERM row).
+  async progress(filters: { classArmId: string; termId: string }) {
+    const [totalStudents, generatedStudents] = await Promise.all([
+      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.termReportCard.findMany({
+        where: { termId: filters.termId, student: { currentClassId: filters.classArmId } },
+        select: { studentId: true },
+        distinct: ["studentId"],
+      }),
+    ]);
+    return { totalStudents, generatedCount: generatedStudents.length };
   }
 }
 
@@ -203,8 +232,14 @@ export class TermReportCardController {
     @CurrentUser() user: RequestUser,
     @Query("studentId") studentId?: string,
     @Query("termId") termId?: string,
+    @Query("classArmId") classArmId?: string,
   ) {
-    return this.service.findForUser(user, { studentId, termId });
+    return this.service.findForUser(user, { studentId, termId, classArmId });
+  }
+
+  @Get("progress")
+  progress(@Query("classArmId") classArmId: string, @Query("termId") termId: string) {
+    return this.service.progress({ classArmId, termId });
   }
 
   @Patch(":id/publish")
