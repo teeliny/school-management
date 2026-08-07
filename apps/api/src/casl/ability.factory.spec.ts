@@ -88,4 +88,13 @@ describe("AbilityFactory", () => {
     expect(ability.can("manage", "TimetableSlot")).toBe(true);
     expect(ability.can("manage", "Subject")).toBe(false);
   });
+
+  it("Broadsheet is readable by SUPER_ADMIN and by a PRINCIPAL/HEADTEACHER assignment, but not by ADMIN or a bare STAFF/REGISTRAR", () => {
+    expect(factory.createForUser(userWith(["SUPER_ADMIN"])).can("read", "Broadsheet")).toBe(true);
+    expect(factory.createForUser(userWith(["STAFF"], ["PRINCIPAL"])).can("read", "Broadsheet")).toBe(true);
+    expect(factory.createForUser(userWith(["STAFF"], ["HEADTEACHER"])).can("read", "Broadsheet")).toBe(true);
+    expect(factory.createForUser(userWith(["ADMIN"])).can("read", "Broadsheet")).toBe(false);
+    expect(factory.createForUser(userWith(["STAFF"])).can("read", "Broadsheet")).toBe(false);
+    expect(factory.createForUser(userWith(["STAFF"], ["REGISTRAR"])).can("read", "Broadsheet")).toBe(false);
+  });
 });

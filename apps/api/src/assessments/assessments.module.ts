@@ -9,6 +9,7 @@ import { SkillAssessmentItemController, SkillAssessmentItemService } from "./ski
 import { ReportWindowController, ReportWindowService } from "./report-window";
 import { SkillRatingController, SkillRatingService } from "./skill-rating";
 import { ReportCommentController, ReportCommentService } from "./report-comment";
+import { BroadsheetController, BroadsheetService } from "./broadsheet";
 import { StaffAssignmentsModule } from "../staff-assignments/staff-assignments.module";
 import { SubjectModule } from "../subjects/subject.module";
 
@@ -31,6 +32,7 @@ import { SubjectModule } from "../subjects/subject.module";
     ReportWindowController,
     SkillRatingController,
     ReportCommentController,
+    BroadsheetController,
   ],
   providers: [
     AssessmentComponentService,
@@ -41,6 +43,7 @@ import { SubjectModule } from "../subjects/subject.module";
     ReportWindowService,
     SkillRatingService,
     ReportCommentService,
+    BroadsheetService,
   ],
 })
 export class AssessmentsModule {}

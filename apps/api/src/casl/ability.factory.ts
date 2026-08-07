@@ -34,7 +34,8 @@ export type Subject =
   | "SkillAssessmentItem"
   | "ReportWindow"
   | "SkillRating"
-  | "ReportComment";
+  | "ReportComment"
+  | "Broadsheet";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string }]
 >;
@@ -92,6 +93,14 @@ export class AbilityFactory {
     // exactly this one extra permission, nothing else).
     if (user.assignmentTypes?.includes("REGISTRAR")) {
       can("manage", "TimetableSlot");
+    }
+
+    // Broadsheet is deliberately Super-Admin + Principal/Headteacher only —
+    // not granted to plain Admin above, unlike almost every other Subject
+    // in this factory. Same "covers both StaffAssignment types" precedent
+    // as ReportCommentType.PRINCIPAL (schema.prisma).
+    if (user.assignmentTypes?.includes("PRINCIPAL") || user.assignmentTypes?.includes("HEADTEACHER")) {
+      can("read", "Broadsheet");
     }
 
     return build();

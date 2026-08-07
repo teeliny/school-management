@@ -17,6 +17,7 @@ import {
   MessageSquare,
   FileText,
   Calendar,
+  Table,
   type LucideIcon,
 } from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
@@ -93,6 +94,15 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           ),
       },
       { href: "/report-cards", label: "Report Cards", icon: FileText },
+      {
+        href: "/broadsheet",
+        label: "Broadsheet",
+        icon: Table,
+        // Deliberately narrower than `isAdmin` — a plain Admin does not get
+        // this one (matches the backend CASL grant in ability.factory.ts).
+        visible: ({ user }) =>
+          user.roles.includes("SUPER_ADMIN") || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+      },
       { href: "/calendar", label: "Calendar", icon: Calendar },
     ],
   },

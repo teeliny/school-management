@@ -261,6 +261,13 @@ Only published report cards are visible to parents/students; class/subject teach
 
 **PDF header (both types)**: school logo and address (from `SchoolProfile`) and the generation date (`generatedAt`), in addition to the student's identifying details and term.
 
+**Broadsheet (added post-Phase-4, PRD §5, FR4.11)**: the whole-class counterpart to a `TermReportCard` — one grid, every student in scope × every subject the class group is offered, instead of one PDF per student. **Super-Admin/Principal/Headteacher only** — deliberately narrower than everything else in this section; Admin does not get it. Two independent scopes, chosen at request time:
+
+- **Class scope** — a `ClassLevel` by default (every `ClassArm` under it combined, e.g. all of "JSS 1" across two arms), or a single `classArmId` to narrow down to one arm instead.
+- **Time scope** — one `Term` ("by term," each cell is that term's own `SubjectTermResult.totalScore`), or a whole `AcademicSession` ("Overall" — each cell becomes that student's *average* across whichever terms in the session actually have a result for that subject, the same missing-term-excluded rule §3.6's annual-average report-card grading already uses; a subject with zero terms scored is blank, not zero).
+
+Both **position** (per-subject and overall) and **sorting** (by any subject column, overall average, or overall position) are computed fresh over the full requested scope at read time — never a read of `SubjectTermResult`'s own stored `position`, which is always per-`ClassArm`-per-`Term` regardless of what the broadsheet is scoped to. Ranking is always computed before pagination narrows what's actually returned, so a student's position is correct even on a later page.
+
 **Attendance line (`FULL_TERM` only — deferred, not built in Phase 4)**: the final report card should show the student's attendance as "days present / school-days-opened this term." This is blocked on Attendance (§3.7, Phase 5) not existing yet — Phase 4 ships `FULL_TERM` without this line. §3.7 below records the auto-calculation design already decided for when Phase 5 builds it, so this doesn't need re-deriving later.
 
 **Workflow:** Admin defines each class level's `AssessmentComponent`s for the term (validated to sum to 100) → components open on schedule (or Admin override) → subject teachers enter `ScoreEntry` while open → components close and later publish on schedule → aggregation job computes `SubjectTermResult` on close → in parallel, the term's `ReportWindow` opens for each class level → class teachers rate `SkillAssessmentItem`s and write their `CLASS_TEACHER` comment while it's open → window closes → subject teachers add `SUBJECT` comments, principal/headteacher adds their comment → Admin (or an automated job once all required pieces are present) triggers `TermReportCard` generation → Admin publishes → parents/students see it (published-only), scoped to what's been published per-component where partial visibility matters.
@@ -356,6 +363,7 @@ User 1—* Notification
 | Enter subject/class comments | ✅ (override) | ✅ (override) | ✅ (class comment, own class) | ✅ (subject comment, own subject/class) | ❌ | ❌ | ❌ |
 | Publish report cards | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | View report cards | ✅ (all) | ✅ (all) | ✅ (own class) | ✅ (own subject entries) | ❌ | ✅ (own wards, published only) | ✅ (self, published only) |
+| View broadsheet (whole-class grade grid)⁷ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | View/manage academic & exam records (entire school)³ | ✅ | ❌ | ❌ | ❌ | ✅ (Registrar) | ❌ | ❌ |
 | Manage fee structure / invoices³ | ✅ | ❌ | ❌ | ❌ | ✅ (Bursar) | ❌ | ❌ |
 | Configure payment gateway credentials³ | ✅ | ❌ | ❌ | ❌ | ✅ (Bursar) | ❌ | ❌ |
@@ -385,6 +393,8 @@ User 1—* Notification
 ⁵ Triggering (or manually editing) class-timetable, exam-timetable, or invigilation generation is gated by `StaffAssignment.assignmentType`, not Role alone — a Role=ADMIN user can only do these if they also hold an active `PRINCIPAL` assignment (scoped to `JSS`/`SSS` `ClassLevel.category` arms only) or `HEADTEACHER` assignment (scoped to `CRECHE`/`NURSERY`/`PRIMARY` arms only); an Admin holding neither title cannot trigger or manually edit generation at all. Super-Admin and Registrar are unscoped and may act across any level, including the whole school in one run. A Principal- or Headteacher-triggered generation run always covers every class arm within their scope at once, never a single arm in isolation — since subject teachers frequently teach across multiple arms/levels, a partial-scope solve could produce conflicts the solve never saw and therefore can't avoid.
 
 ⁶ Unlike triggering generation (footnote 5), the whole-school timetable overview is available to Admin generally — not gated behind holding a Principal/Headteacher title. However, a user whose active `StaffAssignment` includes `PRINCIPAL` sees only `JSS`/`SSS` class arms in this view, and `HEADTEACHER` sees only `CRECHE`/`NURSERY`/`PRIMARY` arms — narrower than the unscoped view a plain Admin (holding neither title), Super-Admin, or Registrar gets. Defaults to a **by-day** view (Monday–Friday, every in-scope class's periods for that day, side by side) with a toggle to a **by-class** view (one selected class's full week). This is distinct from FR6.7's read-only per-user view (a student/parent/staff member's own class/assignments only) — this is the multi-class administrative overview.
+
+⁷ The one capability in this table that isn't "Super-Admin plus a subset for Admin" — the Broadsheet's table cell says ❌ for every role column above, but a STAFF user whose active `StaffAssignment` includes `PRINCIPAL` or `HEADTEACHER` can view it too (same "covers both StaffAssignment types" precedent as the `ReportComment.PRINCIPAL` comment type, §3.6), granted directly rather than through a table column since neither title has its own column here. Admin — unlike almost everywhere else in this matrix — does not get it at all, not even scoped.
 
 Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CASL (attribute-based access control) or custom guards — role alone is insufficient for scoped rules like "class teacher sees only her class," which require row-level ownership checks (staff's active `StaffAssignment` records) evaluated per-request, not just role name.
 
@@ -427,6 +437,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR4.8: Report card PDF generation runs as an async job (BullMQ); parent/student sees "generating" state until complete.
 - FR4.9: Published report cards trigger notification (in-app + email) to student and all linked guardians.
 - FR4.10: All `AssessmentComponent`/`ReportWindow` dates are surfaced on the Academic Calendar (§3.11) as soon as Admin sets them, regardless of current status.
+- FR4.11 (added post-Phase-4): Super-Admin or a staff member holding an active `PRINCIPAL`/`HEADTEACHER` assignment (not plain Admin, §5) can view a **broadsheet** — every student in scope × every subject the class group is offered, one grid. Scoped to a `ClassLevel` by default (every arm combined) or a single `ClassArm`; and to one `Term` or a whole `AcademicSession` ("Overall," each cell averaged across whichever terms actually have a result, missing terms excluded rather than treated as zero — same rule as the annual-average report card grading in §3.6). Sortable by any subject, overall average, or overall position, and paginated — both computed server-side, with position always ranked over the full scope before any page is sliced out of it.
 
 ### 6.5 Attendance
 - FR5.1: Class teacher records daily attendance for her class; subject teachers may record per-period attendance for their subject/class slot.
