@@ -97,4 +97,40 @@ describe("AbilityFactory", () => {
     expect(factory.createForUser(userWith(["STAFF"])).can("read", "Broadsheet")).toBe(false);
     expect(factory.createForUser(userWith(["STAFF"], ["REGISTRAR"])).can("read", "Broadsheet")).toBe(false);
   });
+
+  // PRD §3.7/§6.5 (Phase 5 slice 1 — Attendance)
+  it("ADMIN/SUPER_ADMIN can manage the whole attendance domain, unconditioned", () => {
+    for (const role of ["ADMIN", "SUPER_ADMIN"]) {
+      const ability = factory.createForUser(userWith([role]));
+      expect(ability.can("manage", "AttendanceSession")).toBe(true);
+      expect(ability.can("manage", "AttendanceRecord")).toBe(true);
+      expect(ability.can("manage", "SchoolHoliday")).toBe(true);
+    }
+  });
+
+  it("a REGISTRAR can read all attendance but only manage STAFF-type sessions when checked against an instance", () => {
+    const ability = factory.createForUser(userWith(["STAFF"], ["REGISTRAR"]));
+    expect(ability.can("read", "AttendanceSession")).toBe(true);
+    expect(ability.can("manage", subject("AttendanceSession", { type: "STAFF" }))).toBe(true);
+    expect(ability.can("manage", subject("AttendanceSession", { type: "STUDENT" }))).toBe(false);
+    expect(ability.can("manage", "AttendanceRecord")).toBe(true);
+  });
+
+  it("a bare-string manage check ignores field conditions — CASL quirk the services must not rely on for override detection", () => {
+    // There's no subject instance to test {type: "STAFF"} against, so CASL
+    // matches Registrar's conditioned grant anyway. This is exactly why
+    // AttendanceSessionService/AttendanceRecordService.checkIsAdminOverride
+    // check both type instances instead of this bare form — asserted here
+    // so the quirk stays documented if @casl/ability's behavior ever
+    // changes underneath this codebase.
+    const ability = factory.createForUser(userWith(["STAFF"], ["REGISTRAR"]));
+    expect(ability.can("manage", "AttendanceSession")).toBe(true);
+  });
+
+  it("a bare STAFF user (no REGISTRAR assignment) has no attendance permissions", () => {
+    const ability = factory.createForUser(userWith(["STAFF"]));
+    expect(ability.can("read", "AttendanceSession")).toBe(false);
+    expect(ability.can("manage", subject("AttendanceSession", { type: "STAFF" }))).toBe(false);
+    expect(ability.can("manage", "SchoolHoliday")).toBe(false);
+  });
 });

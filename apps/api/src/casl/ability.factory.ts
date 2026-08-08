@@ -35,9 +35,12 @@ export type Subject =
   | "ReportWindow"
   | "SkillRating"
   | "ReportComment"
-  | "Broadsheet";
+  | "Broadsheet"
+  | "AttendanceSession"
+  | "AttendanceRecord"
+  | "SchoolHoliday";
 export type AppAbility = MongoAbility<
-  [Action, Subject | { invitedRole: string } | { assignmentType: string }]
+  [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;
 
 @Injectable()
@@ -84,6 +87,14 @@ export class AbilityFactory {
       // the normal CLASS_TEACHER/SUBJECT_TEACHER/PRINCIPAL paths — same
       // override-detection shape as ScoreEntry above.
       can("manage", ["SkillAssessmentItem", "ReportWindow", "SkillRating", "ReportComment"]);
+
+      // PRD §3.7/§5: Admin manages the whole attendance domain (holidays,
+      // both STUDENT- and STAFF-type sessions/records) and can override the
+      // back-dating window (FR5.2) — unconditioned, which is what makes a
+      // plain `ability.can("manage", "AttendanceSession")` check (no subject
+      // instance) evaluate true for Admin/Super-Admin only, not Registrar
+      // (whose grant below is conditioned on session type).
+      can("manage", ["AttendanceSession", "AttendanceRecord", "SchoolHoliday"]);
     }
 
     // PRD §5: Registrar manages the class timetable even though it's not a
@@ -93,6 +104,13 @@ export class AbilityFactory {
     // exactly this one extra permission, nothing else).
     if (user.assignmentTypes?.includes("REGISTRAR")) {
       can("manage", "TimetableSlot");
+
+      // PRD §3.7/§6.5 FR5.1/FR5.3: Registrar takes STAFF-type attendance
+      // (session write scoped to type=STAFF via the condition below) and
+      // views analytics across every session type (unconditioned read).
+      can("read", "AttendanceSession");
+      can("manage", "AttendanceSession", { type: "STAFF" });
+      can("manage", "AttendanceRecord");
     }
 
     // Broadsheet is deliberately Super-Admin + Principal/Headteacher only —

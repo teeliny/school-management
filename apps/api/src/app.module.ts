@@ -15,6 +15,7 @@ import { SubjectModule } from "./subjects/subject.module";
 import { TimetableModule } from "./timetable/timetable.module";
 import { AssessmentsModule } from "./assessments/assessments.module";
 import { CalendarModule } from "./calendar/calendar.module";
+import { AttendanceModule } from "./attendance/attendance.module";
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { CalendarModule } from "./calendar/calendar.module";
     TimetableModule,
     AssessmentsModule,
     CalendarModule,
+    AttendanceModule,
     HealthModule,
   ],
 })

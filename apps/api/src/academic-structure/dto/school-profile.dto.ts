@@ -1,4 +1,5 @@
-import { IsEmail, IsOptional, IsString } from "class-validator";
+import { AttendanceGranularity } from "@prisma/client";
+import { IsEmail, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
 
 export class UpdateSchoolProfileDto {
   @IsOptional() @IsString() name?: string;
@@ -8,4 +9,6 @@ export class UpdateSchoolProfileDto {
   @IsOptional() @IsString() contactPhone?: string;
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsInt() @Min(0) attendanceBackdateWindowDays?: number;
+  @IsOptional() @IsEnum(AttendanceGranularity) attendanceGranularity?: AttendanceGranularity;
 }

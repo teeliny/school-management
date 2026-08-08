@@ -136,6 +136,16 @@ model SchoolProfile {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  // PRD §3.7/FR5.2: how many days back a non-Admin can record attendance
+  // without triggering the Admin-override requirement.
+  attendanceBackdateWindowDays Int                   @default(3)
+  // PRD §3.7: DAILY = one "school day opened" count per weekday;
+  // MORNING_AND_AFTERNOON = two, doubling both the denominator and however
+  // "present" is recorded per session. Feeds the school-days-opened calc
+  // (packages/types' computeSchoolDaysOpened) used by attendance analytics
+  // and, later, the FULL_TERM report card's attendance line.
+  attendanceGranularity        AttendanceGranularity @default(DAILY)
+
   @@map("school_profiles")
 }
 
@@ -155,6 +165,7 @@ model AcademicSession {
   studentSubjectEnrollments StudentSubjectEnrollment[]
   timetableSlots            TimetableSlot[]
   skillAssessmentItems      SkillAssessmentItem[]
+  schoolHolidays            SchoolHoliday[]
 
   @@map("academic_sessions")
 }
@@ -178,6 +189,7 @@ model Term {
   reportWindows            ReportWindow[]
   reportComments           ReportComment[]
   classSubjectTermStatuses ClassSubjectTermStatus[]
+  schoolHolidays           SchoolHoliday[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -220,6 +232,7 @@ model ClassArm {
   timetableSlots     TimetableSlot[]
   scoreEntries       ScoreEntry[]
   subjectTermResults SubjectTermResult[]
+  attendanceSessions AttendanceSession[]
 
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
@@ -302,11 +315,12 @@ model StaffProfile {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  assignments         StaffAssignment[]
-  timetableSlots      TimetableSlot[]
-  scoreEntriesEntered ScoreEntry[]
-  skillRatingsGiven   SkillRating[]
-  reportCommentsGiven ReportComment[]
+  assignments             StaffAssignment[]
+  timetableSlots          TimetableSlot[]
+  scoreEntriesEntered     ScoreEntry[]
+  skillRatingsGiven       SkillRating[]
+  reportCommentsGiven     ReportComment[]
+  attendanceSessionsTaken AttendanceSession[]
 
   @@map("staff_profiles")
 }
@@ -489,6 +503,7 @@ model Subject {
   subjectTermResults       SubjectTermResult[]
   reportComments           ReportComment[]
   classSubjectTermStatuses ClassSubjectTermStatus[]
+  attendanceSessions       AttendanceSession[]
 
   @@map("subjects")
 }
@@ -962,4 +977,101 @@ model ReportComment {
 
   @@unique([studentId, termId, commentType, subjectId])
   @@map("report_comments")
+}
+
+// PRD §3.7/§6.5, Phase 5: daily/per-period attendance. STAFF-type sessions
+// are school-wide (no classArmId) and taken by Admin/Registrar; STUDENT-type
+// sessions are scoped to one ClassArm and taken by that class's CLASS_TEACHER
+// (kind=DAILY) or a SUBJECT_TEACHER for their own period (kind=PERIOD).
+// `period` holds "MORNING"/"AFTERNOON" for a DAILY session when
+// SchoolProfile.attendanceGranularity = MORNING_AND_AFTERNOON, or a free-text
+// period label for a PERIOD session — null for the plain single-daily-count
+// case. No composite @@unique for duplicate-session prevention: the dedup
+// key spans several nullable columns (classArmId/period/subjectId) where
+// Postgres treats NULLs as distinct, so it's a service-layer findFirst
+// check instead (not the partial-unique-index pattern, which is for the
+// "one *active* row" shape — nothing here gets soft-revoked).
+model AttendanceSession {
+  id             String                @id @default(uuid())
+  type           AttendanceSessionType
+  kind           AttendanceSessionKind
+  classArmId     String?
+  classArm       ClassArm?             @relation(fields: [classArmId], references: [id])
+  date           DateTime              @db.Date
+  period         String?
+  subjectId      String?
+  subject        Subject?              @relation(fields: [subjectId], references: [id])
+  // Nullable for the same Admin-override-with-no-StaffProfile reason as
+  // ScoreEntry.enteredByStaffId/ReportComment.authorStaffId — an Admin/
+  // Super-Admin recording attendance as override may hold no StaffProfile
+  // at all (AdminProfile is a separate table).
+  takenByStaffId String?
+  takenByStaff   StaffProfile?         @relation(fields: [takenByStaffId], references: [id])
+  createdAt      DateTime              @default(now())
+
+  records AttendanceRecord[]
+
+  @@map("attendance_sessions")
+}
+
+// personId is polymorphic (studentId or staffId per personType) — no FK,
+// same reasoning PRD §3.7 gives for this shape: one table serves both
+// STUDENT- and STAFF-type sessions rather than two near-identical models.
+model AttendanceRecord {
+  id                  String               @id @default(uuid())
+  attendanceSessionId String
+  attendanceSession   AttendanceSession    @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
+  personId            String
+  personType          AttendancePersonType
+  status              AttendanceStatus
+  remark              String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([attendanceSessionId, personId])
+  @@map("attendance_records")
+}
+
+// A school closure date (PRD §3.7) subtracted from the raw weekday count
+// before it's used as a report card's attendance denominator. A calendar
+// date is either a closure or not, school-wide — @@unique(date) rather than
+// scoping uniqueness per academicSession/term.
+model SchoolHoliday {
+  id                String           @id @default(uuid())
+  name              String
+  date              DateTime         @unique @db.Date
+  academicSessionId String?
+  academicSession   AcademicSession? @relation(fields: [academicSessionId], references: [id])
+  termId            String?
+  term              Term?            @relation(fields: [termId], references: [id])
+  createdAt         DateTime         @default(now())
+
+  @@map("school_holidays")
+}
+
+enum AttendanceSessionType {
+  STUDENT
+  STAFF
+}
+
+enum AttendanceSessionKind {
+  DAILY
+  PERIOD
+}
+
+enum AttendancePersonType {
+  STUDENT
+  STAFF
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum AttendanceGranularity {
+  DAILY
+  MORNING_AND_AFTERNOON
 }
