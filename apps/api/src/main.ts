@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
 import { parseCorsOrigins } from "./common/cors";
+import { RedisIoAdapter } from "./notifications/redis-io.adapter";
 
 async function bootstrap() {
   // rawBody: true (Nest 9.4+) makes req.rawBody (a Buffer) available on
@@ -29,6 +30,13 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  // ARCHITECTURE §8: Socket.IO on the Redis adapter, so a notification
+  // emitted from any API process instance reaches a client connected to any
+  // other instance.
+  const redisIoAdapter = new RedisIoAdapter(app);
+  await redisIoAdapter.connectToRedis();
+  app.useWebSocketAdapter(redisIoAdapter);
 
   const port = process.env.PORT ?? 3001;
   await app.listen(port);

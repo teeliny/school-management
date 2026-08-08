@@ -45,7 +45,8 @@ export type Subject =
   | "Payment"
   | "Receipt"
   | "PaymentGatewayConfig"
-  | "DiscountRequest";
+  | "DiscountRequest"
+  | "NotificationTemplate";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;
@@ -102,6 +103,12 @@ export class AbilityFactory {
       // instance) evaluate true for Admin/Super-Admin only, not Registrar
       // (whose grant below is conditioned on session type).
       can("manage", ["AttendanceSession", "AttendanceRecord", "SchoolHoliday"]);
+
+      // PRD §3.10: Admin can customize this school's default notification
+      // copy. Notification/NotificationPreference need no Subject here —
+      // every authenticated user manages only their own, scoped entirely at
+      // the service layer (same reasoning as `/auth/me`), not via CASL.
+      can("manage", "NotificationTemplate");
     }
 
     // PRD §5: Registrar manages the class timetable even though it's not a

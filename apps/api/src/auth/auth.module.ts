@@ -29,6 +29,8 @@ import { JwtAuthGuard } from "./jwt-auth.guard";
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard],
+  // JwtModule re-exported so NotificationsGateway can inject JwtService
+  // directly (same secret/config as JwtStrategy) without a circular import.
+  exports: [AuthService, JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

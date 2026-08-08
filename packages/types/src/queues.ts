@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   REPORT_CARD_GENERATION: "report-card-generation",
   RECEIPT_GENERATION: "receipt-generation",
   PAYMENT_RECONCILIATION: "payment-reconciliation",
+  EMAIL_DISPATCH: "email-dispatch",
 } as const;
 
 export interface ReportCardGenerationJob {
@@ -19,4 +20,11 @@ export interface ReportCardGenerationJob {
 
 export interface ReceiptGenerationJob {
   receiptId: string;
+}
+
+export interface EmailDispatchJob {
+  emailLogId: string;
+  recipientEmail: string;
+  subject: string;
+  body: string;
 }

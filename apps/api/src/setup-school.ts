@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { Role } from "@prisma/client";
+import { DEFAULT_NOTIFICATION_TEMPLATES } from "@school/types";
 import { AppModule } from "./app.module";
 import { PrismaService } from "./prisma/prisma.service";
 import { InvitationService } from "./identity/invitations/invitation.service";
@@ -83,6 +84,19 @@ async function main() {
       await prisma.schoolProfile.create({ data: { name: args.schoolName } });
       logger.log(`Created school profile "${args.schoolName}".`);
     }
+
+    // PRD §3.10, BUILD_PLAN.md §8 item 2: seed each NotificationType's
+    // default copy exactly once — `update: {}` means a re-run never
+    // clobbers an Admin's prior customization, same "safe to re-run"
+    // contract as the rest of this script.
+    for (const template of DEFAULT_NOTIFICATION_TEMPLATES) {
+      await prisma.notificationTemplate.upsert({
+        where: { key: template.key },
+        update: {},
+        create: template,
+      });
+    }
+    logger.log(`Ensured ${DEFAULT_NOTIFICATION_TEMPLATES.length} default notification templates exist.`);
 
     const email = args.proprietorEmail.trim().toLowerCase();
     const existingUser = await prisma.user.findUnique({

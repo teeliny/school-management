@@ -70,6 +70,8 @@ model User {
   createdReportWindows             ReportWindow[]
   disabledClassSubjectTermStatuses ClassSubjectTermStatus[]
   paymentsMade                     Payment[]
+  notifications                    Notification[]
+  notificationPreferences          NotificationPreference[]
 
   @@map("users")
 }
@@ -339,6 +341,11 @@ model ParentProfile {
   occupation                   String?
   address                      String?
   relationshipToStudentDefault GuardianRelationship?
+  // FR8.4: set by the Resend delivery webhook on a hard bounce or spam
+  // complaint — surfaced to Admin via the existing GET /parent-profiles
+  // list (no new endpoint needed, the field is just part of the row).
+  emailBounced                 Boolean               @default(false)
+  emailBouncedAt               DateTime?
   createdAt                    DateTime              @default(now())
   updatedAt                    DateTime              @updatedAt
 
@@ -1318,4 +1325,109 @@ model PaymentGatewayConfig {
   updatedAt              DateTime                  @updatedAt
 
   @@map("payment_gateway_configs")
+}
+
+enum NotificationType {
+  REPORT_CARD_PUBLISHED
+  INVOICE_OVERDUE
+  PASSWORD_RESET
+  INVITATION_RECEIVED
+  PAYMENT_RECEIVED
+  DISCOUNT_REQUEST_APPROVED
+  DISCOUNT_REQUEST_REJECTED
+  MANUAL_PAYMENT_APPROVED
+  MANUAL_PAYMENT_REJECTED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  BOTH
+}
+
+// PRD §3.10, FR8.3: one row per NotificationType — guarantees "every
+// notification type has a template" by construction (key is the enum, not
+// free text). Seeded from packages/types' DEFAULT_NOTIFICATION_TEMPLATES at
+// pnpm setup:school (see setup-school.ts); Admin can edit subject/body after
+// (isCustomized flips true on first edit, same shape as other "shipped
+// default, later customized" fields in this codebase).
+model NotificationTemplate {
+  id           String              @id @default(uuid())
+  key          NotificationType    @unique
+  channel      NotificationChannel
+  subject      String
+  bodyTemplate String
+  // FR8.6: REPORT_CARD_PUBLISHED/INVOICE_OVERDUE/PASSWORD_RESET — cannot be
+  // disabled via NotificationPreference regardless of what's stored there.
+  isCritical   Boolean             @default(false)
+  isCustomized Boolean             @default(false)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@map("notification_templates")
+}
+
+// PRD §3.10: rendered output (title/body), not the template — recipient
+// reads exactly what was sent even if the template is edited later.
+model Notification {
+  id              String           @id @default(uuid())
+  recipientUserId String
+  recipient       User             @relation(fields: [recipientUserId], references: [id])
+  type            NotificationType
+  title           String
+  body            String
+  // Deep-link payload, e.g. { invoiceId, studentId } — frontend-interpreted.
+  data            Json?
+  isRead          Boolean          @default(false)
+  readAt          DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@index([recipientUserId, isRead, createdAt])
+  @@map("notifications")
+}
+
+// PRD §3.10, FR8.5/FR8.6: absence of a row = default (both channels
+// enabled). Only created when a user actually opts out of a non-critical
+// type — same "sparse row, default assumed" shape NotificationService reads
+// through, not written for every user×type combination up front.
+model NotificationPreference {
+  id               String           @id @default(uuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id])
+  notificationType NotificationType
+  inAppEnabled     Boolean          @default(true)
+  emailEnabled     Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([userId, notificationType])
+  @@map("notification_preferences")
+}
+
+enum EmailLogStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  FAILED
+}
+
+// PRD §3.10, FR8.3/FR8.4. templateKey is NotificationType (not free text) —
+// every EmailLog traces back to the NotificationService.notify() call that
+// created it, same "one type, one meaning" guarantee as
+// NotificationTemplate.key. Created before its email-dispatch BullMQ job is
+// enqueued (ARCHITECTURE §9's "tracking row first" shape), so a BullMQ
+// retry re-processing the same job updates one row rather than duplicating.
+model EmailLog {
+  id              String           @id @default(uuid())
+  recipientEmail  String
+  templateKey     NotificationType
+  resendMessageId String?          @unique
+  status          EmailLogStatus   @default(QUEUED)
+  error           String?
+  sentAt          DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@map("email_logs")
 }

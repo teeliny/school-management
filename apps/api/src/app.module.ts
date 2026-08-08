@@ -18,6 +18,7 @@ import { CalendarModule } from "./calendar/calendar.module";
 import { AttendanceModule } from "./attendance/attendance.module";
 import { FeesModule } from "./fees/fees.module";
 import { StorageModule } from "./storage/storage.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { StorageModule } from "./storage/storage.module";
     CalendarModule,
     AttendanceModule,
     FeesModule,
+    NotificationsModule,
     HealthModule,
   ],
 })
