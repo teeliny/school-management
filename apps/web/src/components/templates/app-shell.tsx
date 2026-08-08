@@ -11,6 +11,7 @@ import {
   BookOpen,
   CalendarClock,
   CalendarCheck,
+  Wallet,
   Building2,
   LogOut,
   ClipboardList,
@@ -86,6 +87,15 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           user.assignmentTypes.includes("REGISTRAR") ||
           user.assignmentTypes.includes("CLASS_TEACHER") ||
           user.assignmentTypes.includes("SUBJECT_TEACHER"),
+      },
+      {
+        href: "/fees",
+        label: "Fees",
+        icon: Wallet,
+        // Deliberately narrower than `isAdmin` — a plain Admin has zero
+        // visibility into the fees domain (matches the backend CASL grant).
+        visible: ({ user }) =>
+          user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("BURSAR") || user.roles.includes("PARENT"),
       },
     ],
   },
