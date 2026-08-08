@@ -89,6 +89,17 @@ describe("AbilityFactory", () => {
     expect(ability.can("manage", "Subject")).toBe(false);
   });
 
+  it("a REGISTRAR can read StaffProfile (for the timetable/attendance staff pickers) but not manage it", () => {
+    const ability = factory.createForUser(userWith(["STAFF"], ["REGISTRAR"]));
+    expect(ability.can("read", "StaffProfile")).toBe(true);
+    expect(ability.can("manage", "StaffProfile")).toBe(false);
+  });
+
+  it("a bare STAFF user (no REGISTRAR assignment) cannot read StaffProfile", () => {
+    const ability = factory.createForUser(userWith(["STAFF"]));
+    expect(ability.can("read", "StaffProfile")).toBe(false);
+  });
+
   it("Broadsheet is readable by SUPER_ADMIN and by a PRINCIPAL/HEADTEACHER assignment, but not by ADMIN or a bare STAFF/REGISTRAR", () => {
     expect(factory.createForUser(userWith(["SUPER_ADMIN"])).can("read", "Broadsheet")).toBe(true);
     expect(factory.createForUser(userWith(["STAFF"], ["PRINCIPAL"])).can("read", "Broadsheet")).toBe(true);

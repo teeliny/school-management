@@ -111,6 +111,11 @@ export class AbilityFactory {
     // exactly this one extra permission, nothing else).
     if (user.assignmentTypes?.includes("REGISTRAR")) {
       can("manage", "TimetableSlot");
+      // Needed to pick a staff member for a TimetableSlot and to build the
+      // roster for a STAFF-type attendance register below — StaffProfile
+      // otherwise only appears in the ADMIN branch above, which a plain
+      // Registrar doesn't get.
+      can("read", "StaffProfile");
 
       // PRD §3.7/§6.5 FR5.1/FR5.3: Registrar takes STAFF-type attendance
       // (session write scoped to type=STAFF via the condition below) and

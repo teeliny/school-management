@@ -50,7 +50,7 @@ export class StaffProfileController {
   ) {}
 
   @Get()
-  @CheckPolicies((ability) => ability.can("manage", "StaffProfile"))
+  @CheckPolicies((ability) => ability.can("read", "StaffProfile"))
   findAll() {
     return this.service.findAll();
   }

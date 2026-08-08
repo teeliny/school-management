@@ -10,6 +10,7 @@ import {
   Mail,
   BookOpen,
   CalendarClock,
+  CalendarCheck,
   Building2,
   LogOut,
   ClipboardList,
@@ -70,6 +71,21 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         label: "Timetable",
         icon: CalendarClock,
         visible: ({ isAdmin, user }) => isAdmin || user.assignmentTypes.includes("REGISTRAR"),
+      },
+    ],
+  },
+  {
+    eyebrow: "Operations",
+    items: [
+      {
+        href: "/attendance",
+        label: "Attendance",
+        icon: CalendarCheck,
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          user.assignmentTypes.includes("REGISTRAR") ||
+          user.assignmentTypes.includes("CLASS_TEACHER") ||
+          user.assignmentTypes.includes("SUBJECT_TEACHER"),
       },
     ],
   },
