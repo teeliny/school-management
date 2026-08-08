@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
+import { InvoicePaymentsList } from "./invoice-payments-list";
+import { RecordPaymentForm } from "./record-payment-form";
 
 type InvoiceStatus = "UNPAID" | "PARTIAL" | "PAID" | "OVERDUE";
 interface InvoiceLineItem {
@@ -35,21 +37,34 @@ const STATUS_VARIANT: Record<InvoiceStatus, BadgeVariant> = {
  * "Pay online" is only ever shown to a PARENT — the backend already scopes
  * `GET /invoices/:id` so a parent can only ever land here on her own ward's
  * invoice, so no extra guardian check is needed client-side beyond the role
- * check. Bursar/Super-Admin get a read-only view here (cash/manual-transfer
- * recording is a later slice).
+ * check. Bursar/Super-Admin get `RecordPaymentForm` instead (cash/manual-
+ * transfer recording) — the two are mutually exclusive per viewer.
  */
-export function InvoiceDetail({ invoiceId, isParent }: { invoiceId: string; isParent: boolean }) {
+export function InvoiceDetail({
+  invoiceId,
+  isParent,
+  canManageFees,
+}: {
+  invoiceId: string;
+  isParent: boolean;
+  canManageFees: boolean;
+}) {
   const [invoice, setInvoice] = useState<InvoiceDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [payingUp, setPayingUp] = useState(false);
+  const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
 
-  useEffect(() => {
-    setInvoice(null);
+  const load = useCallback(() => {
     setError(null);
     apiFetch<InvoiceDetailData>(`/invoices/${invoiceId}`, { auth: true })
       .then(setInvoice)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load invoice"));
   }, [invoiceId]);
+
+  useEffect(() => {
+    setInvoice(null);
+    load();
+  }, [invoiceId, load]);
 
   async function handlePayOnline() {
     setError(null);
@@ -60,11 +75,19 @@ export function InvoiceDetail({ invoiceId, isParent }: { invoiceId: string; isPa
         auth: true,
         body: { invoiceId },
       });
+      // No apps/api change needed for /payments/complete to know which
+      // invoice to show: stash it here, read it back on the return trip.
+      sessionStorage.setItem("pendingInvoiceId", invoiceId);
       window.location.href = checkoutUrl;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to start checkout");
       setPayingUp(false);
     }
+  }
+
+  function handleRecorded() {
+    load();
+    setPaymentsRefreshKey((k) => k + 1);
   }
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
@@ -120,6 +143,15 @@ export function InvoiceDetail({ invoiceId, isParent }: { invoiceId: string; isPa
           {payingUp ? "Redirecting…" : "Pay online"}
         </Button>
       )}
+
+      {canManageFees && invoice.outstandingBalance > 0 && (
+        <RecordPaymentForm invoiceId={invoiceId} outstandingBalance={invoice.outstandingBalance} onRecorded={handleRecorded} />
+      )}
+
+      <div className="border-t border-border pt-3">
+        <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted">Payments</p>
+        <InvoicePaymentsList invoiceId={invoiceId} refreshKey={paymentsRefreshKey} />
+      </div>
     </div>
   );
 }

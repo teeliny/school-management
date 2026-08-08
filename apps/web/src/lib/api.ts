@@ -24,10 +24,14 @@ export async function apiFetch<T>(
   path: string,
   options: { method?: string; body?: unknown; auth?: boolean } = {},
 ): Promise<T> {
+  // A FormData body (the manual-bank-transfer proof-of-payment upload) must
+  // NOT be JSON-stringified, and the Content-Type header must be left unset
+  // so the browser can attach its own `multipart/form-data; boundary=...`.
+  const isFormData = options.body instanceof FormData;
   const res = await fetch(`/api/proxy${path}`, {
     method: options.method ?? "GET",
-    headers: { "Content-Type": "application/json" },
-    body: options.body ? JSON.stringify(options.body) : undefined,
+    headers: isFormData ? undefined : { "Content-Type": "application/json" },
+    body: isFormData ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
   });
 
   if (!res.ok) {

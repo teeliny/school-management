@@ -9,6 +9,7 @@ import { FeeStructureManager } from "../../components/organisms/fee-structure-ma
 import { GenerateInvoicesForm } from "../../components/organisms/generate-invoices-form";
 import { InvoiceList } from "../../components/organisms/invoice-list";
 import { InvoiceDetail } from "../../components/organisms/invoice-detail";
+import { PendingApprovalsQueue } from "../../components/organisms/pending-approvals-queue";
 
 export default function FeesPage() {
   const { user, loading, logout } = useCurrentUser();
@@ -29,6 +30,9 @@ export default function FeesPage() {
   // visibility into Fees.
   const canManageFees = user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("BURSAR");
   const isParent = user.roles.includes("PARENT");
+  // Narrower than canManageFees — approve/reject is Super-Admin only (a
+  // manual role check on the backend, not a CASL grant Bursar also has).
+  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
 
   if (!canManageFees && !isParent) {
     return (
@@ -58,6 +62,13 @@ export default function FeesPage() {
         </div>
       )}
 
+      {isSuperAdmin && (
+        <Card className="mb-4">
+          <CardHeader title="Pending approvals" sub="Manual bank-transfer submissions awaiting review" />
+          <PendingApprovalsQueue />
+        </Card>
+      )}
+
       <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
         <Card>
           <CardHeader title="Invoices" sub={canManageFees ? "School-wide" : "Your children"} />
@@ -66,7 +77,7 @@ export default function FeesPage() {
         {selectedInvoiceId && (
           <Card>
             <CardHeader title="Invoice detail" />
-            <InvoiceDetail invoiceId={selectedInvoiceId} isParent={isParent} />
+            <InvoiceDetail invoiceId={selectedInvoiceId} isParent={isParent} canManageFees={canManageFees} />
           </Card>
         )}
       </div>
