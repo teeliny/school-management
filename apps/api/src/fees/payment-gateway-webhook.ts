@@ -14,7 +14,7 @@ import {
   MONNIFY_SIGNATURE_HEADER,
   PAYSTACK_SIGNATURE_HEADER,
   type PaymentGatewayAdapter,
-} from "@school/types";
+} from "@school/types/payment-gateways";
 import { PrismaService } from "../prisma/prisma.service";
 import { PaymentService } from "./payment";
 import { PaymentGatewayCredentialsService } from "./gateway/payment-gateway-credentials";

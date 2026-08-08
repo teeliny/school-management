@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PaymentGatewayProvider } from "@prisma/client";
-import type { PaymentGatewayCredentials } from "@school/types";
+import type { PaymentGatewayCredentials } from "@school/types/payment-gateways";
 import { PrismaService } from "../prisma/prisma.service";
 import { EnvelopeEncryptionService } from "../common/crypto/envelope-encryption.service";
 

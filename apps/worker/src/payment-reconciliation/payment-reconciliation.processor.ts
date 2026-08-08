@@ -2,15 +2,12 @@ import { Inject, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job, Queue } from "bullmq";
 import { PaymentGatewayProvider, PaymentMethod, PaymentStatus } from "@prisma/client";
+import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
 import {
-  computeInvoiceStatus,
-  computeOutstandingBalance,
   mapChannelToPaymentMethod,
-  QUEUE_NAMES,
   type GatewayTransactionResult,
   type PaymentGatewayAdapter,
-  type ReceiptGenerationJob,
-} from "@school/types";
+} from "@school/types/payment-gateways";
 import { PrismaService } from "../prisma/prisma.service";
 import { PaymentGatewayCredentialsService } from "./payment-gateway-credentials";
 import { MONNIFY_ADAPTER, PAYSTACK_ADAPTER } from "./payment-gateway.tokens";

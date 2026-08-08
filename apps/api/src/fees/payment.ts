@@ -20,15 +20,12 @@ import { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import { memoryStorage } from "multer";
 import { PaymentGatewayProvider, PaymentMethod, PaymentStatus, Prisma } from "@prisma/client";
+import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
 import {
-  computeInvoiceStatus,
-  computeOutstandingBalance,
   mapChannelToPaymentMethod,
-  QUEUE_NAMES,
   type GatewayTransactionResult,
   type PaymentGatewayAdapter,
-  type ReceiptGenerationJob,
-} from "@school/types";
+} from "@school/types/payment-gateways";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";

@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { MonnifyAdapter, MONNIFY_SIGNATURE_HEADER, type PaymentGatewayCredentials } from "@school/types";
+import { MonnifyAdapter, MONNIFY_SIGNATURE_HEADER, type PaymentGatewayCredentials } from "@school/types/payment-gateways";
 
 const CREDENTIALS: PaymentGatewayCredentials = {
   apiKey: "MK_TEST_KEY",

@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { PaystackAdapter, PAYSTACK_SIGNATURE_HEADER, type PaymentGatewayCredentials } from "@school/types";
+import { PaystackAdapter, PAYSTACK_SIGNATURE_HEADER, type PaymentGatewayCredentials } from "@school/types/payment-gateways";
 
 const CREDENTIALS: PaymentGatewayCredentials = {
   apiKey: "pk_test_key",

@@ -1,4 +1,4 @@
-import { mapChannelToPaymentMethod } from "@school/types";
+import { mapChannelToPaymentMethod } from "@school/types/payment-gateways";
 
 describe("mapChannelToPaymentMethod (shared between Monnify and Paystack)", () => {
   it.each([

@@ -1,7 +1,8 @@
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
-import { MonnifyAdapter, PaystackAdapter, QUEUE_NAMES, type PaymentGatewayAdapter } from "@school/types";
+import { QUEUE_NAMES } from "@school/types";
+import { MonnifyAdapter, PaystackAdapter, type PaymentGatewayAdapter } from "@school/types/payment-gateways";
 import { FeeStructureController, FeeStructureService } from "./fee-structure";
 import { InvoiceController, InvoiceService } from "./invoice";
 import { PaymentController, PaymentService } from "./payment";

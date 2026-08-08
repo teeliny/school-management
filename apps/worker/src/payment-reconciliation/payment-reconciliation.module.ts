@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bullmq";
-import { MonnifyAdapter, PaystackAdapter, QUEUE_NAMES } from "@school/types";
+import { QUEUE_NAMES } from "@school/types";
+import { MonnifyAdapter, PaystackAdapter } from "@school/types/payment-gateways";
 import { PaymentReconciliationProcessor } from "./payment-reconciliation.processor";
 import { PaymentGatewayCredentialsService } from "./payment-gateway-credentials";
 import { MONNIFY_ADAPTER, PAYSTACK_ADAPTER } from "./payment-gateway.tokens";
