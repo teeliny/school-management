@@ -10,6 +10,8 @@ import { GenerateInvoicesForm } from "../../components/organisms/generate-invoic
 import { InvoiceList } from "../../components/organisms/invoice-list";
 import { InvoiceDetail } from "../../components/organisms/invoice-detail";
 import { PendingApprovalsQueue } from "../../components/organisms/pending-approvals-queue";
+import { PaymentGatewayConfigList } from "../../components/organisms/payment-gateway-config-list";
+import { PaymentLedger } from "../../components/organisms/payment-ledger";
 
 export default function FeesPage() {
   const { user, loading, logout } = useCurrentUser();
@@ -69,7 +71,14 @@ export default function FeesPage() {
         </Card>
       )}
 
-      <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
+      {canManageFees && (
+        <Card className="mb-4">
+          <CardHeader title="Payment gateway" sub="Read-only — credentials are set via env var + redeploy" />
+          <PaymentGatewayConfigList />
+        </Card>
+      )}
+
+      <div className="mb-4 grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
         <Card>
           <CardHeader title="Invoices" sub={canManageFees ? "School-wide" : "Your children"} />
           <InvoiceList canManageFees={canManageFees} refreshKey={refreshKey} onSelect={setSelectedInvoiceId} />
@@ -81,6 +90,11 @@ export default function FeesPage() {
           </Card>
         )}
       </div>
+
+      <Card>
+        <CardHeader title="Payment history" sub={canManageFees ? "School-wide" : "Your children"} />
+        <PaymentLedger canManageFees={canManageFees} />
+      </Card>
     </AppShell>
   );
 }
