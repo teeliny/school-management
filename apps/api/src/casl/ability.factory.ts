@@ -38,7 +38,12 @@ export type Subject =
   | "Broadsheet"
   | "AttendanceSession"
   | "AttendanceRecord"
-  | "SchoolHoliday";
+  | "SchoolHoliday"
+  | "FeeStructure"
+  | "Invoice"
+  | "InvoiceLineItem"
+  | "Payment"
+  | "Receipt";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;
@@ -111,6 +116,27 @@ export class AbilityFactory {
       can("read", "AttendanceSession");
       can("manage", "AttendanceSession", { type: "STAFF" });
       can("manage", "AttendanceRecord");
+    }
+
+    // PRD §3.9/§5: the entire fee/finance domain is invisible to Admin —
+    // deliberately no grant for any of these five Subjects anywhere in the
+    // ADMIN branch above. Bursar (StaffAssignment.assignmentType = BURSAR)
+    // gets an unconditioned domain-wide grant; Super-Admin already has it
+    // for free via "manage all". No CASL condition is used here at all —
+    // unlike Attendance, per-row scoping (which parent can see which
+    // invoice) is done entirely at the service layer, sidestepping the
+    // bare-string-vs-conditioned-grant pitfall that pattern hit.
+    if (user.assignmentTypes?.includes("BURSAR")) {
+      can("manage", ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt"]);
+    }
+
+    // PRD FR7.4: a parent may read (never write) invoices/payments/receipts
+    // — scoped to her own wards at the service layer (StudentGuardian join,
+    // same shape as TermReportCardService.findForUser). FeeStructure is
+    // deliberately not granted here — PRD's parent-access line covers
+    // invoices/receipts only, not the raw fee schedule.
+    if (user.roles.includes("PARENT")) {
+      can("read", ["Invoice", "Payment", "Receipt"]);
     }
 
     // Broadsheet is deliberately Super-Admin + Principal/Headteacher only —

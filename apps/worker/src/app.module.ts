@@ -6,6 +6,7 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { StorageModule } from "./storage/storage.module";
 import { AssessmentSweepModule } from "./assessment-sweep/assessment-sweep.module";
 import { ReportCardModule } from "./report-card/report-card.module";
+import { ReceiptModule } from "./receipt/receipt.module";
 
 // First real BullMQ consumer module (Phase 4, docs/ARCHITECTURE.md §8) — the
 // connection config is duplicated from apps/api/src/redis/redis.module.ts's
@@ -26,6 +27,7 @@ import { ReportCardModule } from "./report-card/report-card.module";
     StorageModule,
     AssessmentSweepModule,
     ReportCardModule,
+    ReceiptModule,
     HealthModule,
   ],
 })

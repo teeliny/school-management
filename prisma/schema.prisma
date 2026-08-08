@@ -69,6 +69,7 @@ model User {
   generatedReportCards             TermReportCard[]
   createdReportWindows             ReportWindow[]
   disabledClassSubjectTermStatuses ClassSubjectTermStatus[]
+  paymentsMade                     Payment[]
 
   @@map("users")
 }
@@ -166,6 +167,7 @@ model AcademicSession {
   timetableSlots            TimetableSlot[]
   skillAssessmentItems      SkillAssessmentItem[]
   schoolHolidays            SchoolHoliday[]
+  feeStructures             FeeStructure[]
 
   @@map("academic_sessions")
 }
@@ -190,6 +192,8 @@ model Term {
   reportComments           ReportComment[]
   classSubjectTermStatuses ClassSubjectTermStatus[]
   schoolHolidays           SchoolHoliday[]
+  feeStructures            FeeStructure[]
+  invoices                 Invoice[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -210,7 +214,8 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms ClassArm[]
+  classArms     ClassArm[]
+  feeStructures FeeStructure[]
 
   @@map("class_levels")
 }
@@ -321,6 +326,7 @@ model StaffProfile {
   skillRatingsGiven       SkillRating[]
   reportCommentsGiven     ReportComment[]
   attendanceSessionsTaken AttendanceSession[]
+  paymentsRecorded        Payment[]
 
   @@map("staff_profiles")
 }
@@ -371,6 +377,7 @@ model StudentProfile {
   skillRatings       SkillRating[]
   reportComments     ReportComment[]
   termReportCards    TermReportCard[]
+  invoices           Invoice[]
 
   @@map("student_profiles")
 }
@@ -1074,4 +1081,167 @@ enum AttendanceStatus {
 enum AttendanceGranularity {
   DAILY
   MORNING_AND_AFTERNOON
+}
+
+// PRD §3.9/§6.7, Phase 5 Slice 2a: fee structures, invoices, and payments.
+// Admin has zero visibility into this domain (PRD §5) — only Super-Admin
+// and a StaffAssignment(BURSAR) staff member get write access; parents get
+// read access scoped to their own wards' invoices/receipts only. See
+// ability.factory.ts: no grant is ever added to the ADMIN branch for any
+// model below.
+model FeeStructure {
+  id                String          @id @default(uuid())
+  // null = school-wide; set = applies only to that class level.
+  classLevelId      String?
+  classLevel        ClassLevel?     @relation(fields: [classLevelId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  termId            String
+  term              Term            @relation(fields: [termId], references: [id])
+  name              String
+  amount            Decimal         @db.Decimal(12, 2)
+  isMandatory       Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  invoiceLineItems InvoiceLineItem[]
+
+  @@map("fee_structures")
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+// Outstanding balance is deliberately NOT a column here (same "avoid a
+// second source of truth" reasoning as the Academic Calendar, PRD §3.11) —
+// it's always computed live from totalAmount, lineItems, and successful
+// Payments (packages/types' computeOutstandingBalance). `status` IS a
+// stored, indexed column (list-filtering performance), but it's always
+// recomputed in the same transaction as whatever wrote a Payment or
+// DiscountRequest against this invoice — never hand-set independently.
+model Invoice {
+  id          String        @id @default(uuid())
+  studentId   String
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId      String
+  term        Term          @relation(fields: [termId], references: [id])
+  // Snapshot of the sum of FEE-type line items at generation time — never
+  // mutated afterward, even once a DISCOUNT line item is later added
+  // (Slice 2d); the discount reduces outstandingBalance, not totalAmount.
+  totalAmount Decimal       @db.Decimal(12, 2)
+  status      InvoiceStatus @default(UNPAID)
+  dueDate     DateTime      @db.Date
+  generatedAt DateTime      @default(now())
+  // Unused until Slice 2b (gateway checkout) — the field name is
+  // provider-agnostic per PRD §3.9, so a school moving between gateways
+  // later needs no schema change.
+  gatewayPaymentReference String?
+
+  lineItems InvoiceLineItem[]
+  payments  Payment[]
+
+  @@unique([studentId, termId])
+  @@index([status])
+  @@map("invoices")
+}
+
+enum InvoiceLineItemType {
+  FEE
+  DISCOUNT
+}
+
+model InvoiceLineItem {
+  id             String              @id @default(uuid())
+  invoiceId      String
+  invoice        Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  // null for a DISCOUNT line (Slice 2d) — every FEE line traces back to the
+  // FeeStructure row that produced it.
+  feeStructureId String?
+  feeStructure   FeeStructure?       @relation(fields: [feeStructureId], references: [id])
+  type           InvoiceLineItemType
+  // Negative for DISCOUNT.
+  amount         Decimal             @db.Decimal(12, 2)
+  description    String
+
+  @@map("invoice_line_items")
+}
+
+enum PaymentMethod {
+  GATEWAY_CARD
+  GATEWAY_TRANSFER
+  GATEWAY_USSD
+  GATEWAY_RESERVED_ACCOUNT
+  BANK_TRANSFER_MANUAL
+  CASH
+}
+
+enum PaymentGatewayProvider {
+  MONNIFY
+  PAYSTACK
+}
+
+enum PaymentStatus {
+  PENDING
+  PENDING_APPROVAL
+  SUCCESSFUL
+  FAILED
+  REVERSED
+  REJECTED
+}
+
+// Full PRD §3.9 shape built now so later slices (2b gateway, 2c manual
+// bank-transfer) extend behavior, not schema — this slice's PaymentService
+// only ever writes method=CASH/status=SUCCESSFUL, rejecting any other
+// method outright as a backstop (same shape as ScoreEntryService's
+// group-subject backstop). gatewayProvider/gatewayTransactionReference
+// (Slice 2b) and proofOfPaymentUrl/reviewedByUserId/reviewedAt/
+// rejectionReason (Slice 2c) are unused until their respective slices.
+model Payment {
+  id                           String                   @id @default(uuid())
+  invoiceId                    String
+  invoice                      Invoice                  @relation(fields: [invoiceId], references: [id])
+  amount                       Decimal                  @db.Decimal(12, 2)
+  // The paying parent; null for a staff-recorded entry (CASH today).
+  paidByUserId                 String?
+  paidByUser                   User?                    @relation(fields: [paidByUserId], references: [id])
+  method                       PaymentMethod
+  gatewayProvider              PaymentGatewayProvider?
+  gatewayTransactionReference  String?
+  status                       PaymentStatus
+  paidAt                       DateTime?
+  // The Bursar; null for an override-recorded entry by someone with no
+  // StaffProfile (same Admin-override-with-no-StaffProfile reason as
+  // ScoreEntry.enteredByStaffId).
+  recordedByStaffId            String?
+  recordedByStaff              StaffProfile?            @relation(fields: [recordedByStaffId], references: [id])
+  proofOfPaymentUrl            String?
+  reviewedByUserId             String?
+  reviewedAt                   DateTime?
+  rejectionReason               String?
+  createdAt                    DateTime                 @default(now())
+
+  receipt Receipt?
+
+  @@map("payments")
+}
+
+// Generated uniformly the moment a Payment reaches SUCCESSFUL, regardless of
+// path (PRD §3.9/ARCHITECTURE §10.4) — this slice is the CASH path; gateway/
+// manual-transfer paths (later slices) create a Receipt the same way.
+model Receipt {
+  id            String   @id @default(uuid())
+  paymentId     String   @unique
+  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  // Derived from the Payment's own UUID (`RCT-{payment.id.slice(0,8)}`,
+  // uppercased) — globally unique with no counting/sequence query and no
+  // race window, unlike a running count would have.
+  receiptNumber String   @unique
+  // Null until the async render job (apps/worker) completes.
+  pdfUrl        String?
+  issuedAt      DateTime @default(now())
+
+  @@map("receipts")
 }

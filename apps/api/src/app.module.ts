@@ -16,6 +16,7 @@ import { TimetableModule } from "./timetable/timetable.module";
 import { AssessmentsModule } from "./assessments/assessments.module";
 import { CalendarModule } from "./calendar/calendar.module";
 import { AttendanceModule } from "./attendance/attendance.module";
+import { FeesModule } from "./fees/fees.module";
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { AttendanceModule } from "./attendance/attendance.module";
     AssessmentsModule,
     CalendarModule,
     AttendanceModule,
+    FeesModule,
     HealthModule,
   ],
 })

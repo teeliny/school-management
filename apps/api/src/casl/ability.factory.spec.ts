@@ -133,4 +133,48 @@ describe("AbilityFactory", () => {
     expect(ability.can("manage", subject("AttendanceSession", { type: "STAFF" }))).toBe(false);
     expect(ability.can("manage", "SchoolHoliday")).toBe(false);
   });
+
+  // PRD §3.9/§6.7 (Phase 5 slice 2a — Fees core)
+  const FEE_SUBJECTS = ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt"] as const;
+
+  it("a BURSAR can manage the whole fees domain", () => {
+    const ability = factory.createForUser(userWith(["STAFF"], ["BURSAR"]));
+    for (const subjectName of FEE_SUBJECTS) {
+      expect(ability.can("manage", subjectName)).toBe(true);
+    }
+  });
+
+  it("SUPER_ADMIN can manage the whole fees domain via manage-all", () => {
+    const ability = factory.createForUser(userWith(["SUPER_ADMIN"]));
+    for (const subjectName of FEE_SUBJECTS) {
+      expect(ability.can("manage", subjectName)).toBe(true);
+    }
+  });
+
+  it("ADMIN has zero visibility into the fees domain — the one place a regression would be easy to miss", () => {
+    const ability = factory.createForUser(userWith(["ADMIN"]));
+    for (const subjectName of FEE_SUBJECTS) {
+      expect(ability.can("manage", subjectName)).toBe(false);
+      expect(ability.can("read", subjectName)).toBe(false);
+    }
+  });
+
+  it("a PARENT can read invoices/payments/receipts but not manage them, and cannot read FeeStructure", () => {
+    const ability = factory.createForUser(userWith(["PARENT"]));
+    expect(ability.can("read", "Invoice")).toBe(true);
+    expect(ability.can("read", "Payment")).toBe(true);
+    expect(ability.can("read", "Receipt")).toBe(true);
+    expect(ability.can("manage", "Invoice")).toBe(false);
+    expect(ability.can("read", "FeeStructure")).toBe(false);
+  });
+
+  it("a bare STAFF/STUDENT user has no fees permissions at all", () => {
+    for (const role of ["STAFF", "STUDENT"]) {
+      const ability = factory.createForUser(userWith([role]));
+      for (const subjectName of FEE_SUBJECTS) {
+        expect(ability.can("manage", subjectName)).toBe(false);
+        expect(ability.can("read", subjectName)).toBe(false);
+      }
+    }
+  });
 });
