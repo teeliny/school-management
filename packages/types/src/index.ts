@@ -5,3 +5,4 @@ export * from "./grade-scale";
 export * from "./class-level-category";
 export * from "./attendance-rules";
 export * from "./fees-rules";
+export * from "./payment-gateways";

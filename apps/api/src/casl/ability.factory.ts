@@ -43,7 +43,9 @@ export type Subject =
   | "Invoice"
   | "InvoiceLineItem"
   | "Payment"
-  | "Receipt";
+  | "Receipt"
+  | "PaymentGatewayConfig"
+  | "DiscountRequest";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;
@@ -127,7 +129,11 @@ export class AbilityFactory {
     // invoice) is done entirely at the service layer, sidestepping the
     // bare-string-vs-conditioned-grant pitfall that pattern hit.
     if (user.assignmentTypes?.includes("BURSAR")) {
-      can("manage", ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt"]);
+      can("manage", ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt", "DiscountRequest"]);
+
+      // PRD FR7.7, Phase 5 Slice 2b: gateway credentials configuration is
+      // part of the same Bursar/Super-Admin-only fee/finance domain.
+      can("manage", "PaymentGatewayConfig");
     }
 
     // PRD FR7.4: a parent may read (never write) invoices/payments/receipts

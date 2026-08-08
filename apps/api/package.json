@@ -16,6 +16,8 @@
     "seed:demo": "node dist/seed-demo-data.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1101.0",
+    "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@casl/ability": "^6.7.0",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^10.4.0",
@@ -33,6 +35,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "ioredis": "^5.4.0",
+    "multer": "^2.0.2",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
@@ -46,6 +49,7 @@
     "@school/eslint-config": "workspace:*",
     "@school/tsconfig": "workspace:*",
     "@types/jest": "^29.5.0",
+    "@types/multer": "^1.4.12",
     "@types/node": "^22.10.0",
     "@types/passport-jwt": "^4.0.1",
     "eslint": "^9.17.0",

@@ -327,6 +327,7 @@ model StaffProfile {
   reportCommentsGiven     ReportComment[]
   attendanceSessionsTaken AttendanceSession[]
   paymentsRecorded        Payment[]
+  discountRequestsRaised  DiscountRequest[]
 
   @@map("staff_profiles")
 }
@@ -482,23 +483,23 @@ enum SubjectType {
 }
 
 model Subject {
-  id                  String      @id @default(uuid())
+  id                  String    @id @default(uuid())
   name                String
-  code                String      @unique
-  isGroup             Boolean     @default(false)
+  code                String    @unique
+  isGroup             Boolean   @default(false)
   parentSubjectId     String?
-  parentSubject       Subject?    @relation("SubjectGroup", fields: [parentSubjectId], references: [id])
-  childSubjects       Subject[]   @relation("SubjectGroup")
+  parentSubject       Subject?  @relation("SubjectGroup", fields: [parentSubjectId], references: [id])
+  childSubjects       Subject[] @relation("SubjectGroup")
   // Phase 7 data flag only (PRD §3.3/§3.8) — no scheduling behavior yet.
-  requiresCalculation Boolean     @default(false)
+  requiresCalculation Boolean   @default(false)
   // Catalogue-wide disable (independent of ClassSubjectTermStatus's
   // per-class-per-term disable) — hides the subject/child from new class
   // assignments and blocks new ScoreEntry/StudentSubjectEnrollment writes
   // for it everywhere, until re-enabled. Existing historical records are
   // untouched.
-  isActive            Boolean     @default(true)
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   classSubjects            ClassSubject[]
   enrollments              StudentSubjectEnrollment[]
@@ -1123,25 +1124,28 @@ enum InvoiceStatus {
 // recomputed in the same transaction as whatever wrote a Payment or
 // DiscountRequest against this invoice — never hand-set independently.
 model Invoice {
-  id          String        @id @default(uuid())
-  studentId   String
-  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  termId      String
-  term        Term          @relation(fields: [termId], references: [id])
+  id                      String         @id @default(uuid())
+  studentId               String
+  student                 StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId                  String
+  term                    Term           @relation(fields: [termId], references: [id])
   // Snapshot of the sum of FEE-type line items at generation time — never
   // mutated afterward, even once a DISCOUNT line item is later added
   // (Slice 2d); the discount reduces outstandingBalance, not totalAmount.
-  totalAmount Decimal       @db.Decimal(12, 2)
-  status      InvoiceStatus @default(UNPAID)
-  dueDate     DateTime      @db.Date
-  generatedAt DateTime      @default(now())
-  // Unused until Slice 2b (gateway checkout) — the field name is
-  // provider-agnostic per PRD §3.9, so a school moving between gateways
-  // later needs no schema change.
-  gatewayPaymentReference String?
+  totalAmount             Decimal        @db.Decimal(12, 2)
+  status                  InvoiceStatus  @default(UNPAID)
+  dueDate                 DateTime       @db.Date
+  generatedAt             DateTime       @default(now())
+  // Phase 5 Slice 2b: the merchant reference sent to the active gateway at
+  // checkout time — provider-agnostic field name per PRD §3.9, so a school
+  // moving between gateways later needs no schema change. @unique because
+  // the webhook handler resolves an Invoice directly by this value (the
+  // gateway echoes it back in every webhook/verify call).
+  gatewayPaymentReference String?        @unique
 
-  lineItems InvoiceLineItem[]
-  payments  Payment[]
+  lineItems        InvoiceLineItem[]
+  payments         Payment[]
+  discountRequests DiscountRequest[]
 
   @@unique([studentId, termId])
   @@index([status])
@@ -1151,6 +1155,47 @@ model Invoice {
 enum InvoiceLineItemType {
   FEE
   DISCOUNT
+}
+
+enum DiscountRequestType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum DiscountRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// PRD FR7.8/ARCHITECTURE §10.3, Phase 5 Slice 2d: Bursar raises against a
+// specific Invoice (termly by construction — a new term means a new
+// Invoice, so a discount is inherently scoped to it); only Super-Admin may
+// approve/reject (reviewedByUserId is a plain scalar, no relation — same
+// as Payment.reviewedByUserId). Approval adds a negative DISCOUNT
+// InvoiceLineItem and recomputes the invoice's outstanding balance/status
+// in the same transaction; rejection leaves the invoice untouched.
+model DiscountRequest {
+  id                 String                @id @default(uuid())
+  invoiceId          String
+  invoice            Invoice               @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  // The Bursar; null for an override-raised entry by someone with no
+  // StaffProfile (same reasoning as Payment.recordedByStaffId).
+  requestedByStaffId String?
+  requestedByStaff   StaffProfile?         @relation(fields: [requestedByStaffId], references: [id])
+  type               DiscountRequestType
+  // The raw requested number (a 0-100 percentage, or a currency amount) —
+  // the applied discount is computed at approval time against the
+  // invoice's live totalAmount, not snapshotted here.
+  value              Decimal               @db.Decimal(12, 2)
+  reason             String
+  status             DiscountRequestStatus @default(PENDING)
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  rejectionReason    String?
+  createdAt          DateTime              @default(now())
+
+  @@map("discount_requests")
 }
 
 model InvoiceLineItem {
@@ -1200,28 +1245,28 @@ enum PaymentStatus {
 // (Slice 2b) and proofOfPaymentUrl/reviewedByUserId/reviewedAt/
 // rejectionReason (Slice 2c) are unused until their respective slices.
 model Payment {
-  id                           String                   @id @default(uuid())
-  invoiceId                    String
-  invoice                      Invoice                  @relation(fields: [invoiceId], references: [id])
-  amount                       Decimal                  @db.Decimal(12, 2)
+  id                          String                  @id @default(uuid())
+  invoiceId                   String
+  invoice                     Invoice                 @relation(fields: [invoiceId], references: [id])
+  amount                      Decimal                 @db.Decimal(12, 2)
   // The paying parent; null for a staff-recorded entry (CASH today).
-  paidByUserId                 String?
-  paidByUser                   User?                    @relation(fields: [paidByUserId], references: [id])
-  method                       PaymentMethod
-  gatewayProvider              PaymentGatewayProvider?
-  gatewayTransactionReference  String?
-  status                       PaymentStatus
-  paidAt                       DateTime?
+  paidByUserId                String?
+  paidByUser                  User?                   @relation(fields: [paidByUserId], references: [id])
+  method                      PaymentMethod
+  gatewayProvider             PaymentGatewayProvider?
+  gatewayTransactionReference String?
+  status                      PaymentStatus
+  paidAt                      DateTime?
   // The Bursar; null for an override-recorded entry by someone with no
   // StaffProfile (same Admin-override-with-no-StaffProfile reason as
   // ScoreEntry.enteredByStaffId).
-  recordedByStaffId            String?
-  recordedByStaff              StaffProfile?            @relation(fields: [recordedByStaffId], references: [id])
-  proofOfPaymentUrl            String?
-  reviewedByUserId             String?
-  reviewedAt                   DateTime?
-  rejectionReason               String?
-  createdAt                    DateTime                 @default(now())
+  recordedByStaffId           String?
+  recordedByStaff             StaffProfile?           @relation(fields: [recordedByStaffId], references: [id])
+  proofOfPaymentUrl           String?
+  reviewedByUserId            String?
+  reviewedAt                  DateTime?
+  rejectionReason             String?
+  createdAt                   DateTime                @default(now())
 
   receipt Receipt?
 
@@ -1244,4 +1289,33 @@ model Receipt {
   issuedAt      DateTime @default(now())
 
   @@map("receipts")
+}
+
+enum PaymentGatewayEnvironment {
+  SANDBOX
+  LIVE
+}
+
+// PRD §3.9 FR7.7, Phase 5 Slice 2b: one row per provider — both Monnify and
+// Paystack can be configured at once; PAYMENT_GATEWAY_PROVIDER (env var,
+// read once at boot) decides which is actually used for NEW checkouts
+// (ARCHITECTURE §5/§10). apiKey/secretKey are envelope-encrypted at rest
+// (EnvelopeEncryptionService) and never returned by the read endpoints.
+model PaymentGatewayConfig {
+  id                     String                    @id @default(uuid())
+  provider               PaymentGatewayProvider    @unique
+  apiKey                 String
+  secretKey              String
+  // Monnify-specific.
+  contractCode           String?
+  // Monnify-specific.
+  reservedAccountEnabled Boolean                   @default(false)
+  environment            PaymentGatewayEnvironment @default(SANDBOX)
+  // "This row's credentials are configured and usable," not "this is the
+  // chosen default" — that's PAYMENT_GATEWAY_PROVIDER's job.
+  isActive               Boolean                   @default(false)
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  @@map("payment_gateway_configs")
 }

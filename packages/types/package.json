@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "@school/tsconfig": "workspace:*",
+    "@types/node": "^22.10.0",
     "typescript": "^5.7.0"
   },
   "dependencies": {

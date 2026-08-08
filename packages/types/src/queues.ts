@@ -8,6 +8,7 @@ export const QUEUE_NAMES = {
   ASSESSMENT_SCHEDULE_SWEEP: "assessment-schedule-sweep",
   REPORT_CARD_GENERATION: "report-card-generation",
   RECEIPT_GENERATION: "receipt-generation",
+  PAYMENT_RECONCILIATION: "payment-reconciliation",
 } as const;
 
 export interface ReportCardGenerationJob {

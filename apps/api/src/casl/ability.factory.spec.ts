@@ -135,7 +135,7 @@ describe("AbilityFactory", () => {
   });
 
   // PRD §3.9/§6.7 (Phase 5 slice 2a — Fees core)
-  const FEE_SUBJECTS = ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt"] as const;
+  const FEE_SUBJECTS = ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt", "DiscountRequest"] as const;
 
   it("a BURSAR can manage the whole fees domain", () => {
     const ability = factory.createForUser(userWith(["STAFF"], ["BURSAR"]));
@@ -176,5 +176,16 @@ describe("AbilityFactory", () => {
         expect(ability.can("read", subjectName)).toBe(false);
       }
     }
+  });
+
+  // PRD FR7.7 (Phase 5 slice 2b — Payment Gateway Integration)
+  it("BURSAR and SUPER_ADMIN can manage PaymentGatewayConfig", () => {
+    expect(factory.createForUser(userWith(["STAFF"], ["BURSAR"])).can("manage", "PaymentGatewayConfig")).toBe(true);
+    expect(factory.createForUser(userWith(["SUPER_ADMIN"])).can("manage", "PaymentGatewayConfig")).toBe(true);
+  });
+
+  it("ADMIN cannot manage PaymentGatewayConfig — same fees-domain exclusion", () => {
+    expect(factory.createForUser(userWith(["ADMIN"])).can("manage", "PaymentGatewayConfig")).toBe(false);
+    expect(factory.createForUser(userWith(["ADMIN"])).can("read", "PaymentGatewayConfig")).toBe(false);
   });
 });

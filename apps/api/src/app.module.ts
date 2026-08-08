@@ -17,6 +17,7 @@ import { AssessmentsModule } from "./assessments/assessments.module";
 import { CalendarModule } from "./calendar/calendar.module";
 import { AttendanceModule } from "./attendance/attendance.module";
 import { FeesModule } from "./fees/fees.module";
+import { StorageModule } from "./storage/storage.module";
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { FeesModule } from "./fees/fees.module";
     CommonModule,
     PrismaModule,
     RedisModule,
+    StorageModule,
     // First producer-side BullMQ usage in apps/api (Phase 4 M4 — Admin-
     // triggered FULL_TERM report generation). Connection config duplicated
     // from apps/worker's own BullModule.forRootAsync, same REDIS_URL env var
