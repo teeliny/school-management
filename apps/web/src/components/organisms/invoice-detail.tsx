@@ -7,6 +7,8 @@ import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { InvoicePaymentsList } from "./invoice-payments-list";
 import { RecordPaymentForm } from "./record-payment-form";
+import { RequestDiscountForm } from "./request-discount-form";
+import { InvoiceDiscountRequestsList } from "./invoice-discount-requests-list";
 
 type InvoiceStatus = "UNPAID" | "PARTIAL" | "PAID" | "OVERDUE";
 interface InvoiceLineItem {
@@ -53,6 +55,7 @@ export function InvoiceDetail({
   const [error, setError] = useState<string | null>(null);
   const [payingUp, setPayingUp] = useState(false);
   const [paymentsRefreshKey, setPaymentsRefreshKey] = useState(0);
+  const [discountRequestsRefreshKey, setDiscountRequestsRefreshKey] = useState(0);
 
   const load = useCallback(() => {
     setError(null);
@@ -88,6 +91,10 @@ export function InvoiceDetail({
   function handleRecorded() {
     load();
     setPaymentsRefreshKey((k) => k + 1);
+  }
+
+  function handleDiscountRequested() {
+    setDiscountRequestsRefreshKey((k) => k + 1);
   }
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
@@ -148,10 +155,21 @@ export function InvoiceDetail({
         <RecordPaymentForm invoiceId={invoiceId} outstandingBalance={invoice.outstandingBalance} onRecorded={handleRecorded} />
       )}
 
+      {canManageFees && invoice.outstandingBalance > 0 && (
+        <RequestDiscountForm invoiceId={invoiceId} onRequested={handleDiscountRequested} />
+      )}
+
       <div className="border-t border-border pt-3">
         <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted">Payments</p>
         <InvoicePaymentsList invoiceId={invoiceId} refreshKey={paymentsRefreshKey} />
       </div>
+
+      {canManageFees && (
+        <div className="border-t border-border pt-3">
+          <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted">Discount requests</p>
+          <InvoiceDiscountRequestsList invoiceId={invoiceId} refreshKey={discountRequestsRefreshKey} />
+        </div>
+      )}
     </div>
   );
 }

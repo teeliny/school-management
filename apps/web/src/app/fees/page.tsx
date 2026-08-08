@@ -64,7 +64,7 @@ export default function FeesPage() {
 
       {isSuperAdmin && (
         <Card className="mb-4">
-          <CardHeader title="Pending approvals" sub="Manual bank-transfer submissions awaiting review" />
+          <CardHeader title="Pending approvals" sub="Manual bank-transfer payments and discount requests awaiting review" />
           <PendingApprovalsQueue />
         </Card>
       )}
