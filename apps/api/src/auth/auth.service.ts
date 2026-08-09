@@ -13,9 +13,10 @@ import { NotificationService } from "../notifications/notification";
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const REFRESH_KEY_PREFIX = "refresh:";
 const REUSE_KEY_PREFIX = "refresh:used:";
-// Shorter than Invitation's 7 days — a password-reset link is a short-lived,
-// security-sensitive credential, not an onboarding artifact.
-const PASSWORD_RESET_TTL_SECONDS = 30 * 60;
+// PRD FR1.8: "expires in 1 hour" — shorter than Invitation's 7 days either
+// way, since a password-reset link is a short-lived, security-sensitive
+// credential, not an onboarding artifact.
+const PASSWORD_RESET_TTL_SECONDS = 60 * 60;
 const PASSWORD_RESET_KEY_PREFIX = "password-reset:";
 // The web app fires several parallel requests per page (useCurrentUser + a
 // list fetch); when the access token expires, more than one can 401 and

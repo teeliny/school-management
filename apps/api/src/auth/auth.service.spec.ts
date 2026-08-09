@@ -45,14 +45,14 @@ describe("AuthService.forgotPassword", () => {
     expect(redis.set).not.toHaveBeenCalled();
   });
 
-  it("stores a hashed reset token in Redis (30 min TTL) and notifies with a resetUrl", async () => {
+  it("stores a hashed reset token in Redis (1hr TTL, PRD FR1.8) and notifies with a resetUrl", async () => {
     const { service, redis, notifications } = buildDeps({
       user: { id: "user-1", status: UserStatus.active, email: "a@b.com" },
     });
 
     await service.forgotPassword("a@b.com");
 
-    expect(redis.set).toHaveBeenCalledWith(expect.stringMatching(/^password-reset:/), "user-1", "EX", 1800);
+    expect(redis.set).toHaveBeenCalledWith(expect.stringMatching(/^password-reset:/), "user-1", "EX", 3600);
     expect(notifications.notify).toHaveBeenCalledWith(
       "user-1",
       "PASSWORD_RESET",
