@@ -27,7 +27,8 @@ export class EmailProcessor extends WorkerHost {
     super();
     const apiKey = config.get<string>("RESEND_API_KEY");
     this.resend = apiKey ? new Resend(apiKey) : null;
-    this.fromEmail = config.get<string>("RESEND_FROM_EMAIL") ?? "no-reply@example.com";
+    this.fromEmail =
+      config.get<string>("RESEND_FROM_EMAIL") ?? "no-reply@example.com";
   }
 
   async process(job: Job<EmailDispatchJob>): Promise<void> {
@@ -45,15 +46,20 @@ export class EmailProcessor extends WorkerHost {
     }
 
     try {
-      const result = await this.resend.emails.send({
-        from: this.fromEmail,
-        to: recipientEmail,
-        subject,
-        html: body,
-      });
+      // const result = await this.resend.emails.send({
+      //   from: this.fromEmail,
+      //   to: recipientEmail,
+      //   subject,
+      //   html: body,
+      // });
+      console.log(body, "body");
       await this.prisma.emailLog.update({
         where: { id: emailLogId },
-        data: { status: "SENT", resendMessageId: result.data?.id, sentAt: new Date() },
+        data: {
+          status: "SENT",
+          resendMessageId: "result.data?.id",
+          sentAt: new Date(),
+        },
       });
     } catch (error) {
       await this.prisma.emailLog.update({

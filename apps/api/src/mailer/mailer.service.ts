@@ -37,14 +37,12 @@ export class MailerService {
       return;
     }
 
-    // const aa = await this.resend.emails.send({
+    // await this.resend.emails.send({
     //   from:
     //     this.config.get<string>("RESEND_FROM_EMAIL") ?? "no-reply@example.com",
     //   to: input.to,
     //   subject: input.subject,
     //   html: input.html,
     // });
-    console.log("sent in send mailer service");
-    // console.log(aa);
   }
 }

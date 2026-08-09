@@ -68,7 +68,10 @@ export class InvitationService {
    * Callers own sending the email (via `sendInviteEmail`) after their
    * transaction commits — email failure shouldn't roll back a real DB write.
    */
-  async createInTx(tx: Tx, input: CreateInvitationInput): Promise<CreateInvitationResult> {
+  async createInTx(
+    tx: Tx,
+    input: CreateInvitationInput,
+  ): Promise<CreateInvitationResult> {
     const email = UserService.normalizeEmail(input.email);
     const rawToken = generateRawToken();
     const expiresAt = new Date(
@@ -82,7 +85,12 @@ export class InvitationService {
       });
     }
 
-    await this.ensureProfileShell(tx, user.id, input.invitedRole, input.staffCategory);
+    await this.ensureProfileShell(
+      tx,
+      user.id,
+      input.invitedRole,
+      input.staffCategory,
+    );
 
     const invitation = await tx.invitation.create({
       data: {
@@ -116,17 +124,24 @@ export class InvitationService {
     switch (role) {
       case Role.SUPER_ADMIN:
       case Role.ADMIN: {
-        const existing = await tx.adminProfile.findUnique({ where: { userId } });
+        const existing = await tx.adminProfile.findUnique({
+          where: { userId },
+        });
         if (!existing) await tx.adminProfile.create({ data: { userId } });
         return;
       }
       case Role.STAFF: {
-        const existing = await tx.staffProfile.findUnique({ where: { userId } });
-        if (!existing) await tx.staffProfile.create({ data: { userId, staffCategory } });
+        const existing = await tx.staffProfile.findUnique({
+          where: { userId },
+        });
+        if (!existing)
+          await tx.staffProfile.create({ data: { userId, staffCategory } });
         return;
       }
       case Role.PARENT: {
-        const existing = await tx.parentProfile.findUnique({ where: { userId } });
+        const existing = await tx.parentProfile.findUnique({
+          where: { userId },
+        });
         if (!existing) await tx.parentProfile.create({ data: { userId } });
         return;
       }
@@ -235,7 +250,6 @@ export class InvitationService {
     });
 
     await this.sendInviteEmail(invitation.email, rawToken);
-    console.log("invite sent");
     return updated;
   }
 
