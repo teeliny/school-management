@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   Get,
   Injectable,
+  Logger,
   Param,
   Patch,
   Post,
@@ -14,7 +15,13 @@ import {
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
-import { EnrollmentStatus, ReportCommentType, TermReportCardStatus, TermReportCardType } from "@prisma/client";
+import {
+  EnrollmentStatus,
+  NotificationType,
+  ReportCommentType,
+  TermReportCardStatus,
+  TermReportCardType,
+} from "@prisma/client";
 import { QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -23,15 +30,28 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
+import { NotificationService } from "../notifications/notification";
 import { GenerateTermReportCardDto } from "./dto/generate-term-report-card.dto";
 
 @Injectable()
 export class TermReportCardService {
+  private readonly logger = new Logger(TermReportCardService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly staffAssignments: StaffAssignmentService,
     @InjectQueue(QUEUE_NAMES.REPORT_CARD_GENERATION) private readonly reportCardQueue: Queue<ReportCardGenerationJob>,
+    private readonly notifications: NotificationService,
   ) {}
+
+  /** Same "never let a notification failure fail the real write" contract as DiscountRequestService.notifySafely. */
+  private async notifySafely(recipientUserId: string, type: NotificationType, vars: Record<string, string | number>) {
+    try {
+      await this.notifications.notify(recipientUserId, type, vars);
+    } catch (error) {
+      this.logger.warn(`Failed to notify ${recipientUserId} of ${type}: ${String(error)}`);
+    }
+  }
 
   /**
    * PRD FR4.7/§3.6: Admin-initiated for v1 — not auto-triggered when all
@@ -68,7 +88,10 @@ export class TermReportCardService {
   }
 
   async publish(id: string) {
-    const reportCard = await this.prisma.termReportCard.findUniqueOrThrow({ where: { id } });
+    const reportCard = await this.prisma.termReportCard.findUniqueOrThrow({
+      where: { id },
+      include: { student: { include: { user: true } }, term: true },
+    });
     // MID_TERM's gate is scores-only (no comments/skills) — READY just means
     // the PDF finished generating. FULL_TERM additionally requires every
     // piece FR4.7 lists, checked here rather than at generation time.
@@ -78,10 +101,26 @@ export class TermReportCardService {
     if (reportCard.reportType === TermReportCardType.FULL_TERM) {
       await this.assertFullTermPublishGate(reportCard.studentId, reportCard.termId);
     }
-    return this.prisma.termReportCard.update({
+    const updated = await this.prisma.termReportCard.update({
       where: { id },
       data: { status: TermReportCardStatus.PUBLISHED, publishedAt: new Date() },
     });
+
+    if (reportCard.reportType === TermReportCardType.FULL_TERM) {
+      const guardians = await this.prisma.studentGuardian.findMany({
+        where: { studentId: reportCard.studentId },
+        include: { parent: true },
+      });
+      const studentName = `${reportCard.student.user.firstName} ${reportCard.student.user.lastName}`;
+      for (const guardian of guardians) {
+        await this.notifySafely(guardian.parent.userId, "REPORT_CARD_PUBLISHED", {
+          studentName,
+          termName: reportCard.term.name,
+        });
+      }
+    }
+
+    return updated;
   }
 
   private async assertFullTermPublishGate(studentId: string, termId: string): Promise<void> {

@@ -6,6 +6,7 @@ import {
   Get,
   Inject,
   Injectable,
+  Logger,
   Param,
   Patch,
   Post,
@@ -19,7 +20,7 @@ import { InjectQueue } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import { memoryStorage } from "multer";
-import { PaymentGatewayProvider, PaymentMethod, PaymentStatus, Prisma } from "@prisma/client";
+import { NotificationType, PaymentGatewayProvider, PaymentMethod, PaymentStatus, Prisma } from "@prisma/client";
 import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
 import {
   mapChannelToPaymentMethod,
@@ -34,6 +35,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { Audited } from "../audit/audited.decorator";
+import { NotificationService } from "../notifications/notification";
 import { RecordCashPaymentDto } from "./dto/record-cash-payment.dto";
 import { InitiateGatewayCheckoutDto } from "./dto/initiate-gateway-checkout.dto";
 import { SubmitManualBankTransferDto } from "./dto/submit-manual-bank-transfer.dto";
@@ -53,6 +55,8 @@ const ALLOWED_PROOF_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "appl
 
 @Injectable()
 export class PaymentService {
+  private readonly logger = new Logger(PaymentService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -60,7 +64,23 @@ export class PaymentService {
     @InjectQueue(QUEUE_NAMES.RECEIPT_GENERATION) private readonly receiptQueue: Queue<ReceiptGenerationJob>,
     @Inject(PAYMENT_GATEWAY_ADAPTER) private readonly gatewayAdapter: PaymentGatewayAdapter,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    private readonly notifications: NotificationService,
   ) {}
+
+  /** Same "never let a notification failure fail the real write" contract as DiscountRequestService.notifySafely. */
+  private async notifySafely(recipientUserId: string, type: NotificationType, vars: Record<string, string | number>) {
+    try {
+      await this.notifications.notify(recipientUserId, type, vars);
+    } catch (error) {
+      this.logger.warn(`Failed to notify ${recipientUserId} of ${type}: ${String(error)}`);
+    }
+  }
+
+  private async resolveStaffUserId(staffProfileId: string | null): Promise<string | null> {
+    if (!staffProfileId) return null;
+    const staff = await this.prisma.staffProfile.findUnique({ where: { id: staffProfileId } });
+    return staff?.userId ?? null;
+  }
 
   /**
    * PRD §3.9: "CASH is recorded by the Bursar and takes effect immediately
@@ -74,7 +94,11 @@ export class PaymentService {
   async recordCash(dto: RecordCashPaymentDto, user: RequestUser) {
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: dto.invoiceId },
-      include: { lineItems: true, payments: true },
+      include: {
+        lineItems: true,
+        payments: true,
+        student: { include: { user: true, guardians: { include: { parent: true } } } },
+      },
     });
 
     const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
@@ -118,6 +142,11 @@ export class PaymentService {
     });
 
     await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
+
+    const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+    for (const guardian of invoice.student.guardians) {
+      await this.notifySafely(guardian.parent.userId, "PAYMENT_RECEIVED", { amount: dto.amount, studentName });
+    }
 
     return result;
   }
@@ -215,7 +244,7 @@ export class PaymentService {
 
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: invoiceId },
-      include: { lineItems: true, payments: true },
+      include: { lineItems: true, payments: true, student: { include: { user: true } } },
     });
 
     let payment = invoice.payments.find((p) => p.status === PaymentStatus.PENDING && p.gatewayProvider === provider) ?? null;
@@ -281,6 +310,11 @@ export class PaymentService {
 
     await this.receiptQueue.add("generate", { receiptId: txResult.receipt.id });
 
+    if (payment.paidByUserId) {
+      const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+      await this.notifySafely(payment.paidByUserId, "PAYMENT_RECEIVED", { amount: result.amountPaid, studentName });
+    }
+
     return { handled: true };
   }
 
@@ -333,7 +367,7 @@ export class PaymentService {
   async approveManualBankTransfer(paymentId: string, reviewerUserId: string) {
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
-      include: { invoice: { include: { lineItems: true, payments: true } } },
+      include: { invoice: { include: { lineItems: true, payments: true, student: { include: { user: true } } } } },
     });
     if (payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL || payment.status !== PaymentStatus.PENDING_APPROVAL) {
       throw new BadRequestException("Only a PENDING_APPROVAL manual bank-transfer payment can be approved");
@@ -372,20 +406,47 @@ export class PaymentService {
 
     await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
 
+    const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+    const bursarUserId = await this.resolveStaffUserId(payment.recordedByStaffId);
+    if (bursarUserId) {
+      await this.notifySafely(bursarUserId, "MANUAL_PAYMENT_APPROVED", { amount: Number(payment.amount), studentName });
+    }
+    // paidByUserId is currently always null for a manual-transfer submission
+    // (submitManualBankTransfer never sets it) — written correctly so this
+    // "just works" if that ever changes, but dormant today.
+    if (payment.paidByUserId) {
+      await this.notifySafely(payment.paidByUserId, "MANUAL_PAYMENT_APPROVED", { amount: Number(payment.amount), studentName });
+    }
+
     return result;
   }
 
   /** PRD FR7.3b: Super-Admin only (enforced in the controller). No invoice/receipt change — a rejected submission never counted toward the balance. */
   async rejectManualBankTransfer(paymentId: string, reviewerUserId: string, rejectionReason: string) {
-    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    const payment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      include: { invoice: { include: { student: { include: { user: true } } } } },
+    });
     if (payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL || payment.status !== PaymentStatus.PENDING_APPROVAL) {
       throw new BadRequestException("Only a PENDING_APPROVAL manual bank-transfer payment can be rejected");
     }
 
-    return this.prisma.payment.update({
+    const updated = await this.prisma.payment.update({
       where: { id: paymentId },
       data: { status: PaymentStatus.REJECTED, reviewedByUserId: reviewerUserId, reviewedAt: new Date(), rejectionReason },
     });
+
+    const bursarUserId = await this.resolveStaffUserId(payment.recordedByStaffId);
+    if (bursarUserId) {
+      const studentName = `${payment.invoice.student.user.firstName} ${payment.invoice.student.user.lastName}`;
+      await this.notifySafely(bursarUserId, "MANUAL_PAYMENT_REJECTED", {
+        amount: Number(payment.amount),
+        studentName,
+        reason: rejectionReason,
+      });
+    }
+
+    return updated;
   }
 
   async findAllForUser(

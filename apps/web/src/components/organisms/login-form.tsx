@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { login, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
@@ -52,6 +53,11 @@ export function LoginForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
+        <p className="text-right text-[11.5px]">
+          <Link href="/forgot-password" className="text-primary hover:underline">
+            Forgot password?
+          </Link>
+        </p>
         <Button type="submit" disabled={submitting} className="w-full justify-center">
           {submitting ? "Logging in…" : "Sign in"}
         </Button>

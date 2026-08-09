@@ -2,16 +2,12 @@ import { Controller, ForbiddenException, Get, Injectable, Param, Patch, Query, U
 import { InjectQueue } from "@nestjs/bullmq";
 import { Notification, NotificationType } from "@prisma/client";
 import type { Queue } from "bullmq";
-import { EmailDispatchJob, QUEUE_NAMES } from "@school/types";
+import { EmailDispatchJob, interpolate, QUEUE_NAMES } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { NotificationsGateway } from "./notifications.gateway";
-
-function interpolate(template: string, vars: Record<string, string | number>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(vars[key] ?? ""));
-}
 
 /**
  * PRD §3.10, FR8.1–FR8.6: the generic notify/deliver mechanism — every
@@ -73,13 +69,29 @@ export class NotificationService {
     return notification;
   }
 
-  findMine(userId: string, options: { unreadOnly?: boolean; skip?: number; take?: number } = {}) {
-    return this.prisma.notification.findMany({
-      where: { recipientUserId: userId, ...(options.unreadOnly ? { isRead: false } : {}) },
-      orderBy: { createdAt: "desc" },
-      skip: options.skip,
-      take: options.take,
-    });
+  // No `take` → flat array (the bell's small "recent 8" fetch); `take`
+  // given → { data, total } for backend-driven infinite scroll — same
+  // contract as InvoiceService/DiscountRequestService.findAllForUser and
+  // the usePaginatedStudents hook this powers client-side.
+  async findMine(
+    userId: string,
+    options: { unreadOnly?: boolean; type?: NotificationType; skip?: number; take?: number } = {},
+  ) {
+    const where = {
+      recipientUserId: userId,
+      ...(options.unreadOnly ? { isRead: false } : {}),
+      ...(options.type ? { type: options.type } : {}),
+    };
+
+    if (options.take === undefined) {
+      return this.prisma.notification.findMany({ where, orderBy: { createdAt: "desc" } });
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.notification.findMany({ where, orderBy: { createdAt: "desc" }, skip: options.skip, take: options.take }),
+      this.prisma.notification.count({ where }),
+    ]);
+    return { data, total };
   }
 
   unreadCount(userId: string): Promise<number> {
@@ -118,11 +130,13 @@ export class NotificationController {
   findMine(
     @CurrentUser() user: RequestUser,
     @Query("unreadOnly") unreadOnly?: string,
+    @Query("type") type?: NotificationType,
     @Query("skip") skip?: string,
     @Query("take") take?: string,
   ) {
     return this.service.findMine(user.id, {
       unreadOnly: unreadOnly === "true",
+      type,
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),
     });

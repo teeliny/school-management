@@ -13,6 +13,7 @@ function buildPrismaMock() {
     skillAssessmentItem: { findMany: jest.fn() },
     skillRating: { findMany: jest.fn() },
     reportComment: { findFirst: jest.fn() },
+    studentGuardian: { findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 
@@ -24,6 +25,10 @@ function buildQueueMock() {
   return { add: jest.fn() };
 }
 
+function buildNotificationsMock() {
+  return { notify: jest.fn() };
+}
+
 describe("TermReportCardService.generateFullTerm (PRD FR4.7 — Admin-initiated)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let reportCardQueue: ReturnType<typeof buildQueueMock>;
@@ -32,7 +37,12 @@ describe("TermReportCardService.generateFullTerm (PRD FR4.7 — Admin-initiated)
   beforeEach(() => {
     prisma = buildPrismaMock();
     reportCardQueue = buildQueueMock();
-    service = new TermReportCardService(prisma as never, buildStaffAssignmentsMock() as never, reportCardQueue as never);
+    service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      reportCardQueue as never,
+      buildNotificationsMock() as never,
+    );
   });
 
   it("upserts a GENERATING FULL_TERM row and enqueues the PDF job", async () => {
@@ -65,7 +75,12 @@ describe("TermReportCardService.publish (mid-term gate — scores-only, no comme
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    service = new TermReportCardService(prisma as never, buildStaffAssignmentsMock() as never, buildQueueMock() as never);
+    service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      buildQueueMock() as never,
+      buildNotificationsMock() as never,
+    );
   });
 
   it("blocks publish while the report card is still GENERATING", async () => {
@@ -111,22 +126,35 @@ describe("TermReportCardService.publish (mid-term gate — scores-only, no comme
 describe("TermReportCardService.publish — FULL_TERM completeness gate (PRD FR4.7)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let service: TermReportCardService;
+  let notifications: { notify: jest.Mock };
 
   const STUDENT = { currentClass: { id: "arm-1", classLevelId: "level-1" } };
   const TERM = { id: "term-1", academicSessionId: "session-1" };
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    service = new TermReportCardService(prisma as never, buildStaffAssignmentsMock() as never, buildQueueMock() as never);
+    notifications = buildNotificationsMock();
+    service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      buildQueueMock() as never,
+      notifications as never,
+    );
     prisma.termReportCard.findUniqueOrThrow.mockResolvedValue({
       id: "rc-1",
       status: TermReportCardStatus.READY,
       reportType: TermReportCardType.FULL_TERM,
       studentId: "student-1",
       termId: "term-1",
+      student: { user: { firstName: "Ada", lastName: "Lovelace" } },
+      term: { name: "1st Term" },
     });
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue(STUDENT);
     prisma.term.findUniqueOrThrow.mockResolvedValue(TERM);
+    prisma.studentGuardian.findMany.mockResolvedValue([
+      { parent: { userId: "guardian-user-1" } },
+      { parent: { userId: "guardian-user-2" } },
+    ]);
   });
 
   function mockAllComplete() {
@@ -146,6 +174,31 @@ describe("TermReportCardService.publish — FULL_TERM completeness gate (PRD FR4
     expect(prisma.termReportCard.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: TermReportCardStatus.PUBLISHED }) }),
     );
+  });
+
+  it("notifies every guardian on record, not just one, once published", async () => {
+    mockAllComplete();
+    prisma.termReportCard.update.mockResolvedValue({ id: "rc-1", status: TermReportCardStatus.PUBLISHED });
+
+    await service.publish("rc-1");
+
+    expect(notifications.notify).toHaveBeenCalledTimes(2);
+    expect(notifications.notify).toHaveBeenCalledWith("guardian-user-1", "REPORT_CARD_PUBLISHED", {
+      studentName: "Ada Lovelace",
+      termName: "1st Term",
+    });
+    expect(notifications.notify).toHaveBeenCalledWith("guardian-user-2", "REPORT_CARD_PUBLISHED", {
+      studentName: "Ada Lovelace",
+      termName: "1st Term",
+    });
+  });
+
+  it("a notify() failure doesn't propagate out of publish()", async () => {
+    mockAllComplete();
+    prisma.termReportCard.update.mockResolvedValue({ id: "rc-1", status: TermReportCardStatus.PUBLISHED });
+    notifications.notify.mockRejectedValue(new Error("notify down"));
+
+    await expect(service.publish("rc-1")).resolves.toBeDefined();
   });
 
   it("rejects when a SubjectTermResult is missing for an actively-enrolled subject", async () => {
@@ -189,7 +242,12 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
   beforeEach(() => {
     prisma = buildPrismaMock();
     staffAssignments = buildStaffAssignmentsMock();
-    service = new TermReportCardService(prisma as never, staffAssignments as never, buildQueueMock() as never);
+    service = new TermReportCardService(
+      prisma as never,
+      staffAssignments as never,
+      buildQueueMock() as never,
+      buildNotificationsMock() as never,
+    );
   });
 
   it("lets Admin see report cards of any status", async () => {

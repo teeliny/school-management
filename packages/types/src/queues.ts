@@ -10,6 +10,7 @@ export const QUEUE_NAMES = {
   RECEIPT_GENERATION: "receipt-generation",
   PAYMENT_RECONCILIATION: "payment-reconciliation",
   EMAIL_DISPATCH: "email-dispatch",
+  INVOICE_OVERDUE_SWEEP: "invoice-overdue-sweep",
 } as const;
 
 export interface ReportCardGenerationJob {

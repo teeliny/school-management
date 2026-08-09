@@ -12,6 +12,7 @@ import { ReportCommentController, ReportCommentService } from "./report-comment"
 import { BroadsheetController, BroadsheetService } from "./broadsheet";
 import { StaffAssignmentsModule } from "../staff-assignments/staff-assignments.module";
 import { SubjectModule } from "../subjects/subject.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 // Maps to ARCHITECTURE.md §5's AssessmentModule — depends on
 // StaffAssignmentsModule for the row-level "is this the assigned subject
@@ -21,6 +22,7 @@ import { SubjectModule } from "../subjects/subject.module";
   imports: [
     StaffAssignmentsModule,
     SubjectModule,
+    NotificationsModule,
     BullModule.registerQueue({ name: QUEUE_NAMES.REPORT_CARD_GENERATION }),
   ],
   controllers: [

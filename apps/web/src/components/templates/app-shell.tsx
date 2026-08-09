@@ -20,6 +20,7 @@ import {
   FileText,
   Calendar,
   Table,
+  Bell,
   type LucideIcon,
 } from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
@@ -31,6 +32,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../molecules/dropdown-menu";
+import { NotificationBell } from "../organisms/notification-bell";
 import { cn } from "../../lib/cn";
 import type { CurrentUser } from "../../lib/use-current-user";
 
@@ -52,7 +54,10 @@ interface NavItem {
 const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
   {
     eyebrow: "Overview",
-    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/notifications", label: "Notifications", icon: Bell },
+    ],
   },
   {
     eyebrow: "People",
@@ -209,6 +214,7 @@ export function AppShell({
       <main className="ml-[72px] max-w-[1180px] px-5 pb-14 pt-5 sm:px-8 sm:pt-6">
         <div className="mb-5 flex items-center justify-end gap-3">
           <ThemeToggle />
+          <NotificationBell />
           <DropdownMenu>
             <DropdownMenuTrigger className="flex h-[34px] w-[34px] items-center justify-center rounded-full border border-border bg-card-inset font-display text-xs font-semibold outline-none">
               {initials}

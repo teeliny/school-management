@@ -22,6 +22,7 @@ function buildInvoice(
     dueDate: FUTURE_DUE_DATE,
     lineItems: [],
     payments: [],
+    student: { user: { firstName: "Ada", lastName: "Lovelace" } },
     ...overrides,
   };
 }
@@ -51,7 +52,8 @@ function buildPrismaMock() {
 }
 
 function buildService(prisma: ReturnType<typeof buildPrismaMock>) {
-  return new DiscountRequestService(prisma as never);
+  const notifications = { notify: jest.fn() };
+  return { service: new DiscountRequestService(prisma as never, notifications as never), notifications };
 }
 
 describe("DiscountRequestService.raise (PRD FR7.8)", () => {
@@ -60,7 +62,7 @@ describe("DiscountRequestService.raise (PRD FR7.8)", () => {
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    service = buildService(prisma);
+    service = buildService(prisma).service;
   });
 
   it("creates a PENDING discount request without touching the invoice", async () => {
@@ -106,6 +108,7 @@ describe("DiscountRequestService.raise (PRD FR7.8)", () => {
 describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let service: DiscountRequestService;
+  let notifications: { notify: jest.Mock };
 
   function buildPendingDiscountRequest(overrides: Record<string, unknown> = {}) {
     return {
@@ -115,13 +118,14 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
       value: 10,
       reason: "Sibling discount",
       invoice: buildInvoice({ totalAmount: 5000 }),
+      requestedByStaff: { userId: "bursar-user-1" },
       ...overrides,
     };
   }
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    service = buildService(prisma);
+    ({ service, notifications } = buildService(prisma));
     prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(buildPendingDiscountRequest());
   });
 
@@ -137,6 +141,9 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
     });
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "UNPAID" } });
     expect(result.outstandingBalance).toBe(4500);
+    expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "DISCOUNT_REQUEST_APPROVED", {
+      studentName: "Ada Lovelace",
+    });
   });
 
   it("approves a FIXED_AMOUNT request using the raw value", async () => {
@@ -159,6 +166,20 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
     expect(prisma.__tx.discountRequest.update).not.toHaveBeenCalled();
   });
 
+  it("skips notifying when the request was raised without a StaffProfile (override)", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(buildPendingDiscountRequest({ requestedByStaff: null }));
+
+    await service.approve("discount-request-1", "super-1");
+
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
+  it("a notify() failure doesn't propagate out of approve()", async () => {
+    notifications.notify.mockRejectedValue(new Error("notify down"));
+
+    await expect(service.approve("discount-request-1", "super-1")).resolves.toBeDefined();
+  });
+
   it("rejects a PENDING discount request with the given reason, leaving the invoice untouched", async () => {
     const result = await service.reject("discount-request-1", "super-1", "Not eligible");
 
@@ -168,6 +189,10 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
     });
     expect(prisma.__tx.invoice.update).not.toHaveBeenCalled();
     expect(result).toBeDefined();
+    expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "DISCOUNT_REQUEST_REJECTED", {
+      studentName: "Ada Lovelace",
+      reason: "Not eligible",
+    });
   });
 
   it("rejects re-rejecting a discount request that isn't PENDING", async () => {
@@ -181,7 +206,7 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
 describe("DiscountRequestService.findAllForUser (CASL scoping)", () => {
   it("returns an empty result for a user without a manage grant", async () => {
     const prisma = buildPrismaMock();
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     const ability = abilityFactory.createForUser({ id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] });
 
     const result = await service.findAllForUser({ id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] }, ability);
@@ -192,7 +217,7 @@ describe("DiscountRequestService.findAllForUser (CASL scoping)", () => {
 
   it("returns results for a Bursar/Super-Admin", async () => {
     const prisma = buildPrismaMock();
-    const service = buildService(prisma);
+    const { service } = buildService(prisma);
     const ability = abilityFactory.createForUser(SUPER_ADMIN);
 
     await service.findAllForUser(SUPER_ADMIN, ability);

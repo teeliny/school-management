@@ -48,15 +48,15 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     key: "INVOICE_OVERDUE",
     channel: "BOTH",
     subject: "Invoice overdue",
-    bodyTemplate:
-      "Invoice {{invoiceNumber}} for {{studentName}} is overdue. Outstanding balance: {{outstandingAmount}}.",
+    bodyTemplate: "{{studentName}}'s invoice is overdue. Outstanding balance: {{outstandingAmount}}.",
     isCritical: true,
   },
   {
     key: "PASSWORD_RESET",
     channel: "EMAIL",
     subject: "Reset your password",
-    bodyTemplate: "Use the link below to reset your password. This link expires shortly.",
+    bodyTemplate:
+      "Use the link below to reset your password. This link expires shortly.\n{{resetUrl}}",
     isCritical: true,
   },
   {
@@ -70,28 +70,28 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     key: "PAYMENT_RECEIVED",
     channel: "BOTH",
     subject: "Payment received",
-    bodyTemplate: "We received a payment of {{amount}} for {{studentName}}'s invoice {{invoiceNumber}}.",
+    bodyTemplate: "We received a payment of {{amount}} for {{studentName}}'s invoice.",
     isCritical: false,
   },
   {
     key: "DISCOUNT_REQUEST_APPROVED",
     channel: "IN_APP",
     subject: "Discount request approved",
-    bodyTemplate: "The discount request for invoice {{invoiceNumber}} was approved.",
+    bodyTemplate: "The discount request for {{studentName}}'s invoice was approved.",
     isCritical: false,
   },
   {
     key: "DISCOUNT_REQUEST_REJECTED",
     channel: "IN_APP",
     subject: "Discount request rejected",
-    bodyTemplate: "The discount request for invoice {{invoiceNumber}} was rejected: {{reason}}.",
+    bodyTemplate: "The discount request for {{studentName}}'s invoice was rejected: {{reason}}.",
     isCritical: false,
   },
   {
     key: "MANUAL_PAYMENT_APPROVED",
     channel: "BOTH",
     subject: "Bank transfer payment approved",
-    bodyTemplate: "The manual bank-transfer payment of {{amount}} for invoice {{invoiceNumber}} was approved.",
+    bodyTemplate: "The manual bank-transfer payment of {{amount}} for {{studentName}}'s invoice was approved.",
     isCritical: false,
   },
   {
@@ -99,7 +99,18 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     channel: "BOTH",
     subject: "Bank transfer payment rejected",
     bodyTemplate:
-      "The manual bank-transfer payment of {{amount}} for invoice {{invoiceNumber}} was rejected: {{reason}}.",
+      "The manual bank-transfer payment of {{amount}} for {{studentName}}'s invoice was rejected: {{reason}}.",
     isCritical: false,
   },
 ];
+
+/**
+ * Shared between apps/api's NotificationService and apps/worker's
+ * WorkerNotificationService (the invoice-overdue sweep needs its own notify
+ * path — NotificationService lives in apps/api, which worker can't inject
+ * across the process boundary) — pure and framework-free, safe for this
+ * barrel unlike ./payment-gateways.
+ */
+export function interpolate(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => String(vars[key] ?? ""));
+}

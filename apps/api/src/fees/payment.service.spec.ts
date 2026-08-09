@@ -26,7 +26,10 @@ function buildInvoice(
     dueDate: FUTURE_DUE_DATE,
     lineItems: [],
     payments: [],
-    student: { guardians: [{ parentId: "parent-profile-1" }] },
+    student: {
+      user: { firstName: "Ada", lastName: "Lovelace" },
+      guardians: [{ parentId: "parent-profile-1", parent: { userId: "guardian-user-1" } }],
+    },
     gatewayPaymentReference: null,
     ...overrides,
   };
@@ -99,8 +102,17 @@ function buildService(prisma: ReturnType<typeof buildPrismaMock>, queue: ReturnT
   const credentials = buildCredentialsMock();
   const adapter = buildAdapterMock();
   const storage = buildStorageMock();
-  const service = new PaymentService(prisma as never, config as never, credentials as never, queue as never, adapter as never, storage as never);
-  return { service, config, credentials, adapter, storage };
+  const notifications = { notify: jest.fn() };
+  const service = new PaymentService(
+    prisma as never,
+    config as never,
+    credentials as never,
+    queue as never,
+    adapter as never,
+    storage as never,
+    notifications as never,
+  );
+  return { service, config, credentials, adapter, storage, notifications };
 }
 
 function buildUploadedFile(overrides: Partial<Express.Multer.File> = {}): Express.Multer.File {
@@ -118,11 +130,12 @@ describe("PaymentService.recordCash (PRD §3.9 — CASH takes effect immediately
   let prisma: ReturnType<typeof buildPrismaMock>;
   let queue: ReturnType<typeof buildQueueMock>;
   let service: PaymentService;
+  let notifications: { notify: jest.Mock };
 
   beforeEach(() => {
     prisma = buildPrismaMock();
     queue = buildQueueMock();
-    ({ service } = buildService(prisma, queue));
+    ({ service, notifications } = buildService(prisma, queue));
   });
 
   it("creates a SUCCESSFUL CASH payment and transitions the invoice to PAID when fully paid", async () => {
@@ -134,6 +147,21 @@ describe("PaymentService.recordCash (PRD §3.9 — CASH takes effect immediately
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "PAID" } });
     expect(result.invoiceStatus).toBe("PAID");
     expect(result.outstandingBalance).toBe(0);
+  });
+
+  it("notifies every guardian of the student that a payment was received", async () => {
+    await service.recordCash({ invoiceId: "invoice-1", amount: 5000 }, BURSAR);
+
+    expect(notifications.notify).toHaveBeenCalledWith("guardian-user-1", "PAYMENT_RECEIVED", {
+      amount: 5000,
+      studentName: "Ada Lovelace",
+    });
+  });
+
+  it("a notify() failure doesn't propagate out of recordCash()", async () => {
+    notifications.notify.mockRejectedValue(new Error("notify down"));
+
+    await expect(service.recordCash({ invoiceId: "invoice-1", amount: 5000 }, BURSAR)).resolves.toBeDefined();
   });
 
   it("transitions the invoice to PARTIAL when underpaid", async () => {
@@ -391,6 +419,7 @@ describe("PaymentService.resolveGatewayOutcome (PRD FR7.5/FR7.6)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let queue: ReturnType<typeof buildQueueMock>;
   let service: PaymentService;
+  let notifications: { notify: jest.Mock };
 
   function buildGatewayResult(overrides: Partial<{ status: string; amountPaid: number; channel: string }> = {}) {
     return {
@@ -406,10 +435,14 @@ describe("PaymentService.resolveGatewayOutcome (PRD FR7.5/FR7.6)", () => {
   beforeEach(() => {
     prisma = buildPrismaMock();
     prisma.invoice.findUniqueOrThrow.mockResolvedValue(
-      buildInvoice({ payments: [{ id: "pending-payment-1", status: "PENDING", gatewayProvider: "MONNIFY", amount: 5000 }] }),
+      buildInvoice({
+        payments: [
+          { id: "pending-payment-1", status: "PENDING", gatewayProvider: "MONNIFY", amount: 5000, paidByUserId: "payer-user-1" },
+        ],
+      }),
     );
     queue = buildQueueMock();
-    ({ service } = buildService(prisma, queue));
+    ({ service, notifications } = buildService(prisma, queue));
   });
 
   it("is a no-op when a SUCCESSFUL payment already has this gatewayTransactionReference (idempotent replay)", async () => {
@@ -430,6 +463,19 @@ describe("PaymentService.resolveGatewayOutcome (PRD FR7.5/FR7.6)", () => {
     });
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "PAID" } });
     expect(queue.add).toHaveBeenCalledWith("generate", { receiptId: "receipt-1" });
+    expect(notifications.notify).toHaveBeenCalledWith("payer-user-1", "PAYMENT_RECEIVED", {
+      amount: 5000,
+      studentName: "Ada Lovelace",
+    });
+  });
+
+  it("does not notify when the resolved payment has no paidByUserId (defensive-create branch)", async () => {
+    prisma.invoice.findUniqueOrThrow.mockResolvedValue(buildInvoice({ payments: [] }));
+    prisma.payment.create.mockResolvedValue({ id: "pending-payment-1", paidByUserId: null });
+
+    await service.resolveGatewayOutcome("invoice-1", "MONNIFY", buildGatewayResult());
+
+    expect(notifications.notify).not.toHaveBeenCalled();
   });
 
   it("marks the payment FAILED when the gateway reports a failure, without touching the invoice", async () => {
@@ -528,6 +574,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
   let prisma: ReturnType<typeof buildPrismaMock>;
   let queue: ReturnType<typeof buildQueueMock>;
   let service: PaymentService;
+  let notifications: { notify: jest.Mock };
 
   function buildPendingManualPayment(overrides: Record<string, unknown> = {}) {
     return {
@@ -535,6 +582,8 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
       method: "BANK_TRANSFER_MANUAL",
       status: "PENDING_APPROVAL",
       amount: 3000,
+      recordedByStaffId: "staff-bursar-1",
+      paidByUserId: null,
       // totalAmount matches the payment amount so approval fully settles
       // the invoice — a cleaner, more representative happy-path than a
       // partial payment for this specific test.
@@ -546,8 +595,9 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
   beforeEach(() => {
     prisma = buildPrismaMock();
     queue = buildQueueMock();
-    ({ service } = buildService(prisma, queue));
+    ({ service, notifications } = buildService(prisma, queue));
     prisma.payment.findUniqueOrThrow.mockResolvedValue(buildPendingManualPayment());
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-bursar-1", userId: "bursar-user-1" });
   });
 
   it("approves a PENDING_APPROVAL manual transfer: updates the payment, recomputes the invoice, creates a receipt, enqueues generation", async () => {
@@ -560,6 +610,21 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "PAID" } });
     expect(queue.add).toHaveBeenCalledWith("generate", { receiptId: "receipt-1" });
     expect(result.outstandingBalance).toBe(0);
+    expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "MANUAL_PAYMENT_APPROVED", {
+      amount: 3000,
+      studentName: "Ada Lovelace",
+    });
+  });
+
+  it("also notifies the parent when paidByUserId happens to be set", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(buildPendingManualPayment({ paidByUserId: "payer-user-1" }));
+
+    await service.approveManualBankTransfer("payment-abcdef12", "super-1");
+
+    expect(notifications.notify).toHaveBeenCalledWith("payer-user-1", "MANUAL_PAYMENT_APPROVED", {
+      amount: 3000,
+      studentName: "Ada Lovelace",
+    });
   });
 
   it("rejects approving a payment that isn't PENDING_APPROVAL", async () => {
@@ -585,6 +650,11 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     expect(prisma.__tx.invoice.update).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
     expect(result).toBeDefined();
+    expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "MANUAL_PAYMENT_REJECTED", {
+      amount: 3000,
+      studentName: "Ada Lovelace",
+      reason: "Amount does not match proof",
+    });
   });
 
   it("rejects rejecting a payment that isn't PENDING_APPROVAL", async () => {

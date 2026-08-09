@@ -8,12 +8,14 @@ function buildPrismaMock() {
     notification: {
       create: jest.fn(),
       count: jest.fn(),
+      findMany: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
     },
     user: { findUniqueOrThrow: jest.fn() },
     emailLog: { create: jest.fn() },
+    $transaction: jest.fn((arg: unknown[]) => Promise.all(arg)),
   };
 }
 
@@ -159,6 +161,47 @@ describe("NotificationService.notify", () => {
 
     expect(prisma.notification.create).toHaveBeenCalled();
     expect(emailQueue.add).not.toHaveBeenCalled();
+  });
+});
+
+describe("NotificationService.findMine", () => {
+  it("returns a flat array when no `take` is given (the bell's recent-N fetch)", async () => {
+    const prisma = buildPrismaMock();
+    prisma.notification.findMany.mockResolvedValue([{ id: "n1" }]);
+    const { service } = buildService(prisma);
+
+    const result = await service.findMine("user-1");
+
+    expect(prisma.notification.findMany).toHaveBeenCalledWith({
+      where: { recipientUserId: "user-1" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(result).toEqual([{ id: "n1" }]);
+  });
+
+  it("returns { data, total } when `take` is given, applying unreadOnly and type filters", async () => {
+    const prisma = buildPrismaMock();
+    prisma.notification.findMany.mockResolvedValue([{ id: "n1" }]);
+    prisma.notification.count.mockResolvedValue(9);
+    const { service } = buildService(prisma);
+
+    const result = await service.findMine("user-1", {
+      unreadOnly: true,
+      type: "PAYMENT_RECEIVED" as never,
+      skip: 25,
+      take: 25,
+    });
+
+    const expectedWhere = { recipientUserId: "user-1", isRead: false, type: "PAYMENT_RECEIVED" };
+    expect(prisma.notification.findMany).toHaveBeenCalledWith({
+      where: expectedWhere,
+      orderBy: { createdAt: "desc" },
+      skip: 25,
+      take: 25,
+    });
+    expect(prisma.notification.count).toHaveBeenCalledWith({ where: expectedWhere });
+    expect(result).toEqual({ data: [{ id: "n1" }], total: 9 });
   });
 });
 

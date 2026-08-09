@@ -12,6 +12,7 @@ import { PaymentGatewayConfigController, PaymentGatewayConfigService } from "./g
 import { PaymentGatewayCredentialsService } from "./gateway/payment-gateway-credentials";
 import { MONNIFY_ADAPTER, PAYMENT_GATEWAY_ADAPTER, PAYSTACK_ADAPTER } from "./gateway/payment-gateway.tokens";
 import { AcademicStructureModule } from "../academic-structure/academic-structure.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 
 // Maps to ARCHITECTURE.md §5's FeesModule — depends on AcademicStructureModule
 // (Term/ClassLevel/AcademicSession) and dispatches to apps/worker's new
@@ -24,7 +25,7 @@ import { AcademicStructureModule } from "../academic-structure/academic-structur
 // a useFactory picking between them based on PAYMENT_GATEWAY_PROVIDER
 // (ARCHITECTURE §5/§10, default MONNIFY).
 @Module({
-  imports: [AcademicStructureModule, BullModule.registerQueue({ name: QUEUE_NAMES.RECEIPT_GENERATION })],
+  imports: [AcademicStructureModule, NotificationsModule, BullModule.registerQueue({ name: QUEUE_NAMES.RECEIPT_GENERATION })],
   controllers: [
     FeeStructureController,
     InvoiceController,

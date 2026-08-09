@@ -2,10 +2,13 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, UnauthorizedExceptio
 import { AuthService } from "./auth.service";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
+import { ForgotPasswordDto } from "./dto/forgot-password.dto";
+import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { CurrentUser } from "./current-user.decorator";
 import type { RequestUser } from "./jwt.strategy";
 import { UserService } from "../identity/users/user.service";
+import { Audited } from "../audit/audited.decorator";
 
 @Controller("auth")
 export class AuthController {
@@ -33,6 +36,22 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@Body() dto: RefreshDto) {
     await this.authService.logout(dto.refreshToken);
+  }
+
+  // Always the same generic response regardless of whether the email is
+  // registered — no account enumeration via the response body.
+  @Post("forgot-password")
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.authService.forgotPassword(dto.email);
+    return { message: "If that email is registered, a reset link has been sent." };
+  }
+
+  @Post("reset-password")
+  @HttpCode(HttpStatus.OK)
+  @Audited("User")
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 
   @Get("me")

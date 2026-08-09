@@ -1,5 +1,5 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
-import { DiscountRequestStatus, DiscountRequestType, Prisma } from "@prisma/client";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Logger, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { DiscountRequestStatus, DiscountRequestType, NotificationType, Prisma } from "@prisma/client";
 import { computeInvoiceStatus, computeOutstandingBalance } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -9,6 +9,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { Audited } from "../audit/audited.decorator";
+import { NotificationService } from "../notifications/notification";
 import { RaiseDiscountRequestDto } from "./dto/raise-discount-request.dto";
 import { RejectDiscountRequestDto } from "./dto/reject-discount-request.dto";
 
@@ -18,7 +19,25 @@ const DISCOUNT_REQUEST_DETAIL_INCLUDE = {
 
 @Injectable()
 export class DiscountRequestService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DiscountRequestService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationService,
+  ) {}
+
+  /**
+   * A notify() failure must never turn an already-successful approve/reject
+   * into a misleading 500 — these always run after the domain write already
+   * committed.
+   */
+  private async notifySafely(recipientUserId: string, type: NotificationType, vars: Record<string, string | number>) {
+    try {
+      await this.notifications.notify(recipientUserId, type, vars);
+    } catch (error) {
+      this.logger.warn(`Failed to notify ${recipientUserId} of ${type}: ${String(error)}`);
+    }
+  }
 
   /**
    * PRD FR7.8: Bursar raises against a specific Invoice (Super-Admin can
@@ -71,7 +90,10 @@ export class DiscountRequestService {
   async approve(id: string, reviewerUserId: string) {
     const discountRequest = await this.prisma.discountRequest.findUniqueOrThrow({
       where: { id },
-      include: { invoice: { include: { lineItems: true, payments: true } } },
+      include: {
+        invoice: { include: { lineItems: true, payments: true, student: { include: { user: true } } } },
+        requestedByStaff: true,
+      },
     });
     if (discountRequest.status !== DiscountRequestStatus.PENDING) {
       throw new BadRequestException("Only a PENDING discount request can be approved");
@@ -110,20 +132,38 @@ export class DiscountRequestService {
       return { discountRequest: updatedDiscountRequest, invoiceStatus: status, outstandingBalance };
     });
 
+    if (discountRequest.requestedByStaff) {
+      const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+      await this.notifySafely(discountRequest.requestedByStaff.userId, "DISCOUNT_REQUEST_APPROVED", { studentName });
+    }
+
     return result;
   }
 
   /** PRD FR7.8: Super-Admin only (enforced in the controller). No invoice/line-item change — a rejected request never counted toward the balance. */
   async reject(id: string, reviewerUserId: string, rejectionReason: string) {
-    const discountRequest = await this.prisma.discountRequest.findUniqueOrThrow({ where: { id } });
+    const discountRequest = await this.prisma.discountRequest.findUniqueOrThrow({
+      where: { id },
+      include: { invoice: { include: { student: { include: { user: true } } } }, requestedByStaff: true },
+    });
     if (discountRequest.status !== DiscountRequestStatus.PENDING) {
       throw new BadRequestException("Only a PENDING discount request can be rejected");
     }
 
-    return this.prisma.discountRequest.update({
+    const updated = await this.prisma.discountRequest.update({
       where: { id },
       data: { status: DiscountRequestStatus.REJECTED, reviewedByUserId: reviewerUserId, reviewedAt: new Date(), rejectionReason },
     });
+
+    if (discountRequest.requestedByStaff) {
+      const studentName = `${discountRequest.invoice.student.user.firstName} ${discountRequest.invoice.student.user.lastName}`;
+      await this.notifySafely(discountRequest.requestedByStaff.userId, "DISCOUNT_REQUEST_REJECTED", {
+        studentName,
+        reason: rejectionReason,
+      });
+    }
+
+    return updated;
   }
 
   async findAllForUser(

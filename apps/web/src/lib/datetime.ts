@@ -29,3 +29,17 @@ export function fromDatetimeLocalInputValue(value: string): string | null {
   // conversion correct regardless of which timezone the browser is in.
   return new Date(Number(year), Number(month) - 1, Number(day), Number(hours), Number(minutes)).toISOString();
 }
+
+// "2m ago" / "3h ago" / "5d ago" style, matching docs/school-system-design.html's
+// `.notif-time` — falls back to a plain date once it's more than a week old.
+export function formatRelativeTime(iso: string): string {
+  const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
