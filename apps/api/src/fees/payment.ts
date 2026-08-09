@@ -33,6 +33,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
+import { Audited } from "../audit/audited.decorator";
 import { RecordCashPaymentDto } from "./dto/record-cash-payment.dto";
 import { InitiateGatewayCheckoutDto } from "./dto/initiate-gateway-checkout.dto";
 import { SubmitManualBankTransferDto } from "./dto/submit-manual-bank-transfer.dto";
@@ -464,12 +465,14 @@ export class PaymentController {
 
   @Post("cash")
   @CheckPolicies((ability) => ability.can("manage", "Payment"))
+  @Audited("Payment")
   recordCash(@Body() dto: RecordCashPaymentDto, @CurrentUser() user: RequestUser) {
     return this.service.recordCash(dto, user);
   }
 
   @Post("gateway-checkout")
   @CheckPolicies((ability) => ability.can("read", "Invoice"))
+  @Audited("Payment")
   initiateGatewayCheckout(@Body() dto: InitiateGatewayCheckoutDto, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     return this.service.initiateGatewayCheckout(dto, user, ability);
@@ -490,6 +493,7 @@ export class PaymentController {
     }),
   )
   @CheckPolicies((ability) => ability.can("manage", "Payment"))
+  @Audited("Payment", "payment")
   submitManualBankTransfer(
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: SubmitManualBankTransferDto,
@@ -503,6 +507,7 @@ export class PaymentController {
 
   /** Super-Admin-only carve-out — same manual role-check pattern as identity/ownership-transfer.ts and term-report-card.ts's remove(), not a CASL condition (Bursar's own "manage Payment" grant would otherwise satisfy any CASL check on this same subject). */
   @Patch(":id/approve")
+  @Audited("Payment", "payment")
   approveManualBankTransfer(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
       throw new ForbiddenException("Only the Super-Admin can approve a manual bank-transfer payment");
@@ -512,6 +517,7 @@ export class PaymentController {
 
   /** Super-Admin-only carve-out — see approveManualBankTransfer's comment. */
   @Patch(":id/reject")
+  @Audited("Payment", "payment")
   rejectManualBankTransfer(@Param("id") id: string, @Body() dto: RejectPaymentDto, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
       throw new ForbiddenException("Only the Super-Admin can reject a manual bank-transfer payment");

@@ -8,6 +8,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
+import { Audited } from "../audit/audited.decorator";
 import { GenerateInvoicesDto } from "./dto/generate-invoices.dto";
 
 const INVOICE_DETAIL_INCLUDE = {
@@ -48,15 +49,24 @@ export class InvoiceService {
 
     const feeStructures = await this.prisma.feeStructure.findMany({ where: { termId: dto.termId } });
 
+    // One batch lookup instead of a findUnique per student (BUILD_PLAN.md
+    // §8 item 5, N+1 audit) — a school-wide run is one extra query instead
+    // of one per active student.
+    const alreadyInvoicedStudentIds = new Set(
+      (
+        await this.prisma.invoice.findMany({
+          where: { termId: dto.termId, studentId: { in: students.map((s) => s.id) } },
+          select: { studentId: true },
+        })
+      ).map((invoice) => invoice.studentId),
+    );
+
     let created = 0;
     let alreadyInvoiced = 0;
     let noApplicableFees = 0;
 
     for (const student of students) {
-      const existing = await this.prisma.invoice.findUnique({
-        where: { studentId_termId: { studentId: student.id, termId: dto.termId } },
-      });
-      if (existing) {
+      if (alreadyInvoicedStudentIds.has(student.id)) {
         alreadyInvoiced++;
         continue;
       }
@@ -187,8 +197,12 @@ export class InvoiceController {
     private readonly abilityFactory: AbilityFactory,
   ) {}
 
+  // No model given — this is a bulk write (one Invoice + line items per
+  // student in scope) whose response is a { created, alreadyInvoiced,
+  // noApplicableFees } summary, not a single entity to snapshot.
   @Post("generate")
   @CheckPolicies((ability) => ability.can("manage", "Invoice"))
+  @Audited("Invoice")
   generate(@Body() dto: GenerateInvoicesDto) {
     return this.service.generate(dto);
   }

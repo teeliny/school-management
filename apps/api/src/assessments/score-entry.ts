@@ -8,6 +8,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
+import { Audited } from "../audit/audited.decorator";
 import { CreateScoreEntryDto } from "./dto/score-entry.dto";
 
 @Injectable()
@@ -123,7 +124,13 @@ export class ScoreEntryController {
     private readonly abilityFactory: AbilityFactory,
   ) {}
 
+  // No :id route param (upsert keyed by studentId+subjectId+
+  // assessmentComponentId), so AuditInterceptor's before-fetch never fires
+  // here — every submission (first entry or correction) is still logged
+  // via `after`, giving a full who/what/when trail per submission even
+  // without a captured prior value.
   @Post()
+  @Audited("ScoreEntry", "scoreEntry")
   enter(@Body() dto: CreateScoreEntryDto, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     const isOverride = ability.can("manage", "ScoreEntry");

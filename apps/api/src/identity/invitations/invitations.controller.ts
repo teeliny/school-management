@@ -17,6 +17,7 @@ import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { AbilityFactory } from "../../casl/ability.factory";
 import { InvitationService } from "./invitation.service";
+import { Audited } from "../../audit/audited.decorator";
 import { CreateInvitationDto } from "./dto/create-invitation.dto";
 import { AcceptInvitationDto } from "./dto/accept-invitation.dto";
 
@@ -29,6 +30,7 @@ export class InvitationsController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
+  @Audited("Invitation", "invitation")
   async create(
     @Body() dto: CreateInvitationDto,
     @CurrentUser() user: RequestUser,
@@ -60,6 +62,7 @@ export class InvitationsController {
 
   @Patch(":id/resend")
   @UseGuards(JwtAuthGuard)
+  @Audited("Invitation", "invitation")
   async resend(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     if (!ability.can("invite", "Invitation"))
@@ -70,6 +73,7 @@ export class InvitationsController {
 
   @Patch(":id/revoke")
   @UseGuards(JwtAuthGuard)
+  @Audited("Invitation", "invitation")
   async revoke(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     if (!ability.can("invite", "Invitation"))
@@ -90,8 +94,12 @@ export class InvitationsController {
     };
   }
 
+  // No model — keyed by :token, not :id, and pre-account-creation (no
+  // actor yet). The response shape here is a pre-existing thin one ({ id,
+  // email } only) — not touched here, out of scope for audit plumbing.
   @Post(":token/accept")
   @HttpCode(HttpStatus.OK)
+  @Audited("Invitation")
   async accept(
     @Param("token") token: string,
     @Body() dto: AcceptInvitationDto,

@@ -22,6 +22,7 @@ import {
   MONNIFY_ADAPTER,
   PAYSTACK_ADAPTER,
 } from "./gateway/payment-gateway.tokens";
+import { Audited } from "../audit/audited.decorator";
 
 // Minimal request shape (avoids depending on @types/express, not otherwise
 // a dependency of this app) — just what a webhook handler actually reads.
@@ -48,9 +49,10 @@ export class PaymentGatewayWebhookController {
     @Inject(PAYSTACK_ADAPTER) private readonly paystack: PaymentGatewayAdapter,
   ) {}
 
-  /** Public: Monnify cannot send a JWT — authenticated via monnify-signature HMAC verification instead. */
+  /** Public: Monnify cannot send a JWT — authenticated via monnify-signature HMAC verification instead. No `request.user`, so actorUserId comes out null — correct, a gateway webhook has no human actor. No `:id` param (resolved internally via `parsed.reference`), so no model given either. */
   @Post("monnify")
   @HttpCode(HttpStatus.OK)
+  @Audited("Payment")
   async handleMonnifyWebhook(@Req() req: RawBodyRequest<WebhookRequest>) {
     return this.handle(
       PaymentGatewayProvider.MONNIFY,
@@ -60,9 +62,10 @@ export class PaymentGatewayWebhookController {
     );
   }
 
-  /** Public: Paystack cannot send a JWT — authenticated via x-paystack-signature HMAC verification instead. */
+  /** Public: Paystack cannot send a JWT — authenticated via x-paystack-signature HMAC verification instead. Same actorUserId=null/no-model reasoning as handleMonnifyWebhook. */
   @Post("paystack")
   @HttpCode(HttpStatus.OK)
+  @Audited("Payment")
   async handlePaystackWebhook(@Req() req: RawBodyRequest<WebhookRequest>) {
     return this.handle(
       PaymentGatewayProvider.PAYSTACK,

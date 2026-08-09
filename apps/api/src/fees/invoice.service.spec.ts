@@ -88,7 +88,7 @@ describe("InvoiceService.generate (PRD FR7.2)", () => {
   it("skips a student who already has an invoice for the term", async () => {
     prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
     prisma.feeStructure.findMany.mockResolvedValue([{ id: "fs-1", classLevelId: null, amount: 5000, name: "Tuition" }]);
-    prisma.invoice.findUnique.mockResolvedValue({ id: "existing-invoice" });
+    prisma.invoice.findMany.mockResolvedValue([{ studentId: "student-1" }]);
 
     const result = await service.generate(buildDto());
 

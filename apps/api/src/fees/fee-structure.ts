@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateFeeStructureDto, UpdateFeeStructureDto } from "./dto/fee-structure.dto";
 
 @Injectable()
@@ -45,6 +46,7 @@ export class FeeStructureController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "FeeStructure"))
+  @Audited("FeeStructure", "feeStructure")
   create(@Body() dto: CreateFeeStructureDto) {
     return this.service.create(dto);
   }
@@ -63,12 +65,14 @@ export class FeeStructureController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "FeeStructure"))
+  @Audited("FeeStructure", "feeStructure")
   update(@Param("id") id: string, @Body() dto: UpdateFeeStructureDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "FeeStructure"))
+  @Audited("FeeStructure", "feeStructure")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

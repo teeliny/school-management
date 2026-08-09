@@ -8,6 +8,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
+import { Audited } from "../audit/audited.decorator";
 import { RaiseDiscountRequestDto } from "./dto/raise-discount-request.dto";
 import { RejectDiscountRequestDto } from "./dto/reject-discount-request.dto";
 
@@ -177,12 +178,14 @@ export class DiscountRequestController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "DiscountRequest"))
+  @Audited("DiscountRequest", "discountRequest")
   raise(@Body() dto: RaiseDiscountRequestDto, @CurrentUser() user: RequestUser) {
     return this.service.raise(dto, user);
   }
 
   /** Super-Admin-only carve-out — same manual role-check pattern as PaymentController.approveManualBankTransfer (Bursar's own "manage DiscountRequest" grant would otherwise satisfy any CASL check on this same subject). */
   @Patch(":id/approve")
+  @Audited("DiscountRequest", "discountRequest")
   approve(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
       throw new ForbiddenException("Only the Super-Admin can approve a discount request");
@@ -192,6 +195,7 @@ export class DiscountRequestController {
 
   /** Super-Admin-only carve-out — see approve()'s comment. */
   @Patch(":id/reject")
+  @Audited("DiscountRequest", "discountRequest")
   reject(@Param("id") id: string, @Body() dto: RejectDiscountRequestDto, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
       throw new ForbiddenException("Only the Super-Admin can reject a discount request");

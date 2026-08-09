@@ -72,6 +72,7 @@ model User {
   paymentsMade                     Payment[]
   notifications                    Notification[]
   notificationPreferences          NotificationPreference[]
+  auditLogs                        AuditLog[]
 
   @@map("users")
 }
@@ -1430,4 +1431,31 @@ model EmailLog {
   createdAt       DateTime         @default(now())
 
   @@map("email_logs")
+}
+
+// PRD §7 Auditability NFR: who changed what, with before/after snapshots,
+// for score entries / fee records / role-assignment changes. Written by a
+// single global interceptor (AuditInterceptor), never called directly by
+// any service — ARCHITECTURE §5's "not something other modules import and
+// call."
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  // Derived from HTTP method, or the route's trailing verb when it names
+  // one (approve/reject/revoke/resend/sync/accept/transfer) — see
+  // AuditInterceptor.deriveAction.
+  action      String
+  entityType  String
+  // Route :id when present; null for a create-by-body or a bulk/composite-
+  // key write (e.g. ScoreEntry's upsert, Invoice.generate).
+  entityId    String?
+  before      Json?
+  after       Json?
+  route       String
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
 }

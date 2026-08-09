@@ -19,6 +19,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
+import { Audited } from "../audit/audited.decorator";
 import { CreateStaffAssignmentDto, SyncSubjectTeacherAssignmentsDto } from "./dto/staff-assignment.dto";
 
 // Same "{ClassLevel.name} {ClassArm.name}" display format as
@@ -336,6 +337,7 @@ export class StaffAssignmentController {
   ) {}
 
   @Post()
+  @Audited("StaffAssignment", "staffAssignment")
   async create(@Body() dto: CreateStaffAssignmentDto, @CurrentUser() user: RequestUser) {
     this.assertCanManage(user, dto.assignmentType);
     return this.service.create(dto);
@@ -377,13 +379,18 @@ export class StaffAssignmentController {
     return this.service.findSubjectTeacherClassArmIds({ staffId, subjectId, academicSessionId });
   }
 
+  // No model — response is the array of resulting active rows, not a
+  // single entity; revoked rows aren't in the response at all, but the
+  // array itself still records who reconciled what set, and when.
   @Post("subject-teacher/sync")
+  @Audited("StaffAssignment")
   syncSubjectTeacher(@Body() dto: SyncSubjectTeacherAssignmentsDto, @CurrentUser() user: RequestUser) {
     this.assertCanManage(user, AssignmentType.SUBJECT_TEACHER);
     return this.service.syncSubjectTeacherAssignments(dto);
   }
 
   @Patch(":id/revoke")
+  @Audited("StaffAssignment", "staffAssignment")
   async revoke(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     const assignment = await this.service.findOne(id);
     this.assertCanManage(user, assignment.assignmentType);

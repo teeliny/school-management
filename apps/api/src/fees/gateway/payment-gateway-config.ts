@@ -5,6 +5,7 @@ import { EnvelopeEncryptionService } from "../../common/crypto/envelope-encrypti
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../../casl/policies.guard";
 import { CheckPolicies } from "../../casl/check-policies.decorator";
+import { Audited } from "../../audit/audited.decorator";
 import { CreatePaymentGatewayConfigDto, UpdatePaymentGatewayConfigDto } from "./dto/payment-gateway-config.dto";
 
 // PRD FR7.7: apiKey/secretKey are "never exposed to the frontend or logs"
@@ -70,8 +71,15 @@ export class PaymentGatewayConfigService {
 export class PaymentGatewayConfigController {
   constructor(private readonly service: PaymentGatewayConfigService) {}
 
+  // No `model` arg on any of the three writes below — AuditInterceptor's
+  // before-fetch would pull the raw row including envelope-encrypted
+  // apiKey/secretKey, and that ciphertext has no business living in a
+  // second table. `after` is always whatever this controller returns,
+  // which is already SAFE_SELECT-projected (secrets excluded) — same
+  // "never exposed to logs" invariant preserved in the audit trail too.
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "PaymentGatewayConfig"))
+  @Audited("PaymentGatewayConfig")
   create(@Body() dto: CreatePaymentGatewayConfigDto) {
     return this.service.create(dto);
   }
@@ -90,12 +98,14 @@ export class PaymentGatewayConfigController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "PaymentGatewayConfig"))
+  @Audited("PaymentGatewayConfig")
   update(@Param("id") id: string, @Body() dto: UpdatePaymentGatewayConfigDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "PaymentGatewayConfig"))
+  @Audited("PaymentGatewayConfig")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

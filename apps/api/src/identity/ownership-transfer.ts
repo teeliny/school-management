@@ -14,6 +14,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { UserService } from "./users/user.service";
+import { Audited } from "../audit/audited.decorator";
 
 export class TransferOwnershipDto {
   @IsUUID()
@@ -60,7 +61,13 @@ export class OwnershipTransferService {
 export class OwnershipTransferController {
   constructor(private readonly service: OwnershipTransferService) {}
 
+  // PRD FR1.9 names this action explicitly as audit-worthy. No model — this
+  // is inherently a two-user, multi-row UserRole change (the caller's
+  // demotion + the target's promotion) that a single before/after pair
+  // can't represent cleanly; the response (target user + roles) is still
+  // logged as `after`.
   @Post("transfer")
+  @Audited("UserRole")
   transfer(@Body() dto: TransferOwnershipDto, @CurrentUser() user: RequestUser) {
     // Owner-only action (PRD §5 footnote 1) — plain role check, same as the
     // existing owner-only carve-outs in AbilityFactory/invitations.
