@@ -5,6 +5,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CreateClassSubjectDto, UpdateClassSubjectDto } from "./dto/class-subject.dto";
+import { StudentSubjectEnrollmentService } from "./student-subject-enrollment";
 
 // Source of truth for "which subjects exist for which class group, and how
 // they apply" (PRD §3.3) — the applicability-rule engine
@@ -18,7 +19,10 @@ import { CreateClassSubjectDto, UpdateClassSubjectDto } from "./dto/class-subjec
 // overridable).
 @Injectable()
 export class ClassSubjectService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly studentSubjectEnrollments: StudentSubjectEnrollmentService,
+  ) {}
 
   private assertDepartmentConsistency(type: SubjectType, departmentId?: string) {
     if (type === SubjectType.DEPARTMENT && !departmentId) {
@@ -29,9 +33,14 @@ export class ClassSubjectService {
     }
   }
 
-  create(dto: CreateClassSubjectDto) {
+  async create(dto: CreateClassSubjectDto) {
     this.assertDepartmentConsistency(dto.type, dto.departmentId);
-    return this.prisma.classSubject.create({ data: dto });
+    const classSubject = await this.prisma.classSubject.create({ data: dto });
+    // Fire-and-forget, same rationale as StudentSubjectEnrollmentService.enroll's
+    // recompute queue call — a newly-created COMPULSORY row can immediately
+    // apply to students already sitting in that class category.
+    await this.studentSubjectEnrollments.syncEnrollmentsForClassSubject(classSubject.id);
+    return classSubject;
   }
 
   findAll(filters: { classLevelCategory?: ClassLevelCategory }) {
@@ -49,13 +58,15 @@ export class ClassSubjectService {
     });
   }
 
-  update(id: string, dto: UpdateClassSubjectDto) {
+  async update(id: string, dto: UpdateClassSubjectDto) {
     if (!dto.type) {
-      return this.prisma.classSubject.update({ where: { id }, data: dto });
+      const classSubject = await this.prisma.classSubject.update({ where: { id }, data: dto });
+      await this.studentSubjectEnrollments.syncEnrollmentsForClassSubject(classSubject.id);
+      return classSubject;
     }
 
     this.assertDepartmentConsistency(dto.type, dto.departmentId);
-    return this.prisma.classSubject.update({
+    const classSubject = await this.prisma.classSubject.update({
       where: { id },
       data: {
         ...dto,
@@ -67,6 +78,12 @@ export class ClassSubjectService {
         departmentId: dto.type === SubjectType.DEPARTMENT ? dto.departmentId : null,
       },
     });
+    // Covers both "flipped to COMPULSORY" (backfills students already in
+    // that class category, same as create()) and "flipped away from
+    // COMPULSORY" (syncEnrollmentsForClassSubject no-ops in that case —
+    // dropping existing enrollments on a type change isn't this hook's job).
+    await this.studentSubjectEnrollments.syncEnrollmentsForClassSubject(classSubject.id);
+    return classSubject;
   }
 
   remove(id: string) {

@@ -27,6 +27,17 @@ function contentWidth(doc: PDFKit.PDFDocument): number {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
 }
 
+// Printed report cards show whole-number scores (Nigerian report-card
+// convention — no decimal point anywhere on the printed card); the
+// broadsheet (apps/api/src/assessments/broadsheet.ts, apps/web's
+// /broadsheet page) is the one place that keeps 2-decimal precision, for
+// staff who need the finer-grained number. Rounding only happens here, at
+// render time — grades are already computed upstream from the unrounded
+// value, so this can't shift a score across a grade boundary.
+function formatScore(score: number | null): string {
+  return score === null ? "-" : String(Math.round(score));
+}
+
 /**
  * Table header row builder — bold font is only typed on a per-cell
  * `CellOptions`, not on `rowStyles`/`defaultStyle` (the installed
@@ -151,7 +162,7 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
           headerRow(["Subject", scoreHeader, "Grade", "Remark"]),
           ...snapshot.subjects.map((subject) => [
             { text: subject.subjectName, font: { src: "Helvetica-Bold" } },
-            { text: subject.score === null ? "-" : String(subject.score), align: "center" as const },
+            { text: formatScore(subject.score), align: "center" as const },
             { text: subject.grade ?? "-", align: "center" as const },
             { text: subject.remark ?? "-" },
           ]),
@@ -161,7 +172,7 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
     }
 
     sectionHeader(doc, "Overall");
-    const overallPercentage = snapshot.overallPercentage === null ? "-" : `${snapshot.overallPercentage.toFixed(1)}%`;
+    const overallPercentage = snapshot.overallPercentage === null ? "-" : `${Math.round(snapshot.overallPercentage)}%`;
     const left = doc.page.margins.left;
     const width = contentWidth(doc);
     const boxY = doc.y;
@@ -232,18 +243,18 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
           ...content.subjects.map((subject) => {
             const priorLine =
               subject.priorTerms.length > 0
-                ? subject.priorTerms.map((t) => `${t.termName}: ${t.total ?? "-"}`).join("   ")
+                ? subject.priorTerms.map((t) => `${t.termName}: ${formatScore(t.total)}`).join("   ")
                 : null;
             return [
               { text: subject.subjectName, font: { src: "Helvetica-Bold" } },
               ...subject.components.map((c) => ({
-                text: c.score === null ? "-" : String(c.score),
+                text: formatScore(c.score),
                 align: "center" as const,
                 textColor: MUTED,
               })),
-              { text: String(subject.totalScore), align: "center" as const },
-              { text: subject.classLowScore === null ? "-" : String(subject.classLowScore), align: "center" as const },
-              { text: subject.classHighScore === null ? "-" : String(subject.classHighScore), align: "center" as const },
+              { text: formatScore(subject.totalScore), align: "center" as const },
+              { text: formatScore(subject.classLowScore), align: "center" as const },
+              { text: formatScore(subject.classHighScore), align: "center" as const },
               { text: subject.position ? String(subject.position) : "-", align: "center" as const },
               { text: subject.grade ?? "-", align: "center" as const },
               { text: priorLine ? `${subject.remark ?? "-"}\n${priorLine}` : (subject.remark ?? "-") },
@@ -256,7 +267,7 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
 
     sectionHeader(doc, content.isAnnual ? "Annual Summary" : "Term Summary");
     {
-      const overallAverage = content.overallAverage === null ? "-" : content.overallAverage.toFixed(1);
+      const overallAverage = formatScore(content.overallAverage);
       const left = doc.page.margins.left;
       const width = contentWidth(doc);
       const boxY = doc.y;

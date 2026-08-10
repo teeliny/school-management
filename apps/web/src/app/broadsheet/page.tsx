@@ -347,14 +347,14 @@ export default function BroadsheetPage() {
                           <span className="text-muted">—</span>
                         ) : (
                           <>
-                            {cell.totalScore.toFixed(1)}
+                            {cell.totalScore.toFixed(2)}
                             {cell.grade && <span className="ml-1 text-muted">{cell.grade}</span>}
                           </>
                         )}
                       </td>
                     ))}
                     <td className="py-2.5 pr-4 font-mono font-medium">
-                      {row.overallAverage === null ? <span className="text-muted">—</span> : row.overallAverage.toFixed(1)}
+                      {row.overallAverage === null ? <span className="text-muted">—</span> : row.overallAverage.toFixed(2)}
                     </td>
                     <td className="py-2.5 font-mono">{row.overallPosition ?? <span className="text-muted">—</span>}</td>
                   </tr>

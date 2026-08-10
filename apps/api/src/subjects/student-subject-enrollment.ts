@@ -114,6 +114,79 @@ export class StudentSubjectEnrollmentService {
     }
   }
 
+  /**
+   * ClassSubjectService.create/update hook: syncCompulsoryEnrollmentsOnClassAssignment
+   * only runs at class-assignment time, so a ClassSubject that transitions
+   * to (or is created as) COMPULSORY after students are already sitting in
+   * that class category would otherwise never backfill them — this closes
+   * that gap by walking every currently-assigned student for the one
+   * ClassSubject instead of every ClassSubject for one student. Recompute is
+   * always queued (unlike the assignment-time sync, where a freshly-assigned
+   * student can't yet have scores) since ScoreEntry rows may already exist
+   * for the subject from before the type change.
+   */
+  async syncEnrollmentsForClassSubject(classSubjectId: string): Promise<void> {
+    const classSubject = await this.prisma.classSubject.findUniqueOrThrow({
+      where: { id: classSubjectId },
+      include: { subject: true },
+    });
+    if (!classSubject.subject.isActive) return;
+    if (this.resolveEffectiveType(classSubject) !== SubjectType.COMPULSORY) return;
+
+    const students = await this.prisma.studentProfile.findMany({
+      where: { currentClass: { classLevel: { category: classSubject.classLevelCategory } } },
+      include: { currentClass: true },
+    });
+
+    for (const student of students) {
+      const classArm = student.currentClass;
+      if (!classArm) continue;
+
+      const term = await this.prisma.term.findFirst({
+        where: { academicSessionId: classArm.academicSessionId, isCurrent: true },
+      });
+      if (!term) continue;
+
+      const status = await this.prisma.classSubjectTermStatus.findUnique({
+        where: {
+          classSubjectId_subjectId_termId: {
+            classSubjectId: classSubject.id,
+            subjectId: classSubject.subjectId,
+            termId: term.id,
+          },
+        },
+      });
+      if (status && !status.isActive) continue;
+
+      await this.prisma.studentSubjectEnrollment.upsert({
+        where: {
+          studentId_subjectId_academicSessionId_termId: {
+            studentId: student.id,
+            subjectId: classSubject.subjectId,
+            academicSessionId: classArm.academicSessionId,
+            termId: term.id,
+          },
+        },
+        create: {
+          studentId: student.id,
+          subjectId: classSubject.subjectId,
+          classArmId: classArm.id,
+          academicSessionId: classArm.academicSessionId,
+          termId: term.id,
+          status: EnrollmentStatus.ACTIVE,
+        },
+        update: { status: EnrollmentStatus.ACTIVE, classArmId: classArm.id },
+      });
+
+      await this.recomputeQueue.add("recompute", {
+        studentId: student.id,
+        subjectId: classSubject.subjectId,
+        classArmId: classArm.id,
+        termId: term.id,
+      });
+    }
+  }
+
   /** Explicit GENERAL/DEPARTMENT opt-in (PRD FR2.5). */
   async enroll(dto: CreateEnrollmentDto) {
     const classArm = await this.prisma.classArm.findUniqueOrThrow({

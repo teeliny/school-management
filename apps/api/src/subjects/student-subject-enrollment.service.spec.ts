@@ -5,9 +5,12 @@ import type { CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 function buildPrismaMock() {
   return {
     classArm: { findUniqueOrThrow: jest.fn() },
-    classSubject: { findUnique: jest.fn() },
+    classSubject: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
+    classSubjectTermStatus: { findUnique: jest.fn() },
     studentDepartment: { findUnique: jest.fn() },
+    studentProfile: { findMany: jest.fn() },
     studentSubjectEnrollment: { upsert: jest.fn() },
+    term: { findFirst: jest.fn() },
   };
 }
 
@@ -130,6 +133,114 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 
     expect(tx.classSubject.findMany).not.toHaveBeenCalled();
     expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// Regression: JSS 1's CCA/Yoruba/French report-card bug — a ClassSubject
+// flipped to COMPULSORY after students were already assigned to that class
+// category never backfilled them, since syncCompulsoryEnrollmentsOnClassAssignment
+// only runs at class-assignment time. This is ClassSubjectService.create/
+// update's hook to close that gap.
+describe("StudentSubjectEnrollmentService.syncEnrollmentsForClassSubject", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let recomputeQueue: ReturnType<typeof buildRecomputeQueueMock>;
+  let service: StudentSubjectEnrollmentService;
+
+  const CLASS_SUBJECT = {
+    id: "cs-1",
+    classLevelCategory: ClassLevelCategory.JSS,
+    subjectId: "subj-cca",
+    type: SubjectType.COMPULSORY,
+    subject: { isActive: true },
+  };
+  const STUDENT = {
+    id: "student-1",
+    currentClass: { id: "arm-1", academicSessionId: "session-1" },
+  };
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    recomputeQueue = buildRecomputeQueueMock();
+    service = new StudentSubjectEnrollmentService(prisma as never, buildClassSubjectTermStatusMock() as never, recomputeQueue as never);
+    prisma.classSubject.findUniqueOrThrow.mockResolvedValue(CLASS_SUBJECT);
+    prisma.studentProfile.findMany.mockResolvedValue([STUDENT]);
+    prisma.term.findFirst.mockResolvedValue(TERM);
+    prisma.classSubjectTermStatus.findUnique.mockResolvedValue(null);
+  });
+
+  it("backfills every student currently in the class category and queues a recompute", async () => {
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { currentClass: { classLevel: { category: ClassLevelCategory.JSS } } },
+      }),
+    );
+    expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          studentId: "student-1",
+          subjectId: "subj-cca",
+          classArmId: "arm-1",
+          academicSessionId: "session-1",
+          termId: "term-1",
+          status: EnrollmentStatus.ACTIVE,
+        }),
+      }),
+    );
+    expect(recomputeQueue.add).toHaveBeenCalledWith("recompute", {
+      studentId: "student-1",
+      subjectId: "subj-cca",
+      classArmId: "arm-1",
+      termId: "term-1",
+    });
+  });
+
+  it("no-ops when the ClassSubject isn't COMPULSORY", async () => {
+    prisma.classSubject.findUniqueOrThrow.mockResolvedValue({ ...CLASS_SUBJECT, type: SubjectType.GENERAL });
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentProfile.findMany).not.toHaveBeenCalled();
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when the subject is disabled catalogue-wide (Subject.isActive)", async () => {
+    prisma.classSubject.findUniqueOrThrow.mockResolvedValue({ ...CLASS_SUBJECT, subject: { isActive: false } });
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentProfile.findMany).not.toHaveBeenCalled();
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("skips a student whose session has no current term (known Term.isCurrent gap)", async () => {
+    prisma.term.findFirst.mockResolvedValue(null);
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+    expect(recomputeQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("skips a student whose enrollment is dropped by a per-term ClassSubjectTermStatus", async () => {
+    prisma.classSubjectTermStatus.findUnique.mockResolvedValue({ isActive: false });
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("backfills every affected student when more than one is in the category", async () => {
+    prisma.studentProfile.findMany.mockResolvedValue([
+      STUDENT,
+      { id: "student-2", currentClass: { id: "arm-1", academicSessionId: "session-1" } },
+    ]);
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledTimes(2);
+    expect(recomputeQueue.add).toHaveBeenCalledTimes(2);
   });
 });
 

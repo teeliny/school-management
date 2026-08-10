@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
@@ -26,6 +26,23 @@ interface ProgressSummary {
   totalStudents: number;
   completedCount: number;
 }
+interface BroadsheetSubjectCell {
+  subjectId: string;
+  totalScore: number | null;
+  grade: string | null;
+  position: number | null;
+}
+interface BroadsheetRow {
+  studentId: string;
+  subjects: BroadsheetSubjectCell[];
+  overallAverage: number | null;
+  overallGrade: string | null;
+  overallPosition: number | null;
+}
+interface BroadsheetResponse {
+  subjectColumns: { id: string; name: string }[];
+  rows: BroadsheetRow[];
+}
 
 // PRINCIPAL/HEADTEACHER authorization is school-wide (see
 // ReportCommentService.write's principal branch — no class-arm check at
@@ -45,10 +62,40 @@ export function PrincipalCommentPanel({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ProgressSummary | null>(null);
+  const [broadsheet, setBroadsheet] = useState<BroadsheetResponse | null>(null);
+  const [scoresLoading, setScoresLoading] = useState(false);
+  const [scoresError, setScoresError] = useState<string | null>(null);
 
   useEffect(() => {
     setStudentId("");
   }, [classArmId]);
+
+  // Same source the report card itself draws from (SubjectTermResult, via
+  // BroadsheetService) — fetched once per class-arm/term (not per student,
+  // Broadsheet is already a whole-arm grid) so the Principal/Headteacher can
+  // see exactly what the student's report will show while writing the
+  // comment, instead of writing blind.
+  useEffect(() => {
+    if (!classArmId || !termId) {
+      setBroadsheet(null);
+      return;
+    }
+    setScoresLoading(true);
+    setScoresError(null);
+    apiFetch<BroadsheetResponse>(`/broadsheet?classArmId=${classArmId}&termId=${termId}`, { auth: true })
+      .then(setBroadsheet)
+      .catch((err) => {
+        setBroadsheet(null);
+        setScoresError(err instanceof ApiError ? err.message : "Failed to load scores");
+      })
+      .finally(() => setScoresLoading(false));
+  }, [classArmId, termId]);
+
+  const scoreRow = useMemo(
+    () => broadsheet?.rows.find((row) => row.studentId === studentId) ?? null,
+    [broadsheet, studentId],
+  );
+  const subjectColumns = broadsheet?.subjectColumns ?? [];
 
   const load = useCallback(() => {
     if (!studentId || !termId) {
@@ -153,6 +200,59 @@ export function PrincipalCommentPanel({
         <p className="text-[12.5px] text-muted">
           Principal comments: {progress.completedCount}/{progress.totalStudents}
         </p>
+      )}
+
+      {studentId && termId && (
+        <div className="rounded-md border border-border bg-card-inset p-3">
+          {scoresLoading && <p className="text-[12.5px] text-muted">Loading scores…</p>}
+          {!scoresLoading && scoresError && <p className="text-[12.5px] text-danger">{scoresError}</p>}
+          {!scoresLoading && !scoresError && broadsheet && !scoreRow && (
+            <p className="text-[12.5px] text-muted">No scores recorded for this student this term yet.</p>
+          )}
+          {!scoresLoading && !scoresError && scoreRow && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-[12px]">
+                <thead>
+                  <tr className="border-b border-border text-muted">
+                    <th className="py-1.5 pr-4 font-medium">Subject</th>
+                    <th className="py-1.5 pr-4 font-medium">Score</th>
+                    <th className="py-1.5 font-medium">Grade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subjectColumns.map((subject, i) => {
+                    const cell = scoreRow.subjects[i];
+                    return (
+                      <tr key={subject.id} className="border-b border-border/60 last:border-none">
+                        <td className="py-1.5 pr-4">{subject.name}</td>
+                        <td className="py-1.5 pr-4 font-mono">
+                          {cell?.totalScore == null ? <span className="text-muted">—</span> : cell.totalScore.toFixed(2)}
+                        </td>
+                        <td className="py-1.5 font-mono">{cell?.grade ?? <span className="text-muted">—</span>}</td>
+                      </tr>
+                    );
+                  })}
+                  <tr>
+                    <td className="pt-1.5 pr-4 font-medium">Overall</td>
+                    <td className="pt-1.5 pr-4 font-mono font-medium">
+                      {scoreRow.overallAverage == null ? (
+                        <span className="text-muted">—</span>
+                      ) : (
+                        scoreRow.overallAverage.toFixed(2)
+                      )}
+                    </td>
+                    <td className="pt-1.5 font-mono font-medium">
+                      {scoreRow.overallGrade ?? <span className="text-muted">—</span>}
+                      {scoreRow.overallPosition != null && (
+                        <span className="ml-2 font-sans text-muted">(Position {scoreRow.overallPosition})</span>
+                      )}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {studentId && termId && (
