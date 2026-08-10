@@ -11,13 +11,13 @@ import { Button } from "../../components/atoms/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/molecules/select";
 import { SearchableSelect } from "../../components/molecules/searchable-select";
 import { ReportCardList } from "../../components/organisms/report-card-list";
-
-const ALL = "__all__";
+import { ReportCardFilters, REPORT_CARD_FILTER_ALL as ALL } from "../../components/organisms/report-card-filters";
 
 interface StudentOption {
   id: string;
   admissionNumber: string;
   currentClassId: string | null;
+  status: string;
   user: { firstName: string; lastName: string };
 }
 interface TermOption {
@@ -61,13 +61,18 @@ export default function ReportCardsPage() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    if (!user) return;
     apiFetch<StudentOption[]>("/students", { auth: true }).then(setStudents).catch(() => setStudents([]));
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
     apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }).then(setClassLevels).catch(() => setClassLevels([]));
-    apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
-  }, []);
-
-  const studentOptions = students.map((student) => ({ value: student.id, label: studentOptionLabel(student) }));
+    // A parent never sees the admin Generate panel or the class-arm filter
+    // (the whole school's arms aren't meaningful to browse for one's own
+    // ward) — skip fetching every class arm in the school for a role that
+    // never renders either.
+    if (!user.roles.includes("PARENT")) {
+      apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
+    }
+  }, [user]);
 
   // Narrows the Generate section's student picker to the chosen class level
   // (via its arms' currentClassId), same "level → student" narrowing shape
@@ -96,7 +101,16 @@ export default function ReportCardsPage() {
       .catch(() => setProgress(null));
   }, [classArmFilter, termFilter, refreshKey]);
 
-  const isAdmin = user ? user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") : false;
+  // Matches the backend CASL grant (ability.factory.ts): SUPER_ADMIN, ADMIN,
+  // and a STAFF user with an active PRINCIPAL/HEADTEACHER assignment can all
+  // generate/regenerate/publish report cards — deleting stays Super-Admin-only
+  // (term-report-card.ts's `remove` is a hardcoded role check, not CASL).
+  const canManageReports = user
+    ? user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      user.assignmentTypes.includes("PRINCIPAL") ||
+      user.assignmentTypes.includes("HEADTEACHER")
+    : false;
   const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
 
   async function handleGenerate() {
@@ -129,7 +143,7 @@ export default function ReportCardsPage() {
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="Assessment · Report Cards" title="Report Cards" />
 
-      {isAdmin && (
+      {canManageReports && (
         <Card className="mb-4">
           <CardHeader title="Generate a full-term report card" sub="Mid-term reports are generated automatically by the worker" />
           {genError && <p className="mb-2 text-sm text-danger">{genError}</p>}
@@ -192,52 +206,17 @@ export default function ReportCardsPage() {
 
       <Card>
         <CardHeader title="Report cards" />
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div>
-            <Label htmlFor="filter-class-arm">Class arm</Label>
-            <Select value={classArmFilter} onValueChange={setClassArmFilter}>
-              <SelectTrigger id="filter-class-arm" className="mt-1">
-                <SelectValue placeholder="All class arms" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All class arms</SelectItem>
-                {classArms.map((arm) => (
-                  <SelectItem key={arm.id} value={arm.id}>
-                    {arm.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label htmlFor="filter-student">Student</Label>
-            <SearchableSelect
-              id="filter-student"
-              value={studentFilter}
-              onValueChange={setStudentFilter}
-              options={[{ value: ALL, label: "All students" }, ...studentOptions]}
-              placeholder="All students"
-              searchPlaceholder="Search by name or admission number…"
-              className="mt-1"
-            />
-          </div>
-          <div>
-            <Label htmlFor="filter-term">Term</Label>
-            <Select value={termFilter} onValueChange={setTermFilter}>
-              <SelectTrigger id="filter-term" className="mt-1">
-                <SelectValue placeholder="All terms" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All terms</SelectItem>
-                {terms.map((term) => (
-                  <SelectItem key={term.id} value={term.id}>
-                    {term.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <ReportCardFilters
+          students={students}
+          classArms={classArms}
+          user={user}
+          classArmFilter={classArmFilter}
+          onClassArmFilterChange={setClassArmFilter}
+          studentFilter={studentFilter}
+          onStudentFilterChange={setStudentFilter}
+          termFilter={termFilter}
+          onTermFilterChange={setTermFilter}
+        />
 
         {progress && (
           <p className="mb-4 text-[12.5px] text-muted">
@@ -251,7 +230,7 @@ export default function ReportCardsPage() {
           classArmId={classArmFilter === ALL ? "" : classArmFilter}
           students={students}
           terms={terms}
-          canManage={isAdmin}
+          canManage={canManageReports}
           canDelete={isSuperAdmin}
           refreshKey={refreshKey}
         />

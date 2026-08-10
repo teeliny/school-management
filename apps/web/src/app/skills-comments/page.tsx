@@ -43,7 +43,14 @@ export default function SkillsCommentsPage() {
       .catch(() => setMyAssignments([]));
   }, []);
 
-  const isAdmin = user ? user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") : false;
+  // Matches the backend CASL grant: Principal/Headteacher get `manage
+  // SkillRating/ReportComment` too (ability.factory.ts) — the same
+  // outside-OPEN-window override this flag already grants Admin below.
+  const isAdmin = user
+    ? user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t))
+    : false;
 
   const myClassTeacherAssignments = useMemo(
     () => myAssignments.filter((a) => a.assignmentType === "CLASS_TEACHER" && a.isActive),

@@ -109,6 +109,36 @@ describe("AbilityFactory", () => {
     expect(factory.createForUser(userWith(["STAFF"], ["REGISTRAR"])).can("read", "Broadsheet")).toBe(false);
   });
 
+  it("Principal/Headteacher get near-Admin parity, except user/profile management and invitations", () => {
+    const principal = factory.createForUser(userWith(["STAFF"], ["PRINCIPAL"]));
+    const headteacher = factory.createForUser(userWith(["STAFF"], ["HEADTEACHER"]));
+    for (const ability of [principal, headteacher]) {
+      expect(ability.can("manage", "AcademicStructure")).toBe(true);
+      expect(ability.can("manage", "Subject")).toBe(true);
+      expect(ability.can("manage", "TimetableSlot")).toBe(true);
+      expect(ability.can("manage", "AssessmentComponent")).toBe(true);
+      expect(ability.can("manage", "ScoreEntry")).toBe(true);
+      expect(ability.can("manage", "TermReportCard")).toBe(true);
+      expect(ability.can("manage", "SkillAssessmentItem")).toBe(true);
+      expect(ability.can("manage", "ReportWindow")).toBe(true);
+      expect(ability.can("manage", "AttendanceSession")).toBe(true);
+      expect(ability.can("manage", "SchoolHoliday")).toBe(true);
+      expect(ability.can("manage", "NotificationTemplate")).toBe(true);
+
+      // Deliberately excluded: user/profile management and inviting new
+      // accounts stay Admin/Super-Admin-only.
+      expect(ability.can("manage", "StaffProfile")).toBe(false);
+      expect(ability.can("manage", "ParentProfile")).toBe(false);
+      expect(ability.can("manage", "StudentProfile")).toBe(false);
+      expect(ability.can("manage", "AdminProfile")).toBe(false);
+      expect(ability.can("manage", "StaffAssignment")).toBe(false);
+      expect(ability.can("invite", "Invitation")).toBe(false);
+
+      // Still no access to the fee/finance domain — Bursar/Super-Admin only.
+      expect(ability.can("manage", "Invoice")).toBe(false);
+    }
+  });
+
   // PRD §3.7/§6.5 (Phase 5 slice 1 — Attendance)
   it("ADMIN/SUPER_ADMIN can manage the whole attendance domain, unconditioned", () => {
     for (const role of ["ADMIN", "SUPER_ADMIN"]) {

@@ -138,15 +138,20 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
       emptyPlaceholder(doc, "No subject scores recorded yet.");
     } else {
       doc.font("Helvetica").fontSize(9.5);
+      // Every subject row in a mid-term snapshot shares the same maxScore
+      // (sourced from a single MID_TERM AssessmentComponent per term/class
+      // group, see buildMidTermSnapshot) — safe to show once in the header
+      // rather than repeating it on every score cell.
+      const scoreHeader = `Score / ${snapshot.subjects[0]!.maxScore}`;
       doc.table({
         columnStyles: [{ width: "*", minWidth: 120 }, { width: 90 }, { width: 60 }, { width: 90 }],
         defaultStyle: { padding: 6, border: { bottom: 0.5 }, borderColor: BORDER },
         rowStyles: (i) => (i === 0 ? { backgroundColor: NAVY, textColor: "white" } : i % 2 === 0 ? { backgroundColor: BAND } : {}),
         data: [
-          headerRow(["Subject", "Score", "Grade", "Remark"]),
+          headerRow(["Subject", scoreHeader, "Grade", "Remark"]),
           ...snapshot.subjects.map((subject) => [
             { text: subject.subjectName, font: { src: "Helvetica-Bold" } },
-            { text: subject.score === null ? "-" : `${subject.score} / ${subject.maxScore}`, align: "center" as const },
+            { text: subject.score === null ? "-" : String(subject.score), align: "center" as const },
             { text: subject.grade ?? "-", align: "center" as const },
             { text: subject.remark ?? "-" },
           ]),

@@ -70,7 +70,14 @@ export default function GradebookPage() {
       .catch(() => setMyAssignments([]));
   }, []);
 
-  const isAdmin = user ? user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") : false;
+  // Matches the backend CASL grant: Principal/Headteacher get `manage
+  // ScoreEntry`/`AssessmentComponent` too (ability.factory.ts), i.e. the
+  // same score-entry override this flag already grants Admin below.
+  const isAdmin = user
+    ? user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t))
+    : false;
 
   // A non-admin only ever sees the class arms / subjects their own active
   // SUBJECT_TEACHER assignments cover — not the full school catalogue.
@@ -188,7 +195,10 @@ export default function GradebookPage() {
             <SearchableSelect
               id="gb-subject"
               value={subjectId}
-              onValueChange={setSubjectId}
+              onValueChange={(v) => {
+                setSubjectId(v);
+                setComponentId("");
+              }}
               options={subjectOptions.map((subject) => ({ value: subject.id, label: subject.name }))}
               placeholder={classArmId ? "Select subject" : "Select a class arm first"}
               className="mt-1"

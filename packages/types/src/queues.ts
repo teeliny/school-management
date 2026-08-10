@@ -11,12 +11,24 @@ export const QUEUE_NAMES = {
   PAYMENT_RECONCILIATION: "payment-reconciliation",
   EMAIL_DISPATCH: "email-dispatch",
   INVOICE_OVERDUE_SWEEP: "invoice-overdue-sweep",
+  SUBJECT_TERM_RESULT_RECOMPUTE: "subject-term-result-recompute",
 } as const;
 
 export interface ReportCardGenerationJob {
   studentId: string;
   termId: string;
   reportType: "MID_TERM" | "FULL_TERM";
+}
+
+// Fired when a student explicitly opts into a subject (StudentSubjectEnrollmentService.enroll)
+// so the broadsheet reflects it immediately instead of waiting on the next
+// assessment-schedule-sweep tick, which only re-aggregates a whole
+// class-category/term batch on a component-close transition.
+export interface SubjectTermResultRecomputeJob {
+  studentId: string;
+  subjectId: string;
+  classArmId: string;
+  termId: string;
 }
 
 export interface ReceiptGenerationJob {

@@ -227,6 +227,28 @@ export class StaffAssignmentService {
   }
 
   /**
+   * Whether this user holds an active PRINCIPAL/HEADTEACHER assignment —
+   * same school-wide carve-out StudentService.scopeWhereForUser inlines
+   * privately for its own STAFF branch, duplicated here (not imported) since
+   * that copy isn't exported; a second consumer (TermReportCard staff
+   * visibility, PRD §5) gets its own copy here rather than a cross-service
+   * dependency for one boolean check.
+   */
+  async hasActiveSchoolWideAssignment(userId: string): Promise<boolean> {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    if (!staffProfile) return false;
+
+    const count = await this.prisma.staffAssignment.count({
+      where: {
+        staffId: staffProfile.id,
+        isActive: true,
+        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER] },
+      },
+    });
+    return count > 0;
+  }
+
+  /**
    * Active SUBJECT_TEACHER class arm ids for one staff+subject+session —
    * used to pre-check the class-arm multi-select when the admin reopens the
    * assignment form for a combo they've already assigned before.

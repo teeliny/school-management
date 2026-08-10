@@ -58,7 +58,12 @@ export default function TimetablePage() {
   if (!user) return null;
 
   const isAdmin = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
-  const canManage = isAdmin || user.assignmentTypes.includes("REGISTRAR");
+  // Matches the backend CASL grant: Principal/Headteacher get `manage
+  // TimetableSlot` too, same as Registrar (ability.factory.ts).
+  const canManage =
+    isAdmin ||
+    user.assignmentTypes.includes("REGISTRAR") ||
+    ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
   const termsForSession = terms.filter((t) => !academicSessionId || t.academicSessionId === academicSessionId);
 
   return (

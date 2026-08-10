@@ -157,11 +157,35 @@ export class AbilityFactory {
       can("read", ["Invoice", "Payment", "Receipt"]);
     }
 
-    // Broadsheet is deliberately Super-Admin + Principal/Headteacher only —
-    // not granted to plain Admin above, unlike almost every other Subject
-    // in this factory. Same "covers both StaffAssignment types" precedent
-    // as ReportCommentType.PRINCIPAL (schema.prisma).
+    // Principal/Headteacher get near-Admin parity — everything the ADMIN
+    // branch above grants *except* user/profile management (AdminProfile/
+    // StaffProfile/ParentProfile/StudentProfile/StaffAssignment) and
+    // inviting new accounts, both of which stay Admin/Super-Admin-only.
+    // Mirrors the ADMIN branch's grants capability-for-capability rather
+    // than a shared helper (the ADMIN branch isn't factored out elsewhere
+    // in this file either) — keep the two in sync by hand if either
+    // changes. Also carries the Broadsheet read grant this StaffAssignment
+    // type already had on its own before this near-parity extension.
     if (user.assignmentTypes?.includes("PRINCIPAL") || user.assignmentTypes?.includes("HEADTEACHER")) {
+      can("manage", "AcademicStructure");
+
+      can("manage", [
+        "Subject",
+        "ClassSubject",
+        "SubjectGroupWeight",
+        "StudentSubjectEnrollment",
+        "StudentDepartment",
+        "TimetableSlot",
+      ]);
+
+      can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
+
+      can("manage", ["SkillAssessmentItem", "ReportWindow", "SkillRating", "ReportComment"]);
+
+      can("manage", ["AttendanceSession", "AttendanceRecord", "SchoolHoliday"]);
+
+      can("manage", "NotificationTemplate");
+
       can("read", "Broadsheet");
     }
 

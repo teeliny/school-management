@@ -11,7 +11,10 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { InjectQueue } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { ClassLevelCategory, ClassSubject, EnrollmentStatus, Prisma, SubjectType } from "@prisma/client";
+import { QUEUE_NAMES, type SubjectTermResultRecomputeJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -37,6 +40,8 @@ export class StudentSubjectEnrollmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly classSubjectTermStatus: ClassSubjectTermStatusService,
+    @InjectQueue(QUEUE_NAMES.SUBJECT_TERM_RESULT_RECOMPUTE)
+    private readonly recomputeQueue: Queue<SubjectTermResultRecomputeJob>,
   ) {}
 
   resolveEffectiveType(classSubject: ClassSubject | null): SubjectType | null {
@@ -154,7 +159,7 @@ export class StudentSubjectEnrollmentService {
       termId: dto.termId,
     });
 
-    return this.prisma.studentSubjectEnrollment.upsert({
+    const enrollment = await this.prisma.studentSubjectEnrollment.upsert({
       where: {
         studentId_subjectId_academicSessionId_termId: {
           studentId: dto.studentId,
@@ -166,6 +171,19 @@ export class StudentSubjectEnrollmentService {
       create: { ...dto, status: EnrollmentStatus.ACTIVE },
       update: { status: EnrollmentStatus.ACTIVE, classArmId: dto.classArmId },
     });
+
+    // Fire-and-forget: refreshes SubjectTermResult for just this
+    // student+subject+term immediately, rather than waiting on the next
+    // assessment-schedule-sweep tick (which may not fire again for this
+    // group at all — see SubjectTermResultService.recomputeForStudentSubjectTerm).
+    await this.recomputeQueue.add("recompute", {
+      studentId: dto.studentId,
+      subjectId: dto.subjectId,
+      classArmId: dto.classArmId,
+      termId: dto.termId,
+    });
+
+    return enrollment;
   }
 
   drop(id: string) {

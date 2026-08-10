@@ -25,6 +25,10 @@ function buildClassSubjectTermStatusMock() {
   return { assertActiveForTerm: jest.fn() };
 }
 
+function buildRecomputeQueueMock() {
+  return { add: jest.fn() };
+}
+
 const CLASS_ARM = {
   id: "arm-1",
   classLevelId: "level-1",
@@ -39,7 +43,11 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 
   beforeEach(() => {
     tx = buildTxMock();
-    service = new StudentSubjectEnrollmentService({} as never, buildClassSubjectTermStatusMock() as never);
+    service = new StudentSubjectEnrollmentService(
+      {} as never,
+      buildClassSubjectTermStatusMock() as never,
+      buildRecomputeQueueMock() as never,
+    );
     tx.classArm.findUniqueOrThrow.mockResolvedValue(CLASS_ARM);
     tx.term.findFirst.mockResolvedValue(TERM);
     tx.classSubjectTermStatus.findUnique.mockResolvedValue(null);
@@ -128,6 +136,7 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let classSubjectTermStatus: ReturnType<typeof buildClassSubjectTermStatusMock>;
+  let recomputeQueue: ReturnType<typeof buildRecomputeQueueMock>;
   let service: StudentSubjectEnrollmentService;
 
   function buildDto(overrides: Partial<CreateEnrollmentDto> = {}): CreateEnrollmentDto {
@@ -144,7 +153,8 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   beforeEach(() => {
     prisma = buildPrismaMock();
     classSubjectTermStatus = buildClassSubjectTermStatusMock();
-    service = new StudentSubjectEnrollmentService(prisma as never, classSubjectTermStatus as never);
+    recomputeQueue = buildRecomputeQueueMock();
+    service = new StudentSubjectEnrollmentService(prisma as never, classSubjectTermStatus as never, recomputeQueue as never);
     prisma.classArm.findUniqueOrThrow.mockResolvedValue({
       ...CLASS_ARM,
       classLevel: { category: ClassLevelCategory.SSS },
@@ -160,6 +170,12 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
     expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ create: expect.objectContaining({ status: EnrollmentStatus.ACTIVE }) }),
     );
+    expect(recomputeQueue.add).toHaveBeenCalledWith("recompute", {
+      studentId: "student-1",
+      subjectId: "subj-1",
+      classArmId: "arm-1",
+      termId: "term-1",
+    });
   });
 
   it("rejects manual enroll into an effectively-compulsory subject", async () => {

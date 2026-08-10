@@ -18,7 +18,7 @@ function buildPrismaMock() {
 }
 
 function buildStaffAssignmentsMock() {
-  return { activeAssignedClassArmIds: jest.fn() };
+  return { activeAssignedClassArmIds: jest.fn(), hasActiveSchoolWideAssignment: jest.fn().mockResolvedValue(false) };
 }
 
 function buildQueueMock() {
@@ -329,5 +329,18 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
 
     expect(result).toEqual([]);
     expect(prisma.termReportCard.findMany).not.toHaveBeenCalled();
+  });
+
+  it("gives a Principal/Headteacher (school-wide STAFF assignment) every report card, any status", async () => {
+    const user: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["PRINCIPAL"] };
+    staffAssignments.hasActiveSchoolWideAssignment.mockResolvedValue(true);
+    prisma.termReportCard.findMany.mockResolvedValue([]);
+
+    await service.findForUser(user, {});
+
+    expect(staffAssignments.activeAssignedClassArmIds).not.toHaveBeenCalled();
+    expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: {} }),
+    );
   });
 });

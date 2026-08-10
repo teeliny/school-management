@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { ClassLevelCategory, EnrollmentStatus } from "@prisma/client";
+import { ClassLevelCategory, EnrollmentStatus, TermReportCardStatus } from "@prisma/client";
 import { findGradeScaleMatch } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { assignPositions } from "./position-ranking.util";
@@ -147,6 +147,104 @@ export class SubjectTermResultService {
         });
       }
     }
+  }
+
+  /**
+   * Scoped counterpart to aggregateForClassCategoryTerm — recomputes just one
+   * student's SubjectTermResult row(s) for one subject/term, instead of the
+   * whole class-category batch. Fired (via SUBJECT_TERM_RESULT_RECOMPUTE)
+   * right after StudentSubjectEnrollmentService.enroll's explicit opt-in, so
+   * the broadsheet reflects a late opt-in immediately rather than waiting on
+   * the next assessment-schedule-sweep tick — which only re-aggregates when
+   * it detects a component in that (termId, classLevelCategory) group just
+   * transitioned to fully-closed, so a late opt-in might never trigger one.
+   * Any TermReportCard already generated for this student+term is flagged
+   * needsRegeneration rather than silently regenerated — see
+   * ReportCardListing's "Needs regeneration" badge/Regenerate button.
+   */
+  async recomputeForStudentSubjectTerm(params: {
+    studentId: string;
+    subjectId: string;
+    classArmId: string;
+    termId: string;
+  }): Promise<void> {
+    const { studentId, subjectId, classArmId, termId } = params;
+
+    const classArm = await this.prisma.classArm.findUniqueOrThrow({
+      where: { id: classArmId },
+      include: { classLevel: true },
+    });
+    const classLevelCategory = classArm.classLevel.category;
+
+    const components = await this.prisma.assessmentComponent.findMany({
+      where: { termId, classLevelCategory },
+      select: { id: true },
+    });
+    const componentIds = components.map((c) => c.id);
+    if (componentIds.length === 0) return;
+
+    const subject = await this.prisma.subject.findUniqueOrThrow({ where: { id: subjectId } });
+
+    const scoreEntries = await this.prisma.scoreEntry.findMany({
+      where: { studentId, assessmentComponentId: { in: componentIds } },
+      select: { subjectId: true, score: true },
+    });
+    const sumScores = (sid: string): number =>
+      scoreEntries.filter((entry) => entry.subjectId === sid).reduce((sum, entry) => sum + Number(entry.score), 0);
+
+    const gradeScales = await this.fetchGradeScaleRows();
+
+    const written: { id: string; subjectId: string }[] = [];
+    const upsertResult = async (sid: string, totalScore: number) => {
+      const { grade, remark } = findGradeScaleMatch(gradeScales, totalScore);
+      const row = await this.prisma.subjectTermResult.upsert({
+        where: { studentId_subjectId_termId: { studentId, subjectId: sid, termId } },
+        create: { studentId, subjectId: sid, classArmId, termId, totalScore, grade, remark },
+        update: { totalScore, grade, remark, classArmId },
+      });
+      written.push({ id: row.id, subjectId: sid });
+    };
+
+    if (!subject.isGroup) {
+      await upsertResult(subjectId, sumScores(subjectId));
+    } else {
+      const weights = await this.prisma.subjectGroupWeight.findMany({ where: { groupSubjectId: subjectId } });
+      const disabledChildIds = await this.disabledChildSubjectIds(subjectId, classLevelCategory, termId);
+
+      let weightedSum = 0;
+      let weightTotal = 0;
+      for (const weight of weights) {
+        const childTotal = sumScores(weight.childSubjectId);
+        await upsertResult(weight.childSubjectId, childTotal);
+        if (disabledChildIds.has(weight.childSubjectId)) continue;
+        weightedSum += childTotal * Number(weight.weight);
+        weightTotal += Number(weight.weight);
+      }
+      const parentTotal = weightTotal > 0 ? weightedSum / weightTotal : 0;
+      await upsertResult(subjectId, parentTotal);
+    }
+
+    // Inserting/updating this student's row(s) shifts classmates' ranks too
+    // — re-rank the whole (subjectId, classArmId) pair for every subject
+    // touched, not just this one student.
+    for (const { subjectId: touchedSubjectId } of written) {
+      const group = await this.prisma.subjectTermResult.findMany({
+        where: { subjectId: touchedSubjectId, classArmId, termId },
+        select: { id: true, totalScore: true },
+      });
+      const positions = assignPositions(group.map((row) => ({ id: row.id, totalScore: Number(row.totalScore) })));
+      for (const row of group) {
+        await this.prisma.subjectTermResult.update({
+          where: { id: row.id },
+          data: { position: positions.get(row.id) },
+        });
+      }
+    }
+
+    await this.prisma.termReportCard.updateMany({
+      where: { studentId, termId, status: { in: [TermReportCardStatus.READY, TermReportCardStatus.PUBLISHED] } },
+      data: { needsRegeneration: true, staleReason: "Subject enrollment changed", staleSince: new Date() },
+    });
   }
 
   /**

@@ -183,6 +183,85 @@ describe("ReportCardProcessor.process — MID_TERM (only the MID_TERM component,
     );
     expect(prisma.termReportCard.update.mock.calls[0][0].data).not.toHaveProperty("overallRemark");
   });
+
+  it("renders a grouped subject as one weighted-average row, not one row per child", async () => {
+    prisma.assessmentComponent.findFirst.mockResolvedValue({
+      id: "comp-midterm",
+      type: AssessmentComponentType.MID_TERM,
+      maxScore: 20,
+    });
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([
+      {
+        subjectId: "subj-pvs",
+        subject: {
+          isGroup: true,
+          name: "Pre-Vocational Studies",
+          childSubjects: [
+            { id: "subj-home-ec", name: "Home Economics" },
+            { id: "subj-agric", name: "Agricultural Science" },
+          ],
+        },
+      },
+    ]);
+    prisma.subjectGroupWeight.findMany.mockResolvedValue([
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-home-ec", weight: 40 },
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-agric", weight: 60 },
+    ]);
+    prisma.scoreEntry.findMany.mockResolvedValue([
+      { subjectId: "subj-home-ec", score: 10 },
+      { subjectId: "subj-agric", score: 15 },
+    ]);
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "MID_TERM" } } as never);
+
+    const snapshot = prisma.termReportCard.update.mock.calls[0][0].data.scoresSnapshot;
+    expect(snapshot.subjects).toHaveLength(1);
+    expect(snapshot.subjects[0]).toMatchObject({
+      subjectId: "subj-pvs",
+      subjectName: "Pre-Vocational Studies",
+      score: 13, // (10*40 + 15*60) / (40+60)
+      maxScore: 20,
+      percentage: 65, // 13/20 * 100
+    });
+    expect(subjectTermResults.disabledChildSubjectIds).toHaveBeenCalledWith("subj-pvs", "JSS", "term-1");
+  });
+
+  it("excludes a disabled child from the group's weight sum, not counted as a 0", async () => {
+    prisma.assessmentComponent.findFirst.mockResolvedValue({
+      id: "comp-midterm",
+      type: AssessmentComponentType.MID_TERM,
+      maxScore: 20,
+    });
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([
+      {
+        subjectId: "subj-pvs",
+        subject: {
+          isGroup: true,
+          name: "Pre-Vocational Studies",
+          childSubjects: [
+            { id: "subj-home-ec", name: "Home Economics" },
+            { id: "subj-agric", name: "Agricultural Science" },
+          ],
+        },
+      },
+    ]);
+    prisma.subjectGroupWeight.findMany.mockResolvedValue([
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-home-ec", weight: 40 },
+      { groupSubjectId: "subj-pvs", childSubjectId: "subj-agric", weight: 60 },
+    ]);
+    prisma.scoreEntry.findMany.mockResolvedValue([
+      { subjectId: "subj-home-ec", score: 10 },
+      { subjectId: "subj-agric", score: 15 },
+    ]);
+    subjectTermResults.disabledChildSubjectIds.mockResolvedValue(new Set(["subj-agric"]));
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "MID_TERM" } } as never);
+
+    const snapshot = prisma.termReportCard.update.mock.calls[0][0].data.scoresSnapshot;
+    // Only Home Economics counts now — its weight is implicitly the group's
+    // whole 100%, not diluted by Agricultural Science's disabled share.
+    expect(snapshot.subjects[0]).toMatchObject({ subjectId: "subj-pvs", score: 10 });
+  });
 });
 
 describe("ReportCardProcessor.process — FULL_TERM (breakdown, prior terms, annual grading)", () => {

@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { BullModule } from "@nestjs/bullmq";
+import { QUEUE_NAMES } from "@school/types";
 import { SubjectController, SubjectService } from "./subject";
 import { ClassSubjectController, ClassSubjectService } from "./class-subject";
 import { ClassSubjectTermStatusController, ClassSubjectTermStatusService } from "./class-subject-term-status";
@@ -13,6 +15,7 @@ import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } f
 // ClassSubjectTermStatusService since AssessmentsModule's ScoreEntryService
 // needs it for the per-term disable check.
 @Module({
+  imports: [BullModule.registerQueue({ name: QUEUE_NAMES.SUBJECT_TERM_RESULT_RECOMPUTE })],
   controllers: [
     SubjectController,
     ClassSubjectController,

@@ -858,6 +858,14 @@ model TermReportCard {
   generatedByUserId String?
   generatedByUser   User?                @relation(fields: [generatedByUserId], references: [id])
   publishedAt       DateTime?
+  // Set when a StudentSubjectEnrollment change (opt-in) is detected for this
+  // student+term after this card was generated — see
+  // SubjectTermResultService.recomputeForStudentSubjectTerm. Cleared on the
+  // next successful (re)generation. Admin-surfaced only; nothing regenerates
+  // automatically.
+  needsRegeneration Boolean              @default(false)
+  staleReason       String?
+  staleSince        DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 

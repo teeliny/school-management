@@ -9,6 +9,7 @@ import { SubjectList, type SubjectListItem } from "../../components/organisms/su
 import { CreateSubjectForm, type EditableSubject } from "../../components/organisms/create-subject-form";
 import { ClassSubjectAssignment } from "../../components/organisms/class-subject-assignment";
 import { StudentDepartmentForm } from "../../components/organisms/student-department-form";
+import { StudentSubjectEnrollmentManager } from "../../components/organisms/student-subject-enrollment-manager";
 
 export default function SubjectsPage() {
   const { user, loading, logout } = useCurrentUser();
@@ -24,7 +25,12 @@ export default function SubjectsPage() {
   }
   if (!user) return null;
 
-  const canManage = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
+  // Matches the backend CASL grant: Principal/Headteacher get `manage
+  // Subject/ClassSubject/StudentDepartment` too (ability.factory.ts).
+  const canManage =
+    user.roles.includes("SUPER_ADMIN") ||
+    user.roles.includes("ADMIN") ||
+    ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
 
   function handleEdit(subject: SubjectListItem) {
     setEditingSubject({
@@ -83,6 +89,15 @@ export default function SubjectsPage() {
             sub="SSS-only — required for department-restricted subjects"
           >
             <StudentDepartmentForm />
+          </CollapsibleCard>
+        )}
+
+        {canManage && (
+          <CollapsibleCard
+            title="Student subject enrollment"
+            sub="Opt a student into (or drop them from) a General/Department-restricted subject — Compulsory subjects auto-enroll on class assignment"
+          >
+            <StudentSubjectEnrollmentManager />
           </CollapsibleCard>
         )}
       </div>

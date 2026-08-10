@@ -76,7 +76,13 @@ export default function AttendancePage() {
     apiFetch<SchoolProfile>("/school-profile", { auth: true }).then(setSchoolProfile).catch(() => setSchoolProfile(null));
   }, []);
 
-  const isAdmin = user ? user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") : false;
+  // Matches the backend CASL grant: Principal/Headteacher get `manage
+  // AttendanceSession/AttendanceRecord/SchoolHoliday` too (ability.factory.ts).
+  const isAdmin = user
+    ? user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t))
+    : false;
   const isRegistrar = user ? user.assignmentTypes.includes("REGISTRAR") : false;
 
   const myClassTeacherAssignments = useMemo(

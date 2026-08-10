@@ -41,10 +41,13 @@ export function GradebookTable({
     classArmId,
   });
   const [scores, setScores] = useState<Record<string, number>>({});
+  const [draftScores, setDraftScores] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, "saving" | "saved" | "error" | "invalid">>({});
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ScoreSummary | null>(null);
-  const draftScores = useRef<Record<string, string>>({});
+  // Guards against a late (out-of-order) loadScores response overwriting a
+  // newer one once the user has already switched subject/component again.
+  const loadRequestId = useRef(0);
 
   // The four keys a native number input otherwise lets through that would
   // still produce a non-sensical score: minus (negative), plus, and the two
@@ -54,18 +57,27 @@ export function GradebookTable({
 
   const loadScores = useCallback(() => {
     if (!classArmId || !subjectId || !assessmentComponentId) return;
+    const thisRequest = ++loadRequestId.current;
+    // Clear immediately (not just on resolve) so a row that remounts for the
+    // new subject/component never briefly shows the previous selection's
+    // committed value while the fetch for the new one is still in flight.
+    setScores({});
+    setDraftScores({});
+    setSaving({});
     apiFetch<ScoreEntryItem[]>(
       `/score-entries?subjectId=${subjectId}&assessmentComponentId=${assessmentComponentId}&classArmId=${classArmId}`,
       { auth: true },
     )
       .then((entries) => {
+        if (thisRequest !== loadRequestId.current) return;
         const byStudent: Record<string, number> = {};
         for (const entry of entries) byStudent[entry.studentId] = Number(entry.score);
         setScores(byStudent);
-        draftScores.current = {};
-        setSaving({});
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load gradebook"));
+      .catch((err) => {
+        if (thisRequest !== loadRequestId.current) return;
+        setError(err instanceof ApiError ? err.message : "Failed to load gradebook");
+      });
   }, [classArmId, subjectId, assessmentComponentId]);
 
   const loadSummary = useCallback(() => {
@@ -87,7 +99,7 @@ export function GradebookTable({
   }, [loadScores, loadSummary]);
 
   async function saveScore(studentId: string) {
-    const raw = draftScores.current[studentId];
+    const raw = draftScores[studentId];
     if (raw === undefined || raw === "") return;
     const score = Number(raw);
     if (Number.isNaN(score) || score < 0 || score > maxScore) {
@@ -95,13 +107,21 @@ export function GradebookTable({
       return;
     }
 
+    // Captured so a save that resolves after the user has already switched
+    // subject/component doesn't write a stale-context result into the
+    // now-different `scores`/`saving` state.
+    const savedSubjectId = subjectId;
+    const savedComponentId = assessmentComponentId;
+    const stillCurrent = () => subjectId === savedSubjectId && assessmentComponentId === savedComponentId;
+
     setSaving((s) => ({ ...s, [studentId]: "saving" }));
     try {
       await apiFetch("/score-entries", {
         method: "POST",
         auth: true,
-        body: { studentId, subjectId, assessmentComponentId, classArmId, score },
+        body: { studentId, subjectId: savedSubjectId, assessmentComponentId: savedComponentId, classArmId, score },
       });
+      if (!stillCurrent()) return;
       setScores((s) => {
         const wasAlreadyEntered = studentId in s;
         if (!wasAlreadyEntered) {
@@ -109,8 +129,14 @@ export function GradebookTable({
         }
         return { ...s, [studentId]: score };
       });
+      setDraftScores((d) => {
+        const next = { ...d };
+        delete next[studentId];
+        return next;
+      });
       setSaving((s) => ({ ...s, [studentId]: "saved" }));
     } catch (err) {
+      if (!stillCurrent()) return;
       setError(err instanceof ApiError ? err.message : "Failed to save score");
       setSaving((s) => ({ ...s, [studentId]: "error" }));
     }
@@ -161,14 +187,15 @@ export function GradebookTable({
                     min={0}
                     max={maxScore}
                     step="any"
-                    defaultValue={scores[student.id] ?? ""}
+                    value={draftScores[student.id] ?? (scores[student.id] !== undefined ? String(scores[student.id]) : "")}
                     disabled={readOnly}
                     className="w-24 text-center font-mono"
                     onKeyDown={(e) => {
                       if (BLOCKED_KEYS.has(e.key)) e.preventDefault();
                     }}
                     onChange={(e) => {
-                      draftScores.current[student.id] = e.target.value;
+                      const { value } = e.target;
+                      setDraftScores((d) => ({ ...d, [student.id]: value }));
                       if (student.id in saving) {
                         setSaving((s) => Object.fromEntries(Object.entries(s).filter(([id]) => id !== student.id)));
                       }

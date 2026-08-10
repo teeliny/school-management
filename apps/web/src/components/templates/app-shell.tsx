@@ -70,13 +70,31 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
   {
     eyebrow: "Academics",
     items: [
-      { href: "/academic-structure", label: "Academic structure", icon: Building2, adminOnly: true },
-      { href: "/subjects", label: "Subjects", icon: BookOpen, adminOnly: true },
+      {
+        href: "/academic-structure",
+        label: "Academic structure",
+        icon: Building2,
+        // Not `adminOnly` (that ANDs with `visible` rather than OR-ing) —
+        // Principal/Headteacher get `manage AcademicStructure` too, per
+        // ability.factory.ts's near-Admin-parity grant.
+        visible: ({ isAdmin, user }) =>
+          isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+      },
+      {
+        href: "/subjects",
+        label: "Subjects",
+        icon: BookOpen,
+        visible: ({ isAdmin, user }) =>
+          isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+      },
       {
         href: "/timetable",
         label: "Timetable",
         icon: CalendarClock,
-        visible: ({ isAdmin, user }) => isAdmin || user.assignmentTypes.includes("REGISTRAR"),
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          user.assignmentTypes.includes("REGISTRAR") ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
       },
     ],
   },
@@ -91,7 +109,8 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           isAdmin ||
           user.assignmentTypes.includes("REGISTRAR") ||
           user.assignmentTypes.includes("CLASS_TEACHER") ||
-          user.assignmentTypes.includes("SUBJECT_TEACHER"),
+          user.assignmentTypes.includes("SUBJECT_TEACHER") ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
       },
       {
         href: "/fees",
@@ -107,12 +126,21 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
   {
     eyebrow: "Assessment",
     items: [
-      { href: "/assessment-setup", label: "Assessment Setup", icon: ClipboardList, adminOnly: true },
+      {
+        href: "/assessment-setup",
+        label: "Assessment Setup",
+        icon: ClipboardList,
+        visible: ({ isAdmin, user }) =>
+          isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+      },
       {
         href: "/gradebook",
         label: "Gradebook",
         icon: NotebookPen,
-        visible: ({ isAdmin, user }) => isAdmin || user.assignmentTypes.includes("SUBJECT_TEACHER"),
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          user.assignmentTypes.includes("SUBJECT_TEACHER") ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
       },
       {
         href: "/skills-comments",

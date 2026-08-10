@@ -4,7 +4,7 @@ function buildPrismaMock() {
   return {
     term: { findUniqueOrThrow: jest.fn(), findMany: jest.fn() },
     assessmentComponent: { findMany: jest.fn() },
-    classArm: { findMany: jest.fn() },
+    classArm: { findMany: jest.fn(), findUniqueOrThrow: jest.fn() },
     studentSubjectEnrollment: { findMany: jest.fn() },
     scoreEntry: { findMany: jest.fn() },
     gradeScale: { findMany: jest.fn() },
@@ -12,6 +12,8 @@ function buildPrismaMock() {
     subjectTermResult: { upsert: jest.fn(), update: jest.fn(), findMany: jest.fn() },
     classSubject: { findUnique: jest.fn() },
     classSubjectTermStatus: { findMany: jest.fn() },
+    subject: { findUniqueOrThrow: jest.fn() },
+    termReportCard: { updateMany: jest.fn() },
   };
 }
 
@@ -340,5 +342,60 @@ describe("SubjectTermResultService.computeAnnualSummary (PRD §3.6 — last-term
     expect(result?.overallAverage).toBe(75);
     expect(result?.overallGrade).toBe("A1");
     expect(result?.overallRemark).toBe("Excellent");
+  });
+});
+
+describe("SubjectTermResultService.recomputeForStudentSubjectTerm (opt-in staleness flagging)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let service: SubjectTermResultService;
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    service = new SubjectTermResultService(prisma as never);
+    prisma.classArm.findUniqueOrThrow.mockResolvedValue({ id: "arm-1", classLevel: { category: "JSS" } });
+    prisma.assessmentComponent.findMany.mockResolvedValue([{ id: "ca" }, { id: "exam" }]);
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-math", isGroup: false });
+    prisma.scoreEntry.findMany.mockResolvedValue([]);
+    prisma.gradeScale.findMany.mockResolvedValue(GRADE_SCALES);
+    prisma.subjectTermResult.upsert.mockImplementation((args) =>
+      Promise.resolve({ id: `${args.create.studentId}:${args.create.subjectId}` }),
+    );
+    prisma.subjectTermResult.findMany.mockResolvedValue([]);
+    prisma.subjectTermResult.update.mockResolvedValue({});
+    prisma.classSubject.findUnique.mockResolvedValue(null);
+    prisma.classSubjectTermStatus.findMany.mockResolvedValue([]);
+    prisma.termReportCard.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("flags an existing READY/PUBLISHED report card as needsRegeneration, even when the class's assessment components are already PUBLISHED", async () => {
+    // "Published" components are still returned by this unfiltered
+    // `assessmentComponent.findMany` — status doesn't gate whether a late
+    // opt-in's recompute runs or whether the report card gets flagged.
+    prisma.assessmentComponent.findMany.mockResolvedValue([{ id: "ca", status: "PUBLISHED" }]);
+
+    await service.recomputeForStudentSubjectTerm({
+      studentId: "student-1",
+      subjectId: "subj-math",
+      classArmId: "arm-1",
+      termId: "term-1",
+    });
+
+    expect(prisma.termReportCard.updateMany).toHaveBeenCalledWith({
+      where: { studentId: "student-1", termId: "term-1", status: { in: ["READY", "PUBLISHED"] } },
+      data: { needsRegeneration: true, staleReason: "Subject enrollment changed", staleSince: expect.any(Date) },
+    });
+  });
+
+  it("no-ops (does not flag) when no AssessmentComponent exists yet for this term/class group", async () => {
+    prisma.assessmentComponent.findMany.mockResolvedValue([]);
+
+    await service.recomputeForStudentSubjectTerm({
+      studentId: "student-1",
+      subjectId: "subj-math",
+      classArmId: "arm-1",
+      termId: "term-1",
+    });
+
+    expect(prisma.termReportCard.updateMany).not.toHaveBeenCalled();
   });
 });

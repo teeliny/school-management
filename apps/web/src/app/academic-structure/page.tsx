@@ -23,7 +23,13 @@ export default function AcademicStructurePage() {
   }
   if (!user) return null;
 
-  const canManage = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
+  // Matches the backend CASL grant (ability.factory.ts): Principal/
+  // Headteacher get `manage AcademicStructure` too, same near-Admin-parity
+  // extension as Report Cards/Gradebook/Attendance.
+  const canManage =
+    user.roles.includes("SUPER_ADMIN") ||
+    user.roles.includes("ADMIN") ||
+    ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
 
   if (!canManage) {
     return (

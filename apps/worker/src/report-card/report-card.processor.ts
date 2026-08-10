@@ -48,6 +48,12 @@ export class ReportCardProcessor extends WorkerHost {
    * component's maxScore and graded via GradeScale, same as a
    * SubjectTermResult — giving each subject (and the report overall, minus
    * a remark) a grade too now.
+   *
+   * A grouped subject gets one row (not one per child), scored as the
+   * SubjectGroupWeight-weighted average of whichever children have a
+   * mid-term score — same shape full-term's per-component breakdown and
+   * SubjectTermResultService.aggregateForClassCategoryTerm both use, kept
+   * consistent here rather than flattening groups into their children.
    */
   private async generateMidTerm(studentId: string, termId: string): Promise<void> {
     const [student, term] = await Promise.all([
@@ -76,31 +82,61 @@ export class ReportCardProcessor extends WorkerHost {
       include: { subject: { include: { childSubjects: true } } },
     });
 
-    // A grouped subject's children (not the parent) carry the actual scores
-    // (PRD §3.6) — expand each group enrollment into its children for
-    // display, same as the full-term breakdown.
-    const subjectRefs = enrollments.flatMap((enrollment) =>
-      enrollment.subject.isGroup
-        ? enrollment.subject.childSubjects.map((child) => ({ subjectId: child.id, subjectName: child.name }))
-        : [{ subjectId: enrollment.subjectId, subjectName: enrollment.subject.name }],
+    // Scores are entered per child subject under the shared mid-term
+    // component (PRD §3.6), same as any ordinary subject — fetch for every
+    // group's children plus every standalone enrollment's own subject.
+    const scoreSubjectIds = enrollments.flatMap((enrollment) =>
+      enrollment.subject.isGroup ? enrollment.subject.childSubjects.map((child) => child.id) : [enrollment.subjectId],
     );
-
     const scores = await this.prisma.scoreEntry.findMany({
-      where: {
-        studentId,
-        assessmentComponentId: midTermComponent.id,
-        subjectId: { in: subjectRefs.map((s) => s.subjectId) },
-      },
+      where: { studentId, assessmentComponentId: midTermComponent.id, subjectId: { in: scoreSubjectIds } },
       select: { subjectId: true, score: true },
     });
+    const scoreFor = (subjectId: string) => scores.find((s) => s.subjectId === subjectId);
+
+    const groupSubjectIds = [...new Set(enrollments.filter((e) => e.subject.isGroup).map((e) => e.subjectId))];
+    const groupWeights =
+      groupSubjectIds.length > 0
+        ? await this.prisma.subjectGroupWeight.findMany({ where: { groupSubjectId: { in: groupSubjectIds } } })
+        : [];
+    const disabledChildrenByGroup = new Map<string, Set<string>>();
+    for (const groupId of groupSubjectIds) {
+      disabledChildrenByGroup.set(
+        groupId,
+        await this.subjectTermResults.disabledChildSubjectIds(groupId, classLevelCategory, termId),
+      );
+    }
 
     const maxScore = Number(midTermComponent.maxScore);
-    const subjects: MidTermSubjectScoreInput[] = subjectRefs.map((ref) => {
-      const entry = scores.find((s) => s.subjectId === ref.subjectId);
+    const subjects: MidTermSubjectScoreInput[] = enrollments.map((enrollment) => {
+      if (!enrollment.subject.isGroup) {
+        const entry = scoreFor(enrollment.subjectId);
+        return {
+          subjectId: enrollment.subjectId,
+          subjectName: enrollment.subject.name,
+          score: entry ? Number(entry.score) : null,
+          maxScore,
+        };
+      }
+
+      // A child disabled for this term is excluded from the weight sum
+      // entirely rather than counted as 0, same as the full-term/
+      // SubjectTermResult weighting.
+      const weights = groupWeights.filter((w) => w.groupSubjectId === enrollment.subjectId);
+      const disabledChildIds = disabledChildrenByGroup.get(enrollment.subjectId) ?? new Set<string>();
+      let weightedSum = 0;
+      let weightTotal = 0;
+      for (const weight of weights) {
+        if (disabledChildIds.has(weight.childSubjectId)) continue;
+        const entry = scoreFor(weight.childSubjectId);
+        if (!entry) continue;
+        weightedSum += Number(entry.score) * Number(weight.weight);
+        weightTotal += Number(weight.weight);
+      }
       return {
-        subjectId: ref.subjectId,
-        subjectName: ref.subjectName,
-        score: entry ? Number(entry.score) : null,
+        subjectId: enrollment.subjectId,
+        subjectName: enrollment.subject.name,
+        score: weightTotal > 0 ? weightedSum / weightTotal : null,
         maxScore,
       };
     });
@@ -135,6 +171,9 @@ export class ReportCardProcessor extends WorkerHost {
         overallScore: snapshot.overallPercentage,
         overallGrade: snapshot.overallGrade,
         // No overallRemark for MID_TERM, by design (PRD §3.6).
+        needsRegeneration: false,
+        staleReason: null,
+        staleSince: null,
       },
     });
 
@@ -360,6 +399,9 @@ export class ReportCardProcessor extends WorkerHost {
         overallScore: overall.average,
         overallGrade: overall.grade,
         overallRemark: overall.remark,
+        needsRegeneration: false,
+        staleReason: null,
+        staleSince: null,
       },
     });
 

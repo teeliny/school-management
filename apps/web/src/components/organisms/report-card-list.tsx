@@ -25,6 +25,7 @@ interface TermReportCardItem {
   pdfUrl: string | null;
   overallScore: string | null;
   overallGrade: string | null;
+  needsRegeneration: boolean;
 }
 interface StudentOption {
   id: string;
@@ -93,6 +94,7 @@ export function ReportCardList({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<Record<string, boolean>>({});
+  const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -124,6 +126,19 @@ export function ReportCardList({
       setActionError(err instanceof ApiError ? friendlyPublishError(err.message) : "Failed to publish report card");
     } finally {
       setPublishing((s) => ({ ...s, [id]: false }));
+    }
+  }
+
+  async function regenerate(id: string) {
+    setRegenerating((s) => ({ ...s, [id]: true }));
+    setActionError(null);
+    try {
+      await apiFetch(`/term-report-cards/${id}/regenerate`, { method: "PATCH", auth: true });
+      load();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Failed to regenerate report card");
+    } finally {
+      setRegenerating((s) => ({ ...s, [id]: false }));
     }
   }
 
@@ -191,7 +206,10 @@ export function ReportCardList({
                 <Badge variant={TYPE_VARIANT[card.reportType]}>{card.reportType.replace("_", " ")}</Badge>
               </td>
               <td className="py-2.5 pr-3">
-                <Badge variant={STATUS_VARIANT[card.status]}>{card.status}</Badge>
+                <div className="flex flex-wrap items-center gap-1">
+                  <Badge variant={STATUS_VARIANT[card.status]}>{card.status}</Badge>
+                  {card.needsRegeneration && <Badge variant="warning">Needs regeneration</Badge>}
+                </div>
               </td>
               <td className="py-2.5 pr-3 font-mono text-muted">
                 {card.overallScore ? `${card.overallScore} (${card.overallGrade})` : "—"}
@@ -203,6 +221,17 @@ export function ReportCardList({
                       <a href={card.pdfUrl} target="_blank" rel="noreferrer">
                         View PDF
                       </a>
+                    </Button>
+                  )}
+                  {canManage && card.needsRegeneration && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={regenerating[card.id]}
+                      onClick={() => regenerate(card.id)}
+                    >
+                      {regenerating[card.id] ? "Regenerating…" : "Regenerate"}
                     </Button>
                   )}
                   {canManage && card.status === "READY" && (
