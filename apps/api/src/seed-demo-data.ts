@@ -21,6 +21,8 @@ import { SubjectService } from "./subjects/subject";
 import { StaffAssignmentService } from "./staff-assignments/staff-assignment";
 import { AssessmentComponentService } from "./assessments/assessment-component";
 import { ReportWindowService } from "./assessments/report-window";
+import { FeeStructureService } from "./fees/fee-structure";
+import { InvoiceService } from "./fees/invoice";
 
 /**
  * One-shot demo dataset for a fresh deployment (run after `pnpm setup:school`
@@ -63,6 +65,8 @@ async function main() {
   const staffAssignments = app.get(StaffAssignmentService);
   const assessmentComponents = app.get(AssessmentComponentService);
   const reportWindows = app.get(ReportWindowService);
+  const feeStructures = app.get(FeeStructureService);
+  const invoices = app.get(InvoiceService);
 
   try {
     // -------------------------------------------------------------------
@@ -80,7 +84,9 @@ async function main() {
       where: { roles: { some: { role: Role.SUPER_ADMIN, isActive: true } } },
     });
     if (!superAdmin) {
-      logger.warn("No active Super-Admin found — creating one directly with the demo password.");
+      logger.warn(
+        "No active Super-Admin found — creating one directly with the demo password.",
+      );
       superAdmin = await prisma.user.create({
         data: {
           email: "super-admin@" + EMAIL_DOMAIN,
@@ -90,7 +96,9 @@ async function main() {
           passwordHash: await argon2.hash(DEMO_PASSWORD),
         },
       });
-      await prisma.userRole.create({ data: { userId: superAdmin.id, role: Role.SUPER_ADMIN } });
+      await prisma.userRole.create({
+        data: { userId: superAdmin.id, role: Role.SUPER_ADMIN },
+      });
       await prisma.adminProfile.upsert({
         where: { userId: superAdmin.id },
         update: {},
@@ -110,9 +118,21 @@ async function main() {
     logger.log(`Academic session "${session.name}" ready.`);
 
     const termDefs = [
-      { name: "1st Term", startDate: new Date("2026-09-14"), endDate: new Date("2026-12-18") },
-      { name: "2nd Term", startDate: new Date("2027-01-11"), endDate: new Date("2027-04-30") },
-      { name: "3rd Term", startDate: new Date("2027-05-10"), endDate: new Date("2027-07-16") },
+      {
+        name: "1st Term",
+        startDate: new Date("2026-09-14"),
+        endDate: new Date("2026-12-18"),
+      },
+      {
+        name: "2nd Term",
+        startDate: new Date("2027-01-11"),
+        endDate: new Date("2027-04-30"),
+      },
+      {
+        name: "3rd Term",
+        startDate: new Date("2027-05-10"),
+        endDate: new Date("2027-07-16"),
+      },
     ];
     const terms = [];
     for (const [i, def] of termDefs.entries()) {
@@ -126,11 +146,36 @@ async function main() {
     // the structure-completeness check (PRD §3.6) before any component can
     // open. Each component's input window is one quarter of its term.
     // -------------------------------------------------------------------
-    const COMPONENT_DEFS: { type: AssessmentComponentType; sequence: number; name: string; maxScore: number }[] = [
-      { type: AssessmentComponentType.CA, sequence: 1, name: "1st Test", maxScore: 10 },
-      { type: AssessmentComponentType.MID_TERM, sequence: 1, name: "Mid-Term Test", maxScore: 20 },
-      { type: AssessmentComponentType.CA, sequence: 2, name: "2nd Test", maxScore: 10 },
-      { type: AssessmentComponentType.EXAM, sequence: 1, name: "Exam", maxScore: 60 },
+    const COMPONENT_DEFS: {
+      type: AssessmentComponentType;
+      sequence: number;
+      name: string;
+      maxScore: number;
+    }[] = [
+      {
+        type: AssessmentComponentType.CA,
+        sequence: 1,
+        name: "1st Test",
+        maxScore: 10,
+      },
+      {
+        type: AssessmentComponentType.MID_TERM,
+        sequence: 1,
+        name: "Mid-Term Test",
+        maxScore: 20,
+      },
+      {
+        type: AssessmentComponentType.CA,
+        sequence: 2,
+        name: "2nd Test",
+        maxScore: 10,
+      },
+      {
+        type: AssessmentComponentType.EXAM,
+        sequence: 1,
+        name: "Exam",
+        maxScore: 60,
+      },
     ];
     for (const term of terms) {
       const windows = quarterWindows(term.startDate, term.endDate);
@@ -165,7 +210,9 @@ async function main() {
         }
       }
     }
-    logger.log("Assessment components ready (10/20/10/60 per term × class group).");
+    logger.log(
+      "Assessment components ready (10/20/10/60 per term × class group).",
+    );
 
     // -------------------------------------------------------------------
     // Report windows per term × class group — governs both SkillRating entry
@@ -179,11 +226,18 @@ async function main() {
     for (const term of terms) {
       const windows = quarterWindows(term.startDate, term.endDate);
       const examWindow = req(windows[3], "assessment window 3 (Exam)");
-      const closesAt = new Date(term.endDate.getTime() + REPORT_WINDOW_GRACE_DAYS * 24 * 60 * 60 * 1000);
+      const closesAt = new Date(
+        term.endDate.getTime() + REPORT_WINDOW_GRACE_DAYS * 24 * 60 * 60 * 1000,
+      );
 
       for (const category of [ClassLevelCategory.JSS, ClassLevelCategory.SSS]) {
         const existing = await prisma.reportWindow.findUnique({
-          where: { termId_classLevelCategory: { termId: term.id, classLevelCategory: category } },
+          where: {
+            termId_classLevelCategory: {
+              termId: term.id,
+              classLevelCategory: category,
+            },
+          },
         });
         if (existing) continue;
         await reportWindows.create(
@@ -197,20 +251,55 @@ async function main() {
         );
       }
     }
-    logger.log("Report windows ready (skill ratings + class-teacher comments, per term × class group).");
+    logger.log(
+      "Report windows ready (skill ratings + class-teacher comments, per term × class group).",
+    );
 
     // -------------------------------------------------------------------
     // Class levels + single arm each (arm names = precious stones)
     // -------------------------------------------------------------------
     const levelDefs = [
-      { name: "JSS 1", order: 1, category: ClassLevelCategory.JSS, arm: "DIAMOND" },
-      { name: "JSS 2", order: 2, category: ClassLevelCategory.JSS, arm: "EMERALD" },
-      { name: "JSS 3", order: 3, category: ClassLevelCategory.JSS, arm: "RUBY" },
-      { name: "SSS 1", order: 4, category: ClassLevelCategory.SSS, arm: "SAPPHIRE" },
-      { name: "SSS 2", order: 5, category: ClassLevelCategory.SSS, arm: "TOPAZ" },
-      { name: "SSS 3", order: 6, category: ClassLevelCategory.SSS, arm: "AMETHYST" },
+      {
+        name: "JSS 1",
+        order: 4,
+        category: ClassLevelCategory.JSS,
+        arm: "DIAMOND",
+      },
+      {
+        name: "JSS 2",
+        order: 4,
+        category: ClassLevelCategory.JSS,
+        arm: "EMERALD",
+      },
+      {
+        name: "JSS 3",
+        order: 4,
+        category: ClassLevelCategory.JSS,
+        arm: "RUBY",
+      },
+      {
+        name: "SSS 1",
+        order: 5,
+        category: ClassLevelCategory.SSS,
+        arm: "SAPPHIRE",
+      },
+      {
+        name: "SSS 2",
+        order: 5,
+        category: ClassLevelCategory.SSS,
+        arm: "TOPAZ",
+      },
+      {
+        name: "SSS 3",
+        order: 5,
+        category: ClassLevelCategory.SSS,
+        arm: "AMETHYST",
+      },
     ];
-    const arms: Record<string, { id: string; classLevelId: string; category: ClassLevelCategory }> = {};
+    const arms: Record<
+      string,
+      { id: string; classLevelId: string; category: ClassLevelCategory }
+    > = {};
     for (const def of levelDefs) {
       const level = await prisma.classLevel.upsert({
         where: { name: def.name },
@@ -222,21 +311,40 @@ async function main() {
       });
       if (!arm) {
         arm = await prisma.classArm.create({
-          data: { classLevelId: level.id, academicSessionId: session.id, name: def.arm },
+          data: {
+            classLevelId: level.id,
+            academicSessionId: session.id,
+            name: def.arm,
+          },
         });
       }
-      arms[def.name] = { id: arm.id, classLevelId: level.id, category: def.category };
+      arms[def.name] = {
+        id: arm.id,
+        classLevelId: level.id,
+        category: def.category,
+      };
     }
     logger.log(`Class levels + arms ready: ${Object.keys(arms).join(", ")}.`);
 
-    const jssArmIds = ["JSS 1", "JSS 2", "JSS 3"].map((n) => req(arms[n], `class arm for ${n}`).id);
-    const sssArmIds = ["SSS 1", "SSS 2", "SSS 3"].map((n) => req(arms[n], `class arm for ${n}`).id);
+    const jssArmIds = ["JSS 1", "JSS 2", "JSS 3"].map(
+      (n) => req(arms[n], `class arm for ${n}`).id,
+    );
+    const sssArmIds = ["SSS 1", "SSS 2", "SSS 3"].map(
+      (n) => req(arms[n], `class arm for ${n}`).id,
+    );
 
     // -------------------------------------------------------------------
     // Departments (SSS only)
     // -------------------------------------------------------------------
-    const departmentIds: Record<DepartmentName, string> = {} as Record<DepartmentName, string>;
-    for (const name of [DepartmentName.SCIENCE, DepartmentName.COMMERCIAL, DepartmentName.ART]) {
+    const departmentIds: Record<DepartmentName, string> = {} as Record<
+      DepartmentName,
+      string
+    >;
+    for (const name of [
+      DepartmentName.SCIENCE,
+      DepartmentName.COMMERCIAL,
+      DepartmentName.ART,
+    ]) {
       const dept = await prisma.department.upsert({
         where: { name },
         update: {},
@@ -251,7 +359,11 @@ async function main() {
     // Technology, Pre-Vocational Studies, and Cultural and Creative Arts —
     // each with independently-scored children.
     // -------------------------------------------------------------------
-    const simpleSubjectDefs: { code: string; name: string; requiresCalculation?: boolean }[] = [
+    const simpleSubjectDefs: {
+      code: string;
+      name: string;
+      requiresCalculation?: boolean;
+    }[] = [
       { code: "MTH", name: "Mathematics", requiresCalculation: true },
       // SSS's own optional Civic Education elective — distinct Subject row
       // from NVE's "Civic Education" child below: SubjectService.findAll
@@ -280,7 +392,9 @@ async function main() {
 
     const subjectIdByCode: Record<string, string> = {};
     for (const def of simpleSubjectDefs) {
-      const existing = await prisma.subject.findUnique({ where: { code: def.code } });
+      const existing = await prisma.subject.findUnique({
+        where: { code: def.code },
+      });
       const row =
         existing ??
         (await subjects.create({
@@ -306,7 +420,9 @@ async function main() {
     }
     subjectIdByCode.BST = bstGroup.id;
     for (const childCode of ["BSC", "BTN", "IT", "PHE"]) {
-      const child = await prisma.subject.findUniqueOrThrow({ where: { code: childCode } });
+      const child = await prisma.subject.findUniqueOrThrow({
+        where: { code: childCode },
+      });
       subjectIdByCode[childCode] = child.id;
     }
 
@@ -325,7 +441,9 @@ async function main() {
     }
     subjectIdByCode.PVS = pvsGroup.id;
     for (const childCode of ["AGR", "HEC"]) {
-      const child = await prisma.subject.findUniqueOrThrow({ where: { code: childCode } });
+      const child = await prisma.subject.findUniqueOrThrow({
+        where: { code: childCode },
+      });
       subjectIdByCode[childCode] = child.id;
     }
 
@@ -344,7 +462,9 @@ async function main() {
     }
     subjectIdByCode.CCA = ccaGroup.id;
     for (const childCode of ["MUS", "CRA"]) {
-      const child = await prisma.subject.findUniqueOrThrow({ where: { code: childCode } });
+      const child = await prisma.subject.findUniqueOrThrow({
+        where: { code: childCode },
+      });
       subjectIdByCode[childCode] = child.id;
     }
 
@@ -364,7 +484,9 @@ async function main() {
     }
     subjectIdByCode.NVE = nveGroup.id;
     for (const childCode of ["SOS", "SEC", "CIV"]) {
-      const child = await prisma.subject.findUniqueOrThrow({ where: { code: childCode } });
+      const child = await prisma.subject.findUniqueOrThrow({
+        where: { code: childCode },
+      });
       subjectIdByCode[childCode] = child.id;
     }
 
@@ -384,10 +506,14 @@ async function main() {
     }
     subjectIdByCode.ENG = engGroup.id;
     for (const childCode of ["ENG-01", "ENG-02"]) {
-      const child = await prisma.subject.findUniqueOrThrow({ where: { code: childCode } });
+      const child = await prisma.subject.findUniqueOrThrow({
+        where: { code: childCode },
+      });
       subjectIdByCode[childCode] = child.id;
     }
-    logger.log(`Subject catalogue ready: ${Object.keys(subjectIdByCode).length} subjects.`);
+    logger.log(
+      `Subject catalogue ready: ${Object.keys(subjectIdByCode).length} subjects.`,
+    );
 
     // Class-subject applicability.
     const jssClassSubjects: { code: string; type: SubjectType }[] = [
@@ -419,7 +545,11 @@ async function main() {
     // (see the CIVS comment above). Biology, Economics, and Government are
     // GENERAL (open to any student), not department-restricted, despite
     // being the "obvious" pick for their usual department.
-    const sssClassSubjects: { code: string; type: SubjectType; department?: DepartmentName }[] = [
+    const sssClassSubjects: {
+      code: string;
+      type: SubjectType;
+      department?: DepartmentName;
+    }[] = [
       { code: "ENG", type: SubjectType.COMPULSORY },
       { code: "MTH", type: SubjectType.COMPULSORY },
       { code: "FMT", type: SubjectType.GENERAL },
@@ -432,20 +562,53 @@ async function main() {
       { code: "BIO", type: SubjectType.GENERAL },
       { code: "ECO", type: SubjectType.GENERAL },
       { code: "GOV", type: SubjectType.GENERAL },
-      { code: "PHY", type: SubjectType.DEPARTMENT, department: DepartmentName.SCIENCE },
-      { code: "CHM", type: SubjectType.DEPARTMENT, department: DepartmentName.SCIENCE },
-      { code: "ACC", type: SubjectType.DEPARTMENT, department: DepartmentName.COMMERCIAL },
-      { code: "COM", type: SubjectType.DEPARTMENT, department: DepartmentName.COMMERCIAL },
-      { code: "LIT", type: SubjectType.DEPARTMENT, department: DepartmentName.ART },
-      { code: "CRS", type: SubjectType.DEPARTMENT, department: DepartmentName.ART },
-      { code: "YOR", type: SubjectType.DEPARTMENT, department: DepartmentName.ART },
+      {
+        code: "PHY",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.SCIENCE,
+      },
+      {
+        code: "CHM",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.SCIENCE,
+      },
+      {
+        code: "ACC",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.COMMERCIAL,
+      },
+      {
+        code: "COM",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.COMMERCIAL,
+      },
+      {
+        code: "LIT",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.ART,
+      },
+      {
+        code: "CRS",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.ART,
+      },
+      {
+        code: "YOR",
+        type: SubjectType.DEPARTMENT,
+        department: DepartmentName.ART,
+      },
     ];
     for (const cs of sssClassSubjects) {
       await upsertClassSubject(prisma, {
         classLevelCategory: ClassLevelCategory.SSS,
         subjectId: req(subjectIdByCode[cs.code], `subject id for ${cs.code}`),
         type: cs.type,
-        departmentId: cs.department ? req(departmentIds[cs.department], `department id for ${cs.department}`) : undefined,
+        departmentId: cs.department
+          ? req(
+              departmentIds[cs.department],
+              `department id for ${cs.department}`,
+            )
+          : undefined,
       });
     }
     logger.log("Class-subject applicability ready.");
@@ -453,17 +616,49 @@ async function main() {
     // -------------------------------------------------------------------
     // Skill assessment items for the session (PRD FR4.5 default lists)
     // -------------------------------------------------------------------
-    const skillDefs: { category: SkillCategory; name: string; order: number }[] = [
+    const skillDefs: {
+      category: SkillCategory;
+      name: string;
+      order: number;
+    }[] = [
       { category: SkillCategory.PSYCHOMOTOR, name: "Handwriting", order: 1 },
       { category: SkillCategory.PSYCHOMOTOR, name: "Verbal Fluency", order: 2 },
-      { category: SkillCategory.PSYCHOMOTOR, name: "Sports and Games", order: 3 },
+      {
+        category: SkillCategory.PSYCHOMOTOR,
+        name: "Sports and Games",
+        order: 3,
+      },
       { category: SkillCategory.PSYCHOMOTOR, name: "Musical Skills", order: 4 },
-      { category: SkillCategory.PSYCHOMOTOR, name: "Handling of Tools and Instruments", order: 5 },
-      { category: SkillCategory.AFFECTIVE_COGNITIVE, name: "Punctuality", order: 1 },
-      { category: SkillCategory.AFFECTIVE_COGNITIVE, name: "Neatness", order: 2 },
-      { category: SkillCategory.AFFECTIVE_COGNITIVE, name: "Honesty", order: 3 },
-      { category: SkillCategory.AFFECTIVE_COGNITIVE, name: "Leadership", order: 4 },
-      { category: SkillCategory.AFFECTIVE_COGNITIVE, name: "Relationship with Others", order: 5 },
+      {
+        category: SkillCategory.PSYCHOMOTOR,
+        name: "Handling of Tools and Instruments",
+        order: 5,
+      },
+      {
+        category: SkillCategory.AFFECTIVE_COGNITIVE,
+        name: "Punctuality",
+        order: 1,
+      },
+      {
+        category: SkillCategory.AFFECTIVE_COGNITIVE,
+        name: "Neatness",
+        order: 2,
+      },
+      {
+        category: SkillCategory.AFFECTIVE_COGNITIVE,
+        name: "Honesty",
+        order: 3,
+      },
+      {
+        category: SkillCategory.AFFECTIVE_COGNITIVE,
+        name: "Leadership",
+        order: 4,
+      },
+      {
+        category: SkillCategory.AFFECTIVE_COGNITIVE,
+        name: "Relationship with Others",
+        order: 5,
+      },
     ];
     for (const def of skillDefs) {
       const existing = await prisma.skillAssessmentItem.findUnique({
@@ -477,11 +672,46 @@ async function main() {
       });
       if (!existing) {
         await prisma.skillAssessmentItem.create({
-          data: { academicSessionId: session.id, category: def.category, name: def.name, order: def.order },
+          data: {
+            academicSessionId: session.id,
+            category: def.category,
+            name: def.name,
+            order: def.order,
+          },
         });
       }
     }
     logger.log(`Skill assessment items ready: ${skillDefs.length} items.`);
+
+    // -------------------------------------------------------------------
+    // Grade scale — school-wide (not session/term-scoped), matching the
+    // 6-band set already found in this deployment's database (A-F, 70+
+    // down to 0). No unique key on GradeScale itself, so dedupe by
+    // (grade, minScore) before creating, same "check before create"
+    // shape as everything else in this file.
+    // -------------------------------------------------------------------
+    const gradeScaleDefs: {
+      minScore: number;
+      maxScore: number;
+      grade: string;
+      remark: string;
+      gradePoint: number;
+    }[] = [
+      { minScore: 70, maxScore: 100, grade: "A", remark: "EXCELLENT", gradePoint: 5 },
+      { minScore: 60, maxScore: 69.99, grade: "B", remark: "VERY GOOD", gradePoint: 4 },
+      { minScore: 50, maxScore: 59.99, grade: "C", remark: "GOOD", gradePoint: 3 },
+      { minScore: 45, maxScore: 49.99, grade: "D", remark: "POOR", gradePoint: 2 },
+      { minScore: 40, maxScore: 44.99, grade: "E", remark: "VERY POOR", gradePoint: 1 },
+      { minScore: 0, maxScore: 39.99, grade: "F", remark: "FAIL", gradePoint: 0 },
+    ];
+    for (const def of gradeScaleDefs) {
+      const existing = await prisma.gradeScale.findFirst({
+        where: { grade: def.grade, minScore: def.minScore },
+      });
+      if (existing) continue;
+      await prisma.gradeScale.create({ data: def });
+    }
+    logger.log(`Grade scale ready: ${gradeScaleDefs.length} bands.`);
 
     // -------------------------------------------------------------------
     // Admin + Bursar + Registrar + Principal
@@ -503,7 +733,9 @@ async function main() {
       staffCategory: StaffCategory.NON_TEACHING,
       invitedByUserId: superAdmin.id,
     });
-    const bursarStaffProfile = await prisma.staffProfile.findUniqueOrThrow({ where: { userId: bursarUser.id } });
+    const bursarStaffProfile = await prisma.staffProfile.findUniqueOrThrow({
+      where: { userId: bursarUser.id },
+    });
     await ensureStaffAssignment(prisma, staffAssignments, {
       staffId: bursarStaffProfile.id,
       assignmentType: AssignmentType.BURSAR,
@@ -518,7 +750,9 @@ async function main() {
       staffCategory: StaffCategory.NON_TEACHING,
       invitedByUserId: superAdmin.id,
     });
-    const registrarStaffProfile = await prisma.staffProfile.findUniqueOrThrow({ where: { userId: registrarUser.id } });
+    const registrarStaffProfile = await prisma.staffProfile.findUniqueOrThrow({
+      where: { userId: registrarUser.id },
+    });
     await ensureStaffAssignment(prisma, staffAssignments, {
       staffId: registrarStaffProfile.id,
       assignmentType: AssignmentType.REGISTRAR,
@@ -533,7 +767,9 @@ async function main() {
       staffCategory: StaffCategory.NON_TEACHING,
       invitedByUserId: superAdmin.id,
     });
-    const principalStaffProfile = await prisma.staffProfile.findUniqueOrThrow({ where: { userId: principalUser.id } });
+    const principalStaffProfile = await prisma.staffProfile.findUniqueOrThrow({
+      where: { userId: principalUser.id },
+    });
     await ensureStaffAssignment(prisma, staffAssignments, {
       staffId: principalStaffProfile.id,
       assignmentType: AssignmentType.PRINCIPAL,
@@ -592,9 +828,20 @@ async function main() {
     const armCounters = { JSS_ONLY: 0, SSS_ONLY: 0, BOTH: 0 };
     function armForSubject(code: string): string {
       const scope = SCOPE[code];
-      if (scope === "JSS_ONLY") return req(jssArmIds[armCounters.JSS_ONLY++ % jssArmIds.length], "JSS arm id");
-      if (scope === "SSS_ONLY") return req(sssArmIds[armCounters.SSS_ONLY++ % sssArmIds.length], "SSS arm id");
-      return req(jssArmIds[armCounters.BOTH++ % jssArmIds.length], "JSS arm id");
+      if (scope === "JSS_ONLY")
+        return req(
+          jssArmIds[armCounters.JSS_ONLY++ % jssArmIds.length],
+          "JSS arm id",
+        );
+      if (scope === "SSS_ONLY")
+        return req(
+          sssArmIds[armCounters.SSS_ONLY++ % sssArmIds.length],
+          "SSS arm id",
+        );
+      return req(
+        jssArmIds[armCounters.BOTH++ % jssArmIds.length],
+        "JSS arm id",
+      );
     }
 
     // `classTeacherOf` (a key into `arms`, e.g. "JSS 1") is only set for the
@@ -602,22 +849,61 @@ async function main() {
     // among whoever already has a SUBJECT_TEACHER presence in that exact
     // arm (traceable via armForSubject's round-robin above), so the pairing
     // reads as a real teacher's real class, not an arbitrary assignment.
-    const teacherDefs: { firstName: string; lastName: string; subjectCodes: string[]; classTeacherOf?: string }[] = [
-      { firstName: "Chidinma", lastName: "Eze", subjectCodes: ["ENG-01", "ENG-02"] },
+    const teacherDefs: {
+      firstName: string;
+      lastName: string;
+      subjectCodes: string[];
+      classTeacherOf?: string;
+    }[] = [
+      {
+        firstName: "Chidinma",
+        lastName: "Eze",
+        subjectCodes: ["ENG-01", "ENG-02"],
+      },
       { firstName: "Tunde", lastName: "Afolabi", subjectCodes: ["MTH", "FMT"] },
       { firstName: "Ngozi", lastName: "Umeh", subjectCodes: ["BSC", "PHY"] },
       { firstName: "Bola", lastName: "Adeyemi", subjectCodes: ["BTN", "CHM"] },
       { firstName: "Fatima", lastName: "Sule", subjectCodes: ["IT", "BIO"] },
-      { firstName: "Kelechi", lastName: "Obi", subjectCodes: ["PHE", "AGR"], classTeacherOf: "JSS 1" },
-      { firstName: "Amaka", lastName: "Nwachukwu", subjectCodes: ["SOS", "GEO"], classTeacherOf: "JSS 2" },
-      { firstName: "Yusuf", lastName: "Abdullahi", subjectCodes: ["SEC", "ECO"], classTeacherOf: "JSS 3" },
-      { firstName: "Blessing", lastName: "Etim", subjectCodes: ["HEC", "COM"], classTeacherOf: "SSS 1" },
+      {
+        firstName: "Kelechi",
+        lastName: "Obi",
+        subjectCodes: ["PHE", "AGR"],
+        classTeacherOf: "JSS 1",
+      },
+      {
+        firstName: "Amaka",
+        lastName: "Nwachukwu",
+        subjectCodes: ["SOS", "GEO"],
+        classTeacherOf: "JSS 2",
+      },
+      {
+        firstName: "Yusuf",
+        lastName: "Abdullahi",
+        subjectCodes: ["SEC", "ECO"],
+        classTeacherOf: "JSS 3",
+      },
+      {
+        firstName: "Blessing",
+        lastName: "Etim",
+        subjectCodes: ["HEC", "COM"],
+        classTeacherOf: "SSS 1",
+      },
       { firstName: "Ibrahim", lastName: "Musa", subjectCodes: ["BUS", "DPS"] },
-      { firstName: "Peter", lastName: "Okafor", subjectCodes: ["GOV", "LIT"], classTeacherOf: "SSS 3" },
+      {
+        firstName: "Peter",
+        lastName: "Okafor",
+        subjectCodes: ["GOV", "LIT"],
+        classTeacherOf: "SSS 3",
+      },
       { firstName: "Halima", lastName: "Bello", subjectCodes: ["FRE", "CRS"] },
       { firstName: "Adaeze", lastName: "Uche", subjectCodes: ["YOR", "CIV"] },
       { firstName: "Segun", lastName: "Alabi", subjectCodes: ["MUS", "CRA"] },
-      { firstName: "Chioma", lastName: "Nnaji", subjectCodes: ["ACC", "CIVS"], classTeacherOf: "SSS 2" },
+      {
+        firstName: "Chioma",
+        lastName: "Nnaji",
+        subjectCodes: ["ACC", "CIVS"],
+        classTeacherOf: "SSS 2",
+      },
       { firstName: "David", lastName: "Osagie", subjectCodes: ["MKT", "FNU"] },
     ];
 
@@ -632,7 +918,9 @@ async function main() {
         staffCategory: StaffCategory.TEACHING,
         invitedByUserId: superAdmin.id,
       });
-      const staffProfile = await prisma.staffProfile.findUniqueOrThrow({ where: { userId: teacherUser.id } });
+      const staffProfile = await prisma.staffProfile.findUniqueOrThrow({
+        where: { userId: teacherUser.id },
+      });
       for (const code of def.subjectCodes) {
         await ensureStaffAssignment(prisma, staffAssignments, {
           staffId: staffProfile.id,
@@ -646,13 +934,18 @@ async function main() {
         await ensureStaffAssignment(prisma, staffAssignments, {
           staffId: staffProfile.id,
           assignmentType: AssignmentType.CLASS_TEACHER,
-          classArmId: req(arms[def.classTeacherOf], `class arm for ${def.classTeacherOf}`).id,
+          classArmId: req(
+            arms[def.classTeacherOf],
+            `class arm for ${def.classTeacherOf}`,
+          ).id,
           academicSessionId: session.id,
         });
         classTeacherCount++;
       }
     }
-    logger.log(`${teacherDefs.length} teachers ready with subject assignments, ${classTeacherCount} also class teachers.`);
+    logger.log(
+      `${teacherDefs.length} teachers ready with subject assignments, ${classTeacherCount} also class teachers.`,
+    );
 
     // -------------------------------------------------------------------
     // Parents + students
@@ -678,10 +971,26 @@ async function main() {
       role: Role.PARENT,
       invitedByUserId: superAdmin.id,
     });
-    const parentAProfile = await prisma.parentProfile.findUniqueOrThrow({ where: { userId: parentAUser.id } });
-    const parentBProfile = await prisma.parentProfile.findUniqueOrThrow({ where: { userId: parentBUser.id } });
-    const parentCProfile = await prisma.parentProfile.findUniqueOrThrow({ where: { userId: parentCUser.id } });
-    logger.log("3 parents ready.");
+    const parentDUser = await ensureRoleUser(prisma, invitations, {
+      email: `chiamaka.nwankwo@${EMAIL_DOMAIN}`,
+      firstName: "Chiamaka",
+      lastName: "Nwankwo",
+      role: Role.PARENT,
+      invitedByUserId: superAdmin.id,
+    });
+    const parentAProfile = await prisma.parentProfile.findUniqueOrThrow({
+      where: { userId: parentAUser.id },
+    });
+    const parentBProfile = await prisma.parentProfile.findUniqueOrThrow({
+      where: { userId: parentBUser.id },
+    });
+    const parentCProfile = await prisma.parentProfile.findUniqueOrThrow({
+      where: { userId: parentCUser.id },
+    });
+    const parentDProfile = await prisma.parentProfile.findUniqueOrThrow({
+      where: { userId: parentDUser.id },
+    });
+    logger.log("4 parents ready.");
 
     const studentDefs = [
       {
@@ -712,10 +1021,19 @@ async function main() {
         classArmId: req(arms["JSS 1"], "class arm for JSS 1").id,
         parentProfileId: parentCProfile.id,
       },
+      {
+        admissionNumber: "DYCC/2026/0005",
+        firstName: "Emeka",
+        lastName: "Nwankwo",
+        classArmId: req(arms["JSS 1"], "class arm for JSS 1").id,
+        parentProfileId: parentDProfile.id,
+      },
     ];
 
     for (const def of studentDefs) {
-      const existing = await prisma.studentProfile.findUnique({ where: { admissionNumber: def.admissionNumber } });
+      const existing = await prisma.studentProfile.findUnique({
+        where: { admissionNumber: def.admissionNumber },
+      });
       if (existing) continue;
       await students.create({
         firstName: def.firstName,
@@ -733,6 +1051,63 @@ async function main() {
       });
     }
     logger.log(`${studentDefs.length} students ready.`);
+
+    // -------------------------------------------------------------------
+    // Fee structures + invoices — 1st Term only (Xmas Cantata wouldn't
+    // recur in 2nd/3rd Term, and the school's 1st Term runs Sept-Dec,
+    // ending right around Christmas). Tuition is level-scoped: since
+    // FeeStructure.classLevelId targets one specific ClassLevel (not a
+    // whole JSS/SSS category), JSS's three levels each get their own
+    // ₦35,000 row and SSS's three get their own ₦50,000 row rather than
+    // one row covering the category. PTA Levy and Xmas Cantata are
+    // school-wide (classLevelId omitted); Extra Classes is scoped to
+    // JSS 3 and SSS 3 only. Xmas Cantata is the only isMandatory: false
+    // row — informational today, since InvoiceService.generate() doesn't
+    // actually filter by isMandatory (every applicable FeeStructure row
+    // lands on the invoice regardless of it), but it records the intended
+    // optional/mandatory distinction as data.
+    // -------------------------------------------------------------------
+    const firstTerm = req(terms[0], "1st term");
+    const feeStructureDefs: {
+      name: string;
+      amount: number;
+      classLevelId?: string;
+      isMandatory: boolean;
+    }[] = [
+      { name: "Tuition", amount: 35000, classLevelId: req(arms["JSS 1"], "class arm for JSS 1").classLevelId, isMandatory: true },
+      { name: "Tuition", amount: 35000, classLevelId: req(arms["JSS 2"], "class arm for JSS 2").classLevelId, isMandatory: true },
+      { name: "Tuition", amount: 35000, classLevelId: req(arms["JSS 3"], "class arm for JSS 3").classLevelId, isMandatory: true },
+      { name: "Tuition", amount: 50000, classLevelId: req(arms["SSS 1"], "class arm for SSS 1").classLevelId, isMandatory: true },
+      { name: "Tuition", amount: 50000, classLevelId: req(arms["SSS 2"], "class arm for SSS 2").classLevelId, isMandatory: true },
+      { name: "Tuition", amount: 50000, classLevelId: req(arms["SSS 3"], "class arm for SSS 3").classLevelId, isMandatory: true },
+      { name: "PTA Levy", amount: 5000, isMandatory: true },
+      { name: "Extra Classes", amount: 15000, classLevelId: req(arms["JSS 3"], "class arm for JSS 3").classLevelId, isMandatory: true },
+      { name: "Extra Classes", amount: 15000, classLevelId: req(arms["SSS 3"], "class arm for SSS 3").classLevelId, isMandatory: true },
+      { name: "Xmas Cantata", amount: 10000, isMandatory: false },
+    ];
+    for (const def of feeStructureDefs) {
+      const existing = await prisma.feeStructure.findFirst({
+        where: { termId: firstTerm.id, classLevelId: def.classLevelId ?? null, name: def.name },
+      });
+      if (existing) continue;
+      await feeStructures.create({
+        termId: firstTerm.id,
+        academicSessionId: session.id,
+        classLevelId: def.classLevelId,
+        name: def.name,
+        amount: def.amount,
+        isMandatory: def.isMandatory,
+      });
+    }
+    logger.log(`Fee structures ready: ${feeStructureDefs.length} rows for ${firstTerm.name}.`);
+
+    const invoiceResult = await invoices.generate({
+      termId: firstTerm.id,
+      dueDate: new Date("2026-09-28"),
+    });
+    logger.log(
+      `Invoices ready: ${invoiceResult.created} created, ${invoiceResult.alreadyInvoiced} already invoiced, ${invoiceResult.noApplicableFees} skipped (no applicable fees).`,
+    );
 
     logger.log(`Done. Every seeded account's password is "${DEMO_PASSWORD}".`);
   } finally {
@@ -752,7 +1127,10 @@ async function upsertAcademicSession(
 }
 
 /** Splits a term's date range into 4 equal-length [opensAt, closesAt) windows, one per assessment component. */
-function quarterWindows(start: Date, end: Date): { opensAt: Date; closesAt: Date }[] {
+function quarterWindows(
+  start: Date,
+  end: Date,
+): { opensAt: Date; closesAt: Date }[] {
   const step = (end.getTime() - start.getTime()) / 4;
   return [0, 1, 2, 3].map((i) => ({
     opensAt: new Date(start.getTime() + i * step),
@@ -775,10 +1153,20 @@ async function upsertTerm(
 
 async function upsertClassSubject(
   prisma: PrismaService,
-  data: { classLevelCategory: ClassLevelCategory; subjectId: string; type: SubjectType; departmentId?: string },
+  data: {
+    classLevelCategory: ClassLevelCategory;
+    subjectId: string;
+    type: SubjectType;
+    departmentId?: string;
+  },
 ) {
   return prisma.classSubject.upsert({
-    where: { classLevelCategory_subjectId: { classLevelCategory: data.classLevelCategory, subjectId: data.subjectId } },
+    where: {
+      classLevelCategory_subjectId: {
+        classLevelCategory: data.classLevelCategory,
+        subjectId: data.subjectId,
+      },
+    },
     update: {},
     create: data,
   });
@@ -804,7 +1192,10 @@ async function ensureRoleUser(
   },
 ): Promise<{ id: string; email: string }> {
   const email = input.email.toLowerCase();
-  const existing = await prisma.user.findUnique({ where: { email }, include: { roles: true } });
+  const existing = await prisma.user.findUnique({
+    where: { email },
+    include: { roles: true },
+  });
   if (existing?.roles.some((r) => r.role === input.role && r.isActive)) {
     return { id: existing.id, email: existing.email };
   }
