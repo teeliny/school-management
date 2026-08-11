@@ -138,7 +138,7 @@ Each module below corresponds to a section of PRD §3. Arrows are compile-time d
 | `CalendarModule` | (no new tables — read-aggregation, PRD §3.11) | `AcademicStructureModule`, `AssessmentModule`, later `ExamSchedulingModule` |
 | `AttendanceModule` | `AttendanceSession`, `AttendanceRecord` | `StaffModule` |
 | `TimetableModule` | `TimetableSlot` | `SubjectModule`, `StaffModule` |
-| `ExamSchedulingModule` | `ExamSchedule`, `InvigilationAssignment`, `SchedulingConstraint`, `ScheduleGenerationRequest` | `AssessmentModule`, `StaffModule`, calls out to `scheduling-engine` (§9) |
+| `ExamSchedulingModule` | `ExamSchedule`, `InvigilationAssignment`, `DutyAssignment`, `SchedulingConstraint`, `ScheduleGenerationRequest` | `AssessmentModule`, `StaffModule`, calls out to `scheduling-engine` (§9) |
 | `FeesModule` | `FeeStructure`, `Invoice`, `InvoiceLineItem`, `Payment`, `Receipt`, `PaymentGatewayConfig`, `DiscountRequest` | `AcademicStructureModule` |
 | `PaymentGatewayModule` | (no new tables — integration logic) | `FeesModule` |
 | `NotificationsModule` | `NotificationTemplate`, `Notification`, `EmailLog`, `NotificationPreference` | `IdentityModule` |
@@ -227,18 +227,18 @@ sequenceDiagram
     Nest->>DB: Create ScheduleGenerationRequest (status=QUEUED)
     Nest-->>Nest: Return immediately to caller (202-style response)
     Nest->>Q: enqueue solve-dispatch job
-    Q->>Py: POST /solve<br/>{ constraints, requestId, callbackUrl, callbackToken }
+    Q->>Py: POST /solve<br/>{ constraints, parameters, requestId, callbackUrl, callbackToken }
     Py-->>Q: 202 Accepted (fire-and-forget)
     Nest->>DB: ScheduleGenerationRequest.status = SOLVING
     Py->>Py: Build CP-SAT model, solve (async, own time)
     Py->>Nest: POST /internal/scheduling-callback/{requestId}<br/>{ callbackToken, result }
     Nest->>Nest: Verify callbackToken
-    Nest->>DB: Persist TimetableSlot/ExamSchedule/InvigilationAssignment<br/>(approvalStatus=PENDING_REVIEW)
+    Nest->>DB: Persist TimetableSlot/ExamSchedule/InvigilationAssignment/DutyAssignment<br/>(approvalStatus=PENDING_REVIEW)
     Nest->>DB: ScheduleGenerationRequest.status = COMPLETED
     Nest->>Nest: Notify requester (in-app + email, FR6.8)
 ```
 
-- **`ScheduleGenerationRequest` (PRD §3.8) is the tracking record for the in-flight request** — it's what lets the UI show "generating…" and what a timeout sweep (below) checks, since there are no `TimetableSlot`/`ExamSchedule` rows to point to until the callback arrives.
+- **`ScheduleGenerationRequest` (PRD §3.8) is the tracking record for the in-flight request** — it's what lets the UI show "generating…" and what a timeout sweep (below) checks, since there are no `TimetableSlot`/`ExamSchedule`/`InvigilationAssignment`/`DutyAssignment` rows to point to until the callback arrives. Its `parameters` jsonb column carries run-specific overrides the Python solver should apply for that one run — e.g. a mid-term exam run's max-subjects-per-day and calculation/non-calculation duration values (PRD FR6.3a), or a weekly-duty run's `teachersPerWeek` (FR6.11) — layered on top of whatever `constraints` (the resolved `SchedulingConstraint` rows for that scope) already supply as defaults.
 - **The Python service is stateless and has no database credentials at all** — it receives a fully-formed constraint payload plus a callback URL/token, and calls back with a result; it never touches Postgres directly. This keeps "only NestJS talks to the database" true, and means this component holds no data belonging to this school (or any school) at rest.
 - **Callback authentication**: `callbackToken` is a single-use, per-request secret generated when the job is dispatched, not a shared static API key — so a stray or replayed callback can't be mistaken for a legitimate one, and it's scoped to exactly one `ScheduleGenerationRequest`.
 - **Timeout fallback (mirrors the payment reconciliation pattern in §10)**: a scheduled BullMQ job checks for any `ScheduleGenerationRequest` still `QUEUED`/`SOLVING` past a configurable threshold (default 10 minutes, PRD FR6.9) and marks it `TIMED_OUT` with a user-facing notification — a crashed or lost solver run is never silently stuck.
