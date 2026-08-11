@@ -196,7 +196,7 @@ export function AppShell({
           </div>
         </div>
 
-        <nav className="flex flex-col gap-0.5">
+        <nav className="flex flex-col gap-0.5 flex-1 max-h-[calc(100%-100px)] no-scrollbar overflow-y-auto">
           {NAV_SECTIONS.map((section) => {
             const items = section.items.filter((item) => {
               if (item.adminOnly && !isAdmin) return false;
