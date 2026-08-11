@@ -151,7 +151,7 @@ export function ReportCardList({
   }
 
   function studentLabel(card: TermReportCardItem) {
-    return `${card.student.user.firstName} ${card.student.user.lastName} (${card.student.admissionNumber})`;
+    return `${card?.student?.user?.firstName} ${card?.student?.user?.lastName} (${card?.student?.admissionNumber})`;
   }
   function termLabel(id: string) {
     return terms.find((t) => t.id === id)?.name ?? id;
