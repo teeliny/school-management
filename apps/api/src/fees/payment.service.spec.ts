@@ -153,7 +153,7 @@ describe("PaymentService.recordCash (PRD §3.9 — CASH takes effect immediately
     await service.recordCash({ invoiceId: "invoice-1", amount: 5000 }, BURSAR);
 
     expect(notifications.notify).toHaveBeenCalledWith("guardian-user-1", "PAYMENT_RECEIVED", {
-      amount: 5000,
+      amount: "₦5,000.00",
       studentName: "Ada Lovelace",
     });
   });
@@ -464,7 +464,7 @@ describe("PaymentService.resolveGatewayOutcome (PRD FR7.5/FR7.6)", () => {
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "PAID" } });
     expect(queue.add).toHaveBeenCalledWith("generate", { receiptId: "receipt-1" });
     expect(notifications.notify).toHaveBeenCalledWith("payer-user-1", "PAYMENT_RECEIVED", {
-      amount: 5000,
+      amount: "₦5,000.00",
       studentName: "Ada Lovelace",
     });
   });
@@ -611,7 +611,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     expect(queue.add).toHaveBeenCalledWith("generate", { receiptId: "receipt-1" });
     expect(result.outstandingBalance).toBe(0);
     expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "MANUAL_PAYMENT_APPROVED", {
-      amount: 3000,
+      amount: "₦3,000.00",
       studentName: "Ada Lovelace",
     });
   });
@@ -622,7 +622,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     await service.approveManualBankTransfer("payment-abcdef12", "super-1");
 
     expect(notifications.notify).toHaveBeenCalledWith("payer-user-1", "MANUAL_PAYMENT_APPROVED", {
-      amount: 3000,
+      amount: "₦3,000.00",
       studentName: "Ada Lovelace",
     });
   });
@@ -651,7 +651,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     expect(queue.add).not.toHaveBeenCalled();
     expect(result).toBeDefined();
     expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "MANUAL_PAYMENT_REJECTED", {
-      amount: 3000,
+      amount: "₦3,000.00",
       studentName: "Ada Lovelace",
       reason: "Amount does not match proof",
     });

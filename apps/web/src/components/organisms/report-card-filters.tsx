@@ -6,6 +6,7 @@ import { apiFetch } from "../../lib/api";
 import { Label } from "../atoms/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { SearchableSelect } from "../molecules/searchable-select";
+import { StudentCombobox } from "../molecules/student-combobox";
 
 export const REPORT_CARD_FILTER_ALL = "__all__";
 
@@ -114,6 +115,16 @@ export function ReportCardFilters({
     onStudentFilterChange(activeWard?.id ?? students[0]!.id);
   }, [isParent, students, onStudentFilterChange]);
 
+  // Picking a class arm invalidates whichever student was selected under a
+  // different (or no) arm — same "narrower filter clears the stale child
+  // selection" shape as the Generate panel's class-arm -> student reset in
+  // page.tsx, applied here so the picker never keeps a selection that no
+  // longer belongs to the newly-chosen arm.
+  useEffect(() => {
+    if (isParent) return;
+    onStudentFilterChange(REPORT_CARD_FILTER_ALL);
+  }, [classArmFilter, isParent, onStudentFilterChange]);
+
   return (
     <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {!isParent && (
@@ -135,21 +146,41 @@ export function ReportCardFilters({
         </div>
       )}
 
-      {(!isParent || students.length > 1) && (
+      {isParent && students.length > 1 && (
         <div>
-          <Label htmlFor="filter-student">{isParent ? "Child" : "Student"}</Label>
+          <Label htmlFor="filter-student">Child</Label>
           <SearchableSelect
             id="filter-student"
             value={studentFilter}
             onValueChange={onStudentFilterChange}
-            options={[
-              ...(isParent ? [] : [{ value: REPORT_CARD_FILTER_ALL, label: "All students" }]),
-              ...students.map((student) => ({ value: student.id, label: studentOptionLabel(student) })),
-            ]}
-            placeholder={isParent ? "Select child" : "All students"}
+            options={students.map((student) => ({ value: student.id, label: studentOptionLabel(student) }))}
+            placeholder="Select child"
             searchPlaceholder="Search by name or admission number…"
             className="mt-1"
           />
+        </div>
+      )}
+
+      {!isParent && (
+        <div>
+          <Label htmlFor="filter-student">Student</Label>
+          <StudentCombobox
+            id="filter-student"
+            classArmId={classArmFilter === REPORT_CARD_FILTER_ALL ? "" : classArmFilter}
+            value={studentFilter === REPORT_CARD_FILTER_ALL ? "" : studentFilter}
+            onValueChange={(id) => onStudentFilterChange(id)}
+            placeholder="Search student…"
+            className="mt-1"
+          />
+          {studentFilter !== REPORT_CARD_FILTER_ALL && (
+            <button
+              type="button"
+              onClick={() => onStudentFilterChange(REPORT_CARD_FILTER_ALL)}
+              className="mt-1 text-[11px] text-muted underline"
+            >
+              Clear student (show whole arm)
+            </button>
+          )}
         </div>
       )}
 

@@ -26,11 +26,7 @@ interface TermReportCardItem {
   overallScore: string | null;
   overallGrade: string | null;
   needsRegeneration: boolean;
-}
-interface StudentOption {
-  id: string;
-  admissionNumber: string;
-  user: { firstName: string; lastName: string };
+  student: { admissionNumber: string; user: { firstName: string; lastName: string } };
 }
 interface TermOption {
   id: string;
@@ -75,7 +71,6 @@ export function ReportCardList({
   studentId,
   termId,
   classArmId,
-  students,
   terms,
   canManage,
   canDelete,
@@ -84,7 +79,6 @@ export function ReportCardList({
   studentId: string;
   termId: string;
   classArmId: string;
-  students: StudentOption[];
   terms: TermOption[];
   canManage: boolean;
   canDelete: boolean;
@@ -156,9 +150,8 @@ export function ReportCardList({
     }
   }
 
-  function studentLabel(id: string) {
-    const student = students.find((s) => s.id === id);
-    return student ? `${student.user.firstName} ${student.user.lastName} (${student.admissionNumber})` : id;
+  function studentLabel(card: TermReportCardItem) {
+    return `${card.student.user.firstName} ${card.student.user.lastName} (${card.student.admissionNumber})`;
   }
   function termLabel(id: string) {
     return terms.find((t) => t.id === id)?.name ?? id;
@@ -200,7 +193,7 @@ export function ReportCardList({
         <tbody>
           {cards.map((card) => (
             <tr key={card.id} className="border-b border-border/60 last:border-none">
-              <td className="py-2.5 pr-3 font-medium">{studentLabel(card.studentId)}</td>
+              <td className="py-2.5 pr-3 font-medium">{studentLabel(card)}</td>
               <td className="py-2.5 pr-3">{termLabel(card.termId)}</td>
               <td className="py-2.5 pr-3">
                 <Badge variant={TYPE_VARIANT[card.reportType]}>{card.reportType.replace("_", " ")}</Badge>
@@ -259,7 +252,7 @@ export function ReportCardList({
                           Delete this report card?
                         </AlertDialogTitle>
                         <AlertDialogDescription className="mt-2 text-sm text-muted">
-                          {studentLabel(card.studentId)} — {termLabel(card.termId)} (
+                          {studentLabel(card)} — {termLabel(card.termId)} (
                           {card.reportType.replace("_", " ")}). This cannot be undone.
                         </AlertDialogDescription>
                         <div className="mt-4 flex justify-end gap-2">

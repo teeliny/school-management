@@ -9,14 +9,13 @@ import { Card, CardHeader } from "../../components/molecules/card";
 import { Label } from "../../components/atoms/label";
 import { Button } from "../../components/atoms/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/molecules/select";
-import { SearchableSelect } from "../../components/molecules/searchable-select";
+import { StudentCombobox } from "../../components/molecules/student-combobox";
 import { ReportCardList } from "../../components/organisms/report-card-list";
 import { ReportCardFilters, REPORT_CARD_FILTER_ALL as ALL } from "../../components/organisms/report-card-filters";
 
 interface StudentOption {
   id: string;
   admissionNumber: string;
-  currentClassId: string | null;
   status: string;
   user: { firstName: string; lastName: string };
 }
@@ -24,36 +23,45 @@ interface TermOption {
   id: string;
   name: string;
 }
-interface ClassLevelOption {
-  id: string;
-  name: string;
-}
 interface ClassArmOption {
   id: string;
-  classLevelId: string;
   displayName: string;
 }
 interface ProgressSummary {
   totalStudents: number;
   generatedCount: number;
 }
-
-function studentOptionLabel(student: StudentOption) {
-  return `${student.user.firstName} ${student.user.lastName} (${student.admissionNumber})`;
+interface ClassReadinessStudent {
+  studentId: string;
+  studentName: string;
+  ready: boolean;
+  missing: string[];
+}
+interface ClassReadiness {
+  totalStudents: number;
+  students: ClassReadinessStudent[];
+}
+interface GenerateClassResult {
+  generatedCount: number;
+  skipped: { studentId: string; studentName: string; missing: string[] }[];
 }
 
 export default function ReportCardsPage() {
   const { user, loading, logout } = useCurrentUser();
   const [students, setStudents] = useState<StudentOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
-  const [classLevels, setClassLevels] = useState<ClassLevelOption[]>([]);
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   const [studentFilter, setStudentFilter] = useState(ALL);
   const [termFilter, setTermFilter] = useState(ALL);
   const [classArmFilter, setClassArmFilter] = useState(ALL);
   const [progress, setProgress] = useState<ProgressSummary | null>(null);
+  const [classReadiness, setClassReadiness] = useState<ClassReadiness | null>(null);
+  const [generatingClass, setGeneratingClass] = useState(false);
+  const [classGenError, setClassGenError] = useState<string | null>(null);
+  const [classGenResult, setClassGenResult] = useState<GenerateClassResult | null>(null);
+  const [showMissingDetails, setShowMissingDetails] = useState(false);
 
-  const [genClassLevelId, setGenClassLevelId] = useState("");
+  const [genClassArmId, setGenClassArmId] = useState("");
   const [genStudentId, setGenStudentId] = useState("");
   const [genTermId, setGenTermId] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -62,31 +70,28 @@ export default function ReportCardsPage() {
 
   useEffect(() => {
     if (!user) return;
-    apiFetch<StudentOption[]>("/students", { auth: true }).then(setStudents).catch(() => setStudents([]));
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
-    apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }).then(setClassLevels).catch(() => setClassLevels([]));
-    // A parent never sees the admin Generate panel or the class-arm filter
-    // (the whole school's arms aren't meaningful to browse for one's own
-    // ward) — skip fetching every class arm in the school for a role that
-    // never renders either.
-    if (!user.roles.includes("PARENT")) {
+    // A school-wide student roster can run into the thousands, so it's never
+    // fetched wholesale — StudentCombobox (both here and in the Generate
+    // panel below) fetches a server-searched, paginated page per chosen
+    // class arm instead. A parent is the one exception: their own ward list
+    // is small by construction (their children), so it's fetched directly
+    // to drive the auto-select/child-picker in ReportCardFilters, and
+    // neither the admin Generate panel nor the class-arm filter render for
+    // that role (skip fetching every class arm in the school for a role
+    // that never renders either).
+    if (user.roles.includes("PARENT")) {
+      apiFetch<StudentOption[]>("/students", { auth: true }).then(setStudents).catch(() => setStudents([]));
+    } else {
       apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
     }
   }, [user]);
 
-  // Narrows the Generate section's student picker to the chosen class level
-  // (via its arms' currentClassId), same "level → student" narrowing shape
-  // as the broadsheet's class level filter.
-  const genArmIdsForLevel = classArms.filter((arm) => arm.classLevelId === genClassLevelId).map((arm) => arm.id);
-  const genStudentOptions = students
-    .filter((student) => student.currentClassId && genArmIdsForLevel.includes(student.currentClassId))
-    .map((student) => ({ value: student.id, label: studentOptionLabel(student) }));
-
-  // A different class level invalidates whichever student was picked for
-  // the previous one.
+  // A different class arm invalidates whichever student was picked for the
+  // previous one.
   useEffect(() => {
     setGenStudentId("");
-  }, [genClassLevelId]);
+  }, [genClassArmId]);
 
   useEffect(() => {
     if (classArmFilter === ALL || termFilter === ALL) {
@@ -112,6 +117,41 @@ export default function ReportCardsPage() {
       user.assignmentTypes.includes("HEADTEACHER")
     : false;
   const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
+
+  useEffect(() => {
+    setShowMissingDetails(false);
+    if (!canManageReports || classArmFilter === ALL || termFilter === ALL) {
+      setClassReadiness(null);
+      return;
+    }
+    setClassGenResult(null);
+    apiFetch<ClassReadiness>(
+      `/term-report-cards/class-readiness?classArmId=${classArmFilter}&termId=${termFilter}`,
+      { auth: true },
+    )
+      .then(setClassReadiness)
+      .catch(() => setClassReadiness(null));
+  }, [canManageReports, classArmFilter, termFilter, refreshKey]);
+
+  async function handleGenerateClass() {
+    if (classArmFilter === ALL || termFilter === ALL) return;
+    setClassGenError(null);
+    setClassGenResult(null);
+    setGeneratingClass(true);
+    try {
+      const result = await apiFetch<GenerateClassResult>("/term-report-cards/generate-class", {
+        method: "POST",
+        auth: true,
+        body: { classArmId: classArmFilter, termId: termFilter },
+      });
+      setClassGenResult(result);
+      setRefreshKey((k) => k + 1);
+    } catch (err) {
+      setClassGenError(err instanceof ApiError ? err.message : "Failed to generate report cards for class");
+    } finally {
+      setGeneratingClass(false);
+    }
+  }
 
   async function handleGenerate() {
     setGenError(null);
@@ -149,15 +189,15 @@ export default function ReportCardsPage() {
           {genError && <p className="mb-2 text-sm text-danger">{genError}</p>}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div>
-              <Label htmlFor="gen-class-level">Class level</Label>
-              <Select value={genClassLevelId} onValueChange={setGenClassLevelId}>
-                <SelectTrigger id="gen-class-level" className="mt-1">
-                  <SelectValue placeholder="Select class level" />
+              <Label htmlFor="gen-class-arm">Class arm</Label>
+              <Select value={genClassArmId} onValueChange={setGenClassArmId}>
+                <SelectTrigger id="gen-class-arm" className="mt-1">
+                  <SelectValue placeholder="Select class arm" />
                 </SelectTrigger>
                 <SelectContent>
-                  {classLevels.map((level) => (
-                    <SelectItem key={level.id} value={level.id}>
-                      {level.name}
+                  {classArms.map((arm) => (
+                    <SelectItem key={arm.id} value={arm.id}>
+                      {arm.displayName}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -165,13 +205,11 @@ export default function ReportCardsPage() {
             </div>
             <div>
               <Label htmlFor="gen-student">Student</Label>
-              <SearchableSelect
+              <StudentCombobox
                 id="gen-student"
+                classArmId={genClassArmId}
                 value={genStudentId}
-                onValueChange={setGenStudentId}
-                options={genStudentOptions}
-                placeholder={genClassLevelId ? "Select student" : "Select a class level first"}
-                searchPlaceholder="Search by name or admission number…"
+                onValueChange={(id) => setGenStudentId(id)}
                 className="mt-1"
               />
             </div>
@@ -224,11 +262,75 @@ export default function ReportCardsPage() {
           </p>
         )}
 
+        {canManageReports && classReadiness && classReadiness.totalStudents > 0 && (
+          <div className="mb-4 rounded-card border border-border bg-card-inset p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[12.5px] text-muted">
+                Full-term readiness: {classReadiness.students.filter((s) => s.ready).length}/{classReadiness.totalStudents}{" "}
+                students ready to generate
+              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                {classReadiness.students.some((s) => !s.ready) && (
+                  <button
+                    type="button"
+                    onClick={() => setShowMissingDetails((v) => !v)}
+                    className="text-[11px] text-muted underline"
+                  >
+                    {showMissingDetails ? "Hide details" : "View details"}
+                  </button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={generatingClass || classReadiness.students.every((s) => !s.ready)}
+                  onClick={handleGenerateClass}
+                >
+                  {generatingClass ? "Generating…" : "Generate for whole class"}
+                </Button>
+              </div>
+            </div>
+            {classGenError && <p className="mt-2 text-sm text-danger">{classGenError}</p>}
+            {classGenResult && (
+              <p className="mt-2 text-[12.5px] text-muted">
+                Generated {classGenResult.generatedCount} report card(s)
+                {classGenResult.skipped.length > 0 ? `, skipped ${classGenResult.skipped.length} not-ready student(s)` : ""}.
+              </p>
+            )}
+            {showMissingDetails && (
+              <div className="mt-2 max-h-[250px] overflow-y-auto rounded-md border border-border">
+                <table className="w-full text-left text-[12px]">
+                  <thead>
+                    <tr className="border-b border-border text-muted">
+                      <th className="py-1.5 px-2 text-[10px] font-medium uppercase tracking-wide">Student</th>
+                      <th className="py-1.5 px-2 text-[10px] font-medium uppercase tracking-wide">Missing</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {classReadiness.students
+                      .filter((s) => !s.ready)
+                      .map((s) => (
+                        <tr key={s.studentId} className="border-b border-border/60 last:border-none">
+                          <td className="py-1.5 px-2 align-top font-medium">{s.studentName}</td>
+                          <td className="py-1.5 px-2 align-top text-muted">
+                            <ul className="list-disc space-y-0.5 pl-4">
+                              {s.missing.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                              ))}
+                            </ul>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         <ReportCardList
           studentId={studentFilter === ALL ? "" : studentFilter}
           termId={termFilter === ALL ? "" : termFilter}
           classArmId={classArmFilter === ALL ? "" : classArmFilter}
-          students={students}
           terms={terms}
           canManage={canManageReports}
           canDelete={isSuperAdmin}

@@ -45,6 +45,24 @@ export interface GatewayTransactionResult {
   channel: string;
 }
 
+/**
+ * Thrown by verifyTransaction specifically when the gateway's own API says
+ * "no such transaction" (HTTP 404 on both Monnify and Paystack) — distinct
+ * from every other failure (network error, expired credentials, 5xx) so a
+ * caller can tell "the gateway explicitly has no record of this reference"
+ * (a durable, trustworthy signal — a reference obtained from our own
+ * initTransaction call exists on the gateway's side immediately, so this
+ * only happens for a checkout that was never truly initiated) apart from a
+ * merely transient failure that says nothing about the payment's real
+ * status and must not be treated as a negative result.
+ */
+export class GatewayTransactionNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GatewayTransactionNotFoundError";
+  }
+}
+
 export interface PaymentGatewayAdapter {
   initTransaction(credentials: PaymentGatewayCredentials, params: InitTransactionParams): Promise<InitTransactionResult>;
   verifyTransaction(credentials: PaymentGatewayCredentials, reference: string): Promise<GatewayTransactionResult>;

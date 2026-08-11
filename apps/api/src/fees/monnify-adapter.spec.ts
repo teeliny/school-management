@@ -1,5 +1,10 @@
 import { createHmac } from "node:crypto";
-import { MonnifyAdapter, MONNIFY_SIGNATURE_HEADER, type PaymentGatewayCredentials } from "@school/types/payment-gateways";
+import {
+  GatewayTransactionNotFoundError,
+  MonnifyAdapter,
+  MONNIFY_SIGNATURE_HEADER,
+  type PaymentGatewayCredentials,
+} from "@school/types/payment-gateways";
 
 const CREDENTIALS: PaymentGatewayCredentials = {
   apiKey: "MK_TEST_KEY",
@@ -120,6 +125,26 @@ describe("MonnifyAdapter", () => {
     expect(url).toBe("https://sandbox.monnify.com/api/v2/merchant/transactions/query?paymentReference=INV-1-123");
   });
 
+  it("verifyTransaction throws GatewayTransactionNotFoundError on a 404 (Monnify has no such transaction)", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockFetchResponse({ requestSuccessful: true, responseBody: { accessToken: "tok" } }))
+      .mockResolvedValueOnce(
+        mockFetchResponse({ requestSuccessful: false, responseMessage: "not found" }, false, 404),
+      );
+
+    await expect(adapter.verifyTransaction(CREDENTIALS, "INV-1-123")).rejects.toThrow(GatewayTransactionNotFoundError);
+  });
+
+  it("verifyTransaction throws a plain Error on a non-404 failure, not GatewayTransactionNotFoundError", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(mockFetchResponse({ requestSuccessful: true, responseBody: { accessToken: "tok" } }))
+      .mockResolvedValueOnce(mockFetchResponse({}, false, 500));
+
+    await expect(adapter.verifyTransaction(CREDENTIALS, "INV-1-123")).rejects.not.toBeInstanceOf(
+      GatewayTransactionNotFoundError,
+    );
+  });
+
   describe("verifyWebhookSignature", () => {
     const rawBody = Buffer.from(JSON.stringify({ paymentReference: "INV-1-123", paymentStatus: "PAID" }));
 
@@ -149,14 +174,17 @@ describe("MonnifyAdapter", () => {
   });
 
   describe("parseWebhookPayload", () => {
-    it("parses a realistic Monnify webhook payload", () => {
+    it("parses a realistic Monnify webhook payload (eventType/eventData envelope, confirmed against a live payload)", () => {
       const payload = {
-        transactionReference: "MNFY|TXN|456",
-        paymentReference: "INV-1-123",
-        amountPaid: 5000,
-        paymentStatus: "PAID",
-        paidOn: "2026-08-08 10:00:00.0",
-        paymentMethod: "ACCOUNT_TRANSFER",
+        eventType: "SUCCESSFUL_TRANSACTION",
+        eventData: {
+          transactionReference: "MNFY|TXN|456",
+          paymentReference: "INV-1-123",
+          amountPaid: 5000,
+          paymentStatus: "PAID",
+          paidOn: "2026-08-08 10:00:00.0",
+          paymentMethod: "ACCOUNT_TRANSFER",
+        },
       };
       const result = adapter.parseWebhookPayload(Buffer.from(JSON.stringify(payload)));
 
@@ -169,12 +197,33 @@ describe("MonnifyAdapter", () => {
       });
     });
 
+    it("ignores an unrelated eventType (e.g. a disbursement/refund/wallet event) instead of erroring on its different shape", () => {
+      const payload = {
+        eventType: "SUCCESSFUL_DISBURSEMENT",
+        eventData: { reference: "DSB-1", amount: 5000, status: "SUCCESS" },
+      };
+      expect(adapter.parseWebhookPayload(Buffer.from(JSON.stringify(payload)))).toBeNull();
+    });
+
+    it("returns null for a flat (non-enveloped) payload — real Monnify webhooks are never flat", () => {
+      const payload = {
+        transactionReference: "MNFY|TXN|456",
+        paymentReference: "INV-1-123",
+        amountPaid: 5000,
+        paymentStatus: "PAID",
+        paidOn: null,
+        paymentMethod: "CARD",
+      };
+      expect(adapter.parseWebhookPayload(Buffer.from(JSON.stringify(payload)))).toBeNull();
+    });
+
     it("returns null for malformed JSON", () => {
       expect(adapter.parseWebhookPayload(Buffer.from("not json"))).toBeNull();
     });
 
-    it("returns null when paymentReference is missing", () => {
-      expect(adapter.parseWebhookPayload(Buffer.from(JSON.stringify({ paymentStatus: "PAID" })))).toBeNull();
+    it("returns null when eventData.paymentReference is missing even for a SUCCESSFUL_TRANSACTION event", () => {
+      const payload = { eventType: "SUCCESSFUL_TRANSACTION", eventData: { paymentStatus: "PAID" } };
+      expect(adapter.parseWebhookPayload(Buffer.from(JSON.stringify(payload)))).toBeNull();
     });
   });
 });

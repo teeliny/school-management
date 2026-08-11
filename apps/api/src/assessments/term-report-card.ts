@@ -32,6 +32,14 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { NotificationService } from "../notifications/notification";
 import { GenerateTermReportCardDto } from "./dto/generate-term-report-card.dto";
+import { GenerateClassReportCardsDto } from "./dto/generate-class-report-cards.dto";
+
+interface ClassReadinessEntry {
+  studentId: string;
+  studentName: string;
+  ready: boolean;
+  missing: string[];
+}
 
 @Injectable()
 export class TermReportCardService {
@@ -191,6 +199,99 @@ export class TermReportCardService {
   }
 
   /**
+   * Same FULL_TERM completeness rules as assertFullTermPublishGate (PRD
+   * FR4.7), but batched across every student currently in a class arm and
+   * non-throwing — lets Admin see, before generating anything, which
+   * students already have every piece in place and which don't, instead of
+   * discovering it one publish() rejection at a time.
+   */
+  async classReadiness(classArmId: string, termId: string): Promise<{ totalStudents: number; students: ClassReadinessEntry[] }> {
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
+    const students = await this.prisma.studentProfile.findMany({
+      where: { currentClassId: classArmId },
+      include: { user: true },
+    });
+    const studentIds = students.map((s) => s.id);
+
+    const [enrollments, results, activeSkillItems, ratings, comments] = await Promise.all([
+      this.prisma.studentSubjectEnrollment.findMany({
+        where: { studentId: { in: studentIds }, classArmId, termId, status: EnrollmentStatus.ACTIVE },
+      }),
+      this.prisma.subjectTermResult.findMany({ where: { studentId: { in: studentIds }, termId } }),
+      this.prisma.skillAssessmentItem.findMany({ where: { academicSessionId: term.academicSessionId, isActive: true } }),
+      this.prisma.skillRating.findMany({ where: { studentId: { in: studentIds }, termId } }),
+      this.prisma.reportComment.findMany({
+        where: {
+          studentId: { in: studentIds },
+          termId,
+          commentType: { in: [ReportCommentType.CLASS_TEACHER, ReportCommentType.PRINCIPAL] },
+        },
+      }),
+    ]);
+
+    const readiness = students.map((student): ClassReadinessEntry => {
+      const missing: string[] = [];
+
+      const missingSubjects = enrollments
+        .filter((e) => e.studentId === student.id)
+        .filter((e) => !results.some((r) => r.studentId === student.id && r.subjectId === e.subjectId));
+      if (missingSubjects.length > 0) {
+        missing.push(`Missing SubjectTermResult for ${missingSubjects.length} actively-enrolled subject(s)`);
+      }
+
+      const missingSkills = activeSkillItems.filter(
+        (item) => !ratings.some((r) => r.studentId === student.id && r.skillAssessmentItemId === item.id),
+      );
+      if (missingSkills.length > 0) {
+        missing.push(`Missing SkillRating for ${missingSkills.length} active skill assessment item(s)`);
+      }
+
+      const hasClassTeacherComment = comments.some(
+        (c) => c.studentId === student.id && c.commentType === ReportCommentType.CLASS_TEACHER,
+      );
+      if (!hasClassTeacherComment) missing.push("Missing CLASS_TEACHER comment");
+
+      const hasPrincipalComment = comments.some(
+        (c) => c.studentId === student.id && c.commentType === ReportCommentType.PRINCIPAL,
+      );
+      if (!hasPrincipalComment) missing.push("Missing PRINCIPAL comment");
+
+      return {
+        studentId: student.id,
+        studentName: `${student.user.firstName} ${student.user.lastName}`,
+        ready: missing.length === 0,
+        missing,
+      };
+    });
+
+    return { totalStudents: students.length, students: readiness };
+  }
+
+  /**
+   * Bulk trigger, not bulk generation: loops generateFullTerm() once per
+   * ready student in the class (same explicit per-student upsert+enqueue as
+   * the single-student flow, just called N times from one Admin action)
+   * rather than introducing a separate batch code path. Students still
+   * missing a piece per classReadiness are skipped, not force-generated —
+   * generate one-off for those after filling the gap.
+   */
+  async generateForClass(dto: GenerateClassReportCardsDto, userId: string) {
+    const { students } = await this.classReadiness(dto.classArmId, dto.termId);
+    const ready = students.filter((s) => s.ready);
+    const notReady = students.filter((s) => !s.ready);
+
+    for (const student of ready) {
+      await this.generateFullTerm({ studentId: student.studentId, termId: dto.termId }, userId);
+    }
+
+    return {
+      generatedCount: ready.length,
+      generatedStudentIds: ready.map((s) => s.studentId),
+      skipped: notReady.map((s) => ({ studentId: s.studentId, studentName: s.studentName, missing: s.missing })),
+    };
+  }
+
+  /**
    * PRD §5: Super-Admin/Admin see every report card regardless of status
    * (they're the ones who publish it); class/subject teacher (STAFF) see
    * their own class's cards, any status; parents see only their wards' and
@@ -204,6 +305,7 @@ export class TermReportCardService {
     if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) {
       return this.prisma.termReportCard.findMany({
         where: { ...scalarFilters, ...(classArmId ? { student: { currentClassId: classArmId } } : {}) },
+        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -233,6 +335,7 @@ export class TermReportCardService {
       if (scopedClassArmIds.length === 0) return [];
       return this.prisma.termReportCard.findMany({
         where: { ...scalarFilters, student: { currentClassId: { in: scopedClassArmIds } } },
+        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -249,6 +352,7 @@ export class TermReportCardService {
             ...(classArmId ? { currentClassId: classArmId } : {}),
           },
         },
+        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -259,6 +363,7 @@ export class TermReportCardService {
       if (classArmId && studentProfile.currentClassId !== classArmId) return [];
       return this.prisma.termReportCard.findMany({
         where: { ...scalarFilters, studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED },
+        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
         orderBy: { createdAt: "desc" },
       });
     }
@@ -297,6 +402,18 @@ export class TermReportCardController {
   @CheckPolicies((ability) => ability.can("manage", "TermReportCard"))
   generate(@Body() dto: GenerateTermReportCardDto, @CurrentUser() user: RequestUser) {
     return this.service.generateFullTerm(dto, user.id);
+  }
+
+  @Get("class-readiness")
+  @CheckPolicies((ability) => ability.can("manage", "TermReportCard"))
+  classReadiness(@Query("classArmId") classArmId: string, @Query("termId") termId: string) {
+    return this.service.classReadiness(classArmId, termId);
+  }
+
+  @Post("generate-class")
+  @CheckPolicies((ability) => ability.can("manage", "TermReportCard"))
+  generateClass(@Body() dto: GenerateClassReportCardsDto, @CurrentUser() user: RequestUser) {
+    return this.service.generateForClass(dto, user.id);
   }
 
   @Get()

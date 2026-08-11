@@ -144,8 +144,9 @@ export class PaymentService {
     await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
 
     const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+    const formattedAmount = dto.amount.toLocaleString("en-NG", { style: "currency", currency: "NGN" });
     for (const guardian of invoice.student.guardians) {
-      await this.notifySafely(guardian.parent.userId, "PAYMENT_RECEIVED", { amount: dto.amount, studentName });
+      await this.notifySafely(guardian.parent.userId, "PAYMENT_RECEIVED", { amount: formattedAmount, studentName });
     }
 
     return result;
@@ -312,7 +313,8 @@ export class PaymentService {
 
     if (payment.paidByUserId) {
       const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
-      await this.notifySafely(payment.paidByUserId, "PAYMENT_RECEIVED", { amount: result.amountPaid, studentName });
+      const formattedAmount = result.amountPaid.toLocaleString("en-NG", { style: "currency", currency: "NGN" });
+      await this.notifySafely(payment.paidByUserId, "PAYMENT_RECEIVED", { amount: formattedAmount, studentName });
     }
 
     return { handled: true };
@@ -407,15 +409,16 @@ export class PaymentService {
     await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
 
     const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+    const formattedAmount = Number(payment.amount).toLocaleString("en-NG", { style: "currency", currency: "NGN" });
     const bursarUserId = await this.resolveStaffUserId(payment.recordedByStaffId);
     if (bursarUserId) {
-      await this.notifySafely(bursarUserId, "MANUAL_PAYMENT_APPROVED", { amount: Number(payment.amount), studentName });
+      await this.notifySafely(bursarUserId, "MANUAL_PAYMENT_APPROVED", { amount: formattedAmount, studentName });
     }
     // paidByUserId is currently always null for a manual-transfer submission
     // (submitManualBankTransfer never sets it) — written correctly so this
     // "just works" if that ever changes, but dormant today.
     if (payment.paidByUserId) {
-      await this.notifySafely(payment.paidByUserId, "MANUAL_PAYMENT_APPROVED", { amount: Number(payment.amount), studentName });
+      await this.notifySafely(payment.paidByUserId, "MANUAL_PAYMENT_APPROVED", { amount: formattedAmount, studentName });
     }
 
     return result;
@@ -440,7 +443,7 @@ export class PaymentService {
     if (bursarUserId) {
       const studentName = `${payment.invoice.student.user.firstName} ${payment.invoice.student.user.lastName}`;
       await this.notifySafely(bursarUserId, "MANUAL_PAYMENT_REJECTED", {
-        amount: Number(payment.amount),
+        amount: Number(payment.amount).toLocaleString("en-NG", { style: "currency", currency: "NGN" }),
         studentName,
         reason: rejectionReason,
       });

@@ -1,10 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type {
-  GatewayTransactionResult,
-  InitTransactionParams,
-  InitTransactionResult,
-  PaymentGatewayAdapter,
-  PaymentGatewayCredentials,
+import {
+  GatewayTransactionNotFoundError,
+  type GatewayTransactionResult,
+  type InitTransactionParams,
+  type InitTransactionResult,
+  type PaymentGatewayAdapter,
+  type PaymentGatewayCredentials,
 } from "./types";
 
 const BASE_URL = "https://api.paystack.co";
@@ -50,6 +51,9 @@ export class PaystackAdapter implements PaymentGatewayAdapter {
     const response = await fetch(`${BASE_URL}/transaction/verify/${encodeURIComponent(reference)}`, {
       headers: { Authorization: `Bearer ${credentials.secretKey}` },
     });
+    if (response.status === 404) {
+      throw new GatewayTransactionNotFoundError(`Paystack has no transaction for reference ${reference}`);
+    }
     if (!response.ok) {
       throw new Error(`Paystack transaction/verify failed: HTTP ${response.status}`);
     }

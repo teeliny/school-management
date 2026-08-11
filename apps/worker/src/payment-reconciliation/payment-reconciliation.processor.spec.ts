@@ -1,6 +1,11 @@
+import { GatewayTransactionNotFoundError } from "@school/types/payment-gateways";
 import { PaymentReconciliationProcessor } from "./payment-reconciliation.processor";
 
 const FUTURE_DUE_DATE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+// Just past STUCK_THRESHOLD_MS (15m), same as any ordinary stuck-payment
+// fixture — well short of NOT_FOUND_GIVE_UP_MS (1h) so it doesn't
+// accidentally trigger the give-up path in tests that don't want it.
+const JUST_STUCK_CREATED_AT = new Date(Date.now() - 20 * 60 * 1000);
 
 function buildStuckPayment(overrides: Record<string, unknown> = {}) {
   return {
@@ -9,6 +14,7 @@ function buildStuckPayment(overrides: Record<string, unknown> = {}) {
     status: "PENDING",
     method: "GATEWAY_CARD",
     gatewayProvider: "MONNIFY",
+    createdAt: JUST_STUCK_CREATED_AT,
     invoice: { id: "invoice-1", gatewayPaymentReference: "INV-invoice-1-100" },
     ...overrides,
   };
@@ -174,6 +180,38 @@ describe("PaymentReconciliationProcessor.process (PRD FR7.6)", () => {
     // The second payment still gets checked even though the first's
     // credentials lookup threw.
     expect(monnify.verifyTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps retrying a not-found payment that isn't old enough to give up on yet", async () => {
+    prisma.payment.findMany.mockResolvedValue([buildStuckPayment()]);
+    monnify.verifyTransaction.mockRejectedValue(new GatewayTransactionNotFoundError("no such transaction"));
+
+    await processor.process({} as never);
+
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+  });
+
+  it("gives up and marks FAILED once a not-found payment has been stuck past the give-up threshold", async () => {
+    const oldEnough = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h, past the 1h give-up threshold
+    prisma.payment.findMany.mockResolvedValue([buildStuckPayment({ createdAt: oldEnough })]);
+    monnify.verifyTransaction.mockRejectedValue(new GatewayTransactionNotFoundError("no such transaction"));
+
+    await processor.process({} as never);
+
+    expect(prisma.payment.update).toHaveBeenCalledWith({
+      where: { id: "payment-abcdef12" },
+      data: { status: "FAILED" },
+    });
+  });
+
+  it("never gives up on a generic/transient error, no matter how old the payment is — only an explicit not-found", async () => {
+    const oldEnough = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    prisma.payment.findMany.mockResolvedValue([buildStuckPayment({ createdAt: oldEnough })]);
+    monnify.verifyTransaction.mockRejectedValue(new Error("Monnify transaction query failed: HTTP 500"));
+
+    await processor.process({} as never);
+
+    expect(prisma.payment.update).not.toHaveBeenCalled();
   });
 
   it("resolves an already-registered PAYSTACK payment using the Paystack adapter, not Monnify's", async () => {

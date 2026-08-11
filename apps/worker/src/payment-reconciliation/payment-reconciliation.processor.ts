@@ -4,6 +4,7 @@ import type { Job, Queue } from "bullmq";
 import { PaymentGatewayProvider, PaymentMethod, PaymentStatus } from "@prisma/client";
 import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
 import {
+  GatewayTransactionNotFoundError,
   mapChannelToPaymentMethod,
   type GatewayTransactionResult,
   type PaymentGatewayAdapter,
@@ -15,6 +16,15 @@ import { MONNIFY_ADAPTER, PAYSTACK_ADAPTER } from "./payment-gateway.tokens";
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const REPEATABLE_JOB_ID = "payment-reconciliation-repeatable";
 const STUCK_THRESHOLD_MS = 15 * 60 * 1000;
+// Only for a GatewayTransactionNotFoundError, never a generic/transient
+// failure (network blip, expired credentials, 5xx) — those say nothing
+// about the payment's real status and must keep retrying indefinitely. A
+// "not found" is different: a reference obtained from our own
+// initTransaction call exists on the gateway's side immediately, so this
+// only means the checkout was never truly completed there. One hour (well
+// past STUCK_THRESHOLD_MS) rules out any eventual-consistency lag before
+// giving up.
+const NOT_FOUND_GIVE_UP_MS = 60 * 60 * 1000;
 
 const GATEWAY_METHODS: PaymentMethod[] = [
   PaymentMethod.GATEWAY_CARD,
@@ -85,6 +95,15 @@ export class PaymentReconciliationProcessor extends WorkerHost implements OnModu
           resolved++;
         }
       } catch (error) {
+        const age = Date.now() - payment.createdAt.getTime();
+        if (error instanceof GatewayTransactionNotFoundError && age > NOT_FOUND_GIVE_UP_MS) {
+          this.logger.warn(
+            `Giving up on payment ${payment.id}: ${error.message} (stuck ${Math.round(age / (60 * 1000))}m with no matching gateway transaction) — marking FAILED`,
+          );
+          await this.prisma.payment.update({ where: { id: payment.id }, data: { status: PaymentStatus.FAILED } });
+          resolved++;
+          continue;
+        }
         this.logger.error(`Failed to reconcile payment ${payment.id}: ${error}`);
       }
     }

@@ -6,13 +6,13 @@ function buildPrismaMock() {
   return {
     termReportCard: { findUniqueOrThrow: jest.fn(), update: jest.fn(), findMany: jest.fn(), upsert: jest.fn() },
     parentProfile: { findUnique: jest.fn() },
-    studentProfile: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
+    studentProfile: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), findMany: jest.fn() },
     term: { findUniqueOrThrow: jest.fn() },
     studentSubjectEnrollment: { findMany: jest.fn() },
     subjectTermResult: { findMany: jest.fn() },
     skillAssessmentItem: { findMany: jest.fn() },
     skillRating: { findMany: jest.fn() },
-    reportComment: { findFirst: jest.fn() },
+    reportComment: { findFirst: jest.fn(), findMany: jest.fn() },
     studentGuardian: { findMany: jest.fn().mockResolvedValue([]) },
   };
 }
@@ -231,6 +231,81 @@ describe("TermReportCardService.publish — FULL_TERM completeness gate (PRD FR4
 
     await expect(service.publish("rc-1")).rejects.toThrow(/Missing PRINCIPAL comment/);
     expect(prisma.termReportCard.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("TermReportCardService.classReadiness / generateForClass", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let reportCardQueue: ReturnType<typeof buildQueueMock>;
+  let service: TermReportCardService;
+
+  const TERM = { id: "term-1", academicSessionId: "session-1" };
+  const STUDENT_A = { id: "student-a", user: { firstName: "Ada", lastName: "Lovelace" } };
+  const STUDENT_B = { id: "student-b", user: { firstName: "Bea", lastName: "Smith" } };
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    reportCardQueue = buildQueueMock();
+    service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      reportCardQueue as never,
+      buildNotificationsMock() as never,
+    );
+    prisma.term.findUniqueOrThrow.mockResolvedValue(TERM);
+    prisma.studentProfile.findMany.mockResolvedValue([STUDENT_A, STUDENT_B]);
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([
+      { studentId: "student-a", subjectId: "subj-1" },
+      { studentId: "student-b", subjectId: "subj-1" },
+    ]);
+    prisma.skillAssessmentItem.findMany.mockResolvedValue([{ id: "skill-1" }]);
+  });
+
+  function mockStudentAComplete() {
+    prisma.subjectTermResult.findMany.mockResolvedValue([{ studentId: "student-a", subjectId: "subj-1" }]);
+    prisma.skillRating.findMany.mockResolvedValue([{ studentId: "student-a", skillAssessmentItemId: "skill-1" }]);
+    prisma.reportComment.findMany.mockResolvedValue([
+      { studentId: "student-a", commentType: "CLASS_TEACHER" },
+      { studentId: "student-a", commentType: "PRINCIPAL" },
+    ]);
+  }
+
+  it("marks a student ready only once every piece is present, and reports what's missing otherwise", async () => {
+    mockStudentAComplete();
+
+    const result = await service.classReadiness("arm-1", "term-1");
+
+    expect(result.totalStudents).toBe(2);
+    const a = result.students.find((s) => s.studentId === "student-a")!;
+    const b = result.students.find((s) => s.studentId === "student-b")!;
+    expect(a.ready).toBe(true);
+    expect(a.missing).toEqual([]);
+    expect(b.ready).toBe(false);
+    expect(b.missing).toEqual([
+      "Missing SubjectTermResult for 1 actively-enrolled subject(s)",
+      "Missing SkillRating for 1 active skill assessment item(s)",
+      "Missing CLASS_TEACHER comment",
+      "Missing PRINCIPAL comment",
+    ]);
+  });
+
+  it("generateForClass only generates for ready students, skipping the rest with their missing reasons", async () => {
+    mockStudentAComplete();
+    prisma.termReportCard.upsert.mockResolvedValue({ id: "rc-a" });
+
+    const result = await service.generateForClass({ classArmId: "arm-1", termId: "term-1" }, "admin-1");
+
+    expect(result.generatedCount).toBe(1);
+    expect(result.generatedStudentIds).toEqual(["student-a"]);
+    expect(reportCardQueue.add).toHaveBeenCalledTimes(1);
+    expect(reportCardQueue.add).toHaveBeenCalledWith("generate", {
+      studentId: "student-a",
+      termId: "term-1",
+      reportType: "FULL_TERM",
+    });
+    expect(result.skipped).toEqual([
+      expect.objectContaining({ studentId: "student-b", studentName: "Bea Smith" }),
+    ]);
   });
 });
 
