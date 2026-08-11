@@ -78,3 +78,11 @@ input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;
 }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+    overflow: -moz-scrollbars-none; /* Hides the scrollbar */
+}
