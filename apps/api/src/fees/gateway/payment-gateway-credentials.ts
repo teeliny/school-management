@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { PaymentGatewayProvider } from "@prisma/client";
 import type { PaymentGatewayCredentials } from "@school/types/payment-gateways";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -18,7 +18,12 @@ export class PaymentGatewayCredentialsService {
   ) {}
 
   async getCredentials(provider: PaymentGatewayProvider): Promise<PaymentGatewayCredentials> {
-    const config = await this.prisma.paymentGatewayConfig.findUniqueOrThrow({ where: { provider } });
+    const config = await this.prisma.paymentGatewayConfig.findUnique({ where: { provider } });
+    if (!config) {
+      throw new NotFoundException(
+        `No PaymentGatewayConfig row for provider ${provider} — configure it via POST /payment-gateway-configs before checkout can use it.`,
+      );
+    }
     return {
       apiKey: this.envelope.decrypt(config.apiKey),
       secretKey: this.envelope.decrypt(config.secretKey),

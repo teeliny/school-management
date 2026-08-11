@@ -23,6 +23,7 @@ import { AssessmentComponentService } from "./assessments/assessment-component";
 import { ReportWindowService } from "./assessments/report-window";
 import { FeeStructureService } from "./fees/fee-structure";
 import { InvoiceService } from "./fees/invoice";
+import { PaymentGatewayConfigService } from "./fees/gateway/payment-gateway-config";
 
 /**
  * One-shot demo dataset for a fresh deployment (run after `pnpm setup:school`
@@ -67,6 +68,7 @@ async function main() {
   const reportWindows = app.get(ReportWindowService);
   const feeStructures = app.get(FeeStructureService);
   const invoices = app.get(InvoiceService);
+  const paymentGatewayConfigs = app.get(PaymentGatewayConfigService);
 
   try {
     // -------------------------------------------------------------------
@@ -1108,6 +1110,49 @@ async function main() {
     logger.log(
       `Invoices ready: ${invoiceResult.created} created, ${invoiceResult.alreadyInvoiced} already invoiced, ${invoiceResult.noApplicableFees} skipped (no applicable fees).`,
     );
+
+    // -------------------------------------------------------------------
+    // Payment gateway configs — PaymentGatewayCredentialsService reads its
+    // row from the DB (PaymentGatewayConfig), not straight from env, so
+    // MONNIFY_*/PAYSTACK_* being set in .env alone doesn't make checkout
+    // work; a row has to exist for whichever provider PAYMENT_GATEWAY_PROVIDER
+    // selects. Seed both providers when their env credentials are present
+    // so switching PAYMENT_GATEWAY_PROVIDER doesn't need a re-seed.
+    // -------------------------------------------------------------------
+    const gatewayConfigDefs: {
+      provider: "MONNIFY" | "PAYSTACK";
+      apiKey?: string;
+      secretKey?: string;
+      contractCode?: string;
+      environment?: "SANDBOX" | "LIVE";
+    }[] = [
+      {
+        provider: "MONNIFY",
+        apiKey: process.env.MONNIFY_API_KEY,
+        secretKey: process.env.MONNIFY_SECRET_KEY,
+        contractCode: process.env.MONNIFY_CONTRACT_CODE,
+        environment: process.env.MONNIFY_ENV as "SANDBOX" | "LIVE" | undefined,
+      },
+      {
+        provider: "PAYSTACK",
+        apiKey: process.env.PAYSTACK_PUBLIC_KEY,
+        secretKey: process.env.PAYSTACK_SECRET_KEY,
+      },
+    ];
+    for (const def of gatewayConfigDefs) {
+      if (!def.apiKey || !def.secretKey) continue;
+      const existing = await prisma.paymentGatewayConfig.findUnique({ where: { provider: def.provider } });
+      if (existing) continue;
+      await paymentGatewayConfigs.create({
+        provider: def.provider,
+        apiKey: def.apiKey,
+        secretKey: def.secretKey,
+        contractCode: def.contractCode,
+        environment: def.environment ?? "SANDBOX",
+        isActive: true,
+      });
+      logger.log(`Payment gateway config seeded for ${def.provider}.`);
+    }
 
     logger.log(`Done. Every seeded account's password is "${DEMO_PASSWORD}".`);
   } finally {

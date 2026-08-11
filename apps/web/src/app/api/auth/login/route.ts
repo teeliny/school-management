@@ -16,11 +16,15 @@ export async function POST(req: NextRequest) {
     const errorBody = await apiRes.text();
     return new NextResponse(errorBody || null, {
       status: apiRes.status,
-      headers: { "Content-Type": apiRes.headers.get("Content-Type") ?? "application/json" },
+      headers: {
+        "Content-Type":
+          apiRes.headers.get("Content-Type") ?? "application/json",
+      },
     });
   }
 
-  const tokens: { accessToken: string; refreshToken: string } = await apiRes.json();
+  const tokens: { accessToken: string; refreshToken: string } =
+    await apiRes.json();
   const res = NextResponse.json({ ok: true });
   setAuthCookies(res, tokens);
   return res;
