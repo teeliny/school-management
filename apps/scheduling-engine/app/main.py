@@ -6,6 +6,8 @@ from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.class_timetable import GroupPayload, solve_class_timetable
+
 
 class HealthResponse(BaseModel):
     status: str = "ok"
@@ -14,10 +16,20 @@ class HealthResponse(BaseModel):
 
 class SolveRequest(BaseModel):
     requestId: str
-    constraints: list[dict[str, Any]] = []
-    parameters: dict[str, Any] = {}
     callbackUrl: str
     callbackToken: str
+    scope: str | None = None
+
+    # Generic shape (BUILD_PLAN.md §9 Step 1) — used by every scope that
+    # doesn't yet have real solver logic (EXAM_TIMETABLE/INVIGILATION/
+    # WEEKLY_DUTY, Steps 3-5).
+    constraints: list[dict[str, Any]] = []
+    parameters: dict[str, Any] = {}
+
+    # CLASS_TIMETABLE-specific shape (BUILD_PLAN.md §9 Step 2).
+    calculationSubjectsMorning: bool = True
+    spreadCalculationSubjects: bool = True
+    groups: list[GroupPayload] = []
 
 
 class SolveAccepted(BaseModel):
@@ -54,18 +66,24 @@ def health() -> HealthResponse:
 
 async def _solve_and_callback(payload: SolveRequest) -> None:
     """
-    BUILD_PLAN.md §9 Step 1 stub: no CP-SAT model exists yet (that's Step
-    2+), so this just calls back immediately with an empty result — proving
-    the full async round trip (dispatch -> solve -> callback -> status flip
-    -> notify) works end to end before any real solver logic is written.
-    Step 2 replaces only this function's body; the /solve endpoint's
-    contract (request/response shape, fire-and-forget callback) doesn't
-    change.
+    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2) runs the real CP-SAT model.
+    Every other scope still gets Step 1's stub behavior — an immediate
+    empty-result callback — until its own step lands (Steps 3-5).
     """
-    body: dict[str, Any] = {
-        "callbackToken": payload.callbackToken,
-        "result": {"generatedRows": []},
-    }
+    if payload.scope == "CLASS_TIMETABLE":
+        body: dict[str, Any] = solve_class_timetable(
+            request_id=payload.requestId,
+            callback_token=payload.callbackToken,
+            calculation_subjects_morning=payload.calculationSubjectsMorning,
+            spread_calculation_subjects=payload.spreadCalculationSubjects,
+            groups=payload.groups,
+        )
+    else:
+        body = {
+            "callbackToken": payload.callbackToken,
+            "result": {"generatedRows": []},
+        }
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             await client.post(payload.callbackUrl, json=body)

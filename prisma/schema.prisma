@@ -550,6 +550,12 @@ model ClassSubject {
   // ClassSubjectService, not here (depends on another field's value).
   departmentId       String?
   department         Department?        @relation(fields: [departmentId], references: [id])
+  // BUILD_PLAN.md §9 Step 2: how many periods/week this subject is taught
+  // for this classLevelCategory — the class-timetable solver's per-subject
+  // frequency target. Defaulted rather than left required so the migration
+  // doesn't break existing rows; Admin sets real values via the existing
+  // CRUD afterward.
+  periodsPerWeek     Int                @default(3)
   createdAt          DateTime           @default(now())
 
   termStatuses ClassSubjectTermStatus[]
@@ -733,15 +739,23 @@ enum ClassLevelCategoryGroup {
 // Lets Admin tune the AI generator's rules without a code change; seeded with
 // defaults at `pnpm setup:school` (see setup-school.ts) — PRD §3.8.
 model SchedulingConstraint {
-  id        String        @id @default(uuid())
-  scope     ScheduleScope
-  key       String
-  value     Json
-  isActive  Boolean       @default(true)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id       String        @id @default(uuid())
+  scope    ScheduleScope
+  // null = applies to the whole scope (e.g. CALCULATION_SUBJECTS_MORNING);
+  // set = overrides/defines this key for that group only (e.g. per-group
+  // period/break structure, Step 2). A hand-added partial unique index
+  // (prisma/migrations) additionally guarantees at most one null-group row
+  // per (scope, key) — Postgres does not treat two NULLs as equal, so the
+  // composite @@unique below can't enforce that on its own, same precedent
+  // as the SUPER_ADMIN/AcademicSession.isCurrent singleton indexes.
+  classLevelCategoryGroup ClassLevelCategoryGroup?
+  key                     String
+  value                   Json
+  isActive                Boolean                  @default(true)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
 
-  @@unique([scope, key])
+  @@unique([scope, classLevelCategoryGroup, key])
   @@map("scheduling_constraints")
 }
 

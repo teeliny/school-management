@@ -98,16 +98,40 @@ async function main() {
     }
     logger.log(`Ensured ${DEFAULT_NOTIFICATION_TEMPLATES.length} default notification templates exist.`);
 
-    // BUILD_PLAN.md §9 Step 1, PRD §3.8: seed SchedulingConstraint defaults
-    // exactly once per (scope, key) — same idempotent upsert-with-`update:
-    // {}` pattern as notification templates, so a re-run never clobbers an
-    // Admin's prior tuning of these values.
+    // BUILD_PLAN.md §9 Steps 1/2, PRD §3.8: seed SchedulingConstraint
+    // defaults exactly once per (scope, classLevelCategoryGroup, key) — same
+    // idempotent "don't clobber an Admin's prior tuning" intent as
+    // notification templates, but a plain typed .upsert() only works for the
+    // group-scoped rows: Prisma's compound-unique input requires a non-null
+    // classLevelCategoryGroup, since a null value can't participate in an
+    // ordinary unique-index lookup (the same reason the null-group case
+    // needed a hand-added *partial* unique index in the migration, not the
+    // plain composite one). The global (classLevelCategoryGroup=null) rows
+    // fall back to a manual find-then-create, same "raw partial index can't
+    // be targeted by Prisma's typed .upsert()" precedent as
+    // StaffAssignment's reconciliation (CLAUDE.md).
     for (const constraint of DEFAULT_SCHEDULING_CONSTRAINTS) {
-      await prisma.schedulingConstraint.upsert({
-        where: { scope_key: { scope: constraint.scope, key: constraint.key } },
-        update: {},
-        create: constraint,
+      if (constraint.classLevelCategoryGroup) {
+        await prisma.schedulingConstraint.upsert({
+          where: {
+            scope_classLevelCategoryGroup_key: {
+              scope: constraint.scope,
+              classLevelCategoryGroup: constraint.classLevelCategoryGroup,
+              key: constraint.key,
+            },
+          },
+          update: {},
+          create: constraint,
+        });
+        continue;
+      }
+
+      const existing = await prisma.schedulingConstraint.findFirst({
+        where: { scope: constraint.scope, classLevelCategoryGroup: null, key: constraint.key },
       });
+      if (!existing) {
+        await prisma.schedulingConstraint.create({ data: constraint });
+      }
     }
     logger.log(`Ensured ${DEFAULT_SCHEDULING_CONSTRAINTS.length} default scheduling constraints exist.`);
 

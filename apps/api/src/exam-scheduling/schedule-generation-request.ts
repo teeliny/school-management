@@ -13,8 +13,8 @@ import {
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { randomBytes } from "node:crypto";
-import { ClassLevelCategory, ClassLevelCategoryGroup, ScheduleGenerationStatus, ScheduleScope } from "@prisma/client";
-import { QUEUE_NAMES, type SchedulingSolveDispatchJob } from "@school/types";
+import { ClassLevelCategoryGroup, ScheduleGenerationStatus, ScheduleScope } from "@prisma/client";
+import { categoryToGroup, QUEUE_NAMES, type SchedulingSolveDispatchJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -22,12 +22,6 @@ import { AbilityFactory } from "../casl/ability.factory";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { CreateScheduleGenerationRequestDto } from "./dto/schedule-generation-request.dto";
-
-function categoryToGroup(category: ClassLevelCategory): ClassLevelCategoryGroup {
-  return category === "JSS" || category === "SSS"
-    ? ClassLevelCategoryGroup.JSS_SSS
-    : ClassLevelCategoryGroup.CRECHE_NURSERY_PRIMARY;
-}
 
 @Injectable()
 export class ScheduleGenerationRequestService {
@@ -105,6 +99,16 @@ export class ScheduleGenerationRequestService {
   }
 
   async create(dto: CreateScheduleGenerationRequestDto, user: RequestUser) {
+    // BUILD_PLAN.md §9 Step 2: TimetableSlot is already term-scoped (matching
+    // manual CRUD), so a CLASS_TIMETABLE run generates exactly one term's
+    // slots per solve — same granularity a human editing the timetable
+    // manually already works at. termId stays a nullable column since
+    // WEEKLY_DUTY also uses it, so this is a scope-specific service check,
+    // not a schema-level requirement.
+    if (dto.scope === "CLASS_TIMETABLE" && !dto.termId) {
+      throw new BadRequestException("termId is required for CLASS_TIMETABLE scope");
+    }
+
     await this.assertCanTrigger(user, dto);
 
     const request = await this.prisma.scheduleGenerationRequest.create({

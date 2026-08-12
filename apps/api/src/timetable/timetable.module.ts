@@ -8,5 +8,8 @@ import { TimetableSlotController, TimetableSlotService } from "./timetable-slot"
 @Module({
   controllers: [TimetableSlotController],
   providers: [TimetableSlotService],
+  // BUILD_PLAN.md §9 Step 2: ExamSchedulingModule reuses assertNoConflicts
+  // as a final safety net before persisting AI-generated TimetableSlot rows.
+  exports: [TimetableSlotService],
 })
 export class TimetableModule {}

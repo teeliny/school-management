@@ -12,7 +12,8 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { DayOfWeek, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
+import { DayOfWeek, Prisma, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
+import { timeRangesOverlap } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -35,22 +36,21 @@ interface ConflictCheckInput {
 export class TimetableSlotService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private toMinutes(t: string): number {
-    const [h, m] = t.split(":");
-    return Number(h) * 60 + Number(m);
-  }
-
-  private overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
-    return this.toMinutes(aStart) < this.toMinutes(bEnd) && this.toMinutes(bStart) < this.toMinutes(aEnd);
-  }
-
   /**
    * PRD §3.8: "validated for teacher/venue double-booking conflicts at the
    * service layer regardless of origin" — a range comparison, not something
    * a DB unique constraint can express, so it lives here rather than as a
-   * schema-level guarantee.
+   * schema-level guarantee. `client` defaults to the injected PrismaService
+   * but accepts a `$transaction` callback's client too — BUILD_PLAN.md §9
+   * Step 2's callback controller reuses this as a final safety net while
+   * batch-inserting AI-generated rows, and needs each check to see the
+   * batch's own prior inserts, not just what's already committed.
    */
-  async assertNoConflicts(input: ConflictCheckInput, excludeId?: string) {
+  async assertNoConflicts(
+    input: ConflictCheckInput,
+    excludeId?: string,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ) {
     const shared = {
       dayOfWeek: input.dayOfWeek,
       academicSessionId: input.academicSessionId,
@@ -58,11 +58,11 @@ export class TimetableSlotService {
       id: excludeId ? { not: excludeId } : undefined,
     } as const;
 
-    const staffSlots = await this.prisma.timetableSlot.findMany({
+    const staffSlots = await client.timetableSlot.findMany({
       where: { ...shared, staffId: input.staffId },
     });
     for (const slot of staffSlots) {
-      if (this.overlaps(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
+      if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
         throw new BadRequestException(
           `Teacher is already booked from ${slot.startTime} to ${slot.endTime} on this day`,
         );
@@ -70,11 +70,11 @@ export class TimetableSlotService {
     }
 
     if (input.venue) {
-      const venueSlots = await this.prisma.timetableSlot.findMany({
+      const venueSlots = await client.timetableSlot.findMany({
         where: { ...shared, venue: input.venue },
       });
       for (const slot of venueSlots) {
-        if (this.overlaps(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
+        if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
           throw new BadRequestException(
             `Venue "${input.venue}" is already booked from ${slot.startTime} to ${slot.endTime} on this day`,
           );
