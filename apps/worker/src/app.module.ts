@@ -10,6 +10,8 @@ import { ReceiptModule } from "./receipt/receipt.module";
 import { PaymentReconciliationModule } from "./payment-reconciliation/payment-reconciliation.module";
 import { EmailModule } from "./email/email.module";
 import { InvoiceOverdueSweepModule } from "./invoice-overdue-sweep/invoice-overdue-sweep.module";
+import { SchedulingSolveDispatchModule } from "./scheduling-solve-dispatch/scheduling-solve-dispatch.module";
+import { SchedulingTimeoutSweepModule } from "./scheduling-timeout-sweep/scheduling-timeout-sweep.module";
 
 // First real BullMQ consumer module (Phase 4, docs/ARCHITECTURE.md §8) — the
 // connection config is duplicated from apps/api/src/redis/redis.module.ts's
@@ -34,6 +36,8 @@ import { InvoiceOverdueSweepModule } from "./invoice-overdue-sweep/invoice-overd
     PaymentReconciliationModule,
     EmailModule,
     InvoiceOverdueSweepModule,
+    SchedulingSolveDispatchModule,
+    SchedulingTimeoutSweepModule,
     HealthModule,
   ],
 })

@@ -73,6 +73,7 @@ model User {
   notifications                    Notification[]
   notificationPreferences          NotificationPreference[]
   auditLogs                        AuditLog[]
+  scheduleGenerationRequests       ScheduleGenerationRequest[]
 
   @@map("users")
 }
@@ -185,18 +186,19 @@ model Term {
   isCurrent         Boolean         @default(false)
   createdAt         DateTime        @default(now())
 
-  subjectEnrollments       StudentSubjectEnrollment[]
-  timetableSlots           TimetableSlot[]
-  assessmentComponents     AssessmentComponent[]
-  subjectTermResults       SubjectTermResult[]
-  termReportCards          TermReportCard[]
-  skillRatings             SkillRating[]
-  reportWindows            ReportWindow[]
-  reportComments           ReportComment[]
-  classSubjectTermStatuses ClassSubjectTermStatus[]
-  schoolHolidays           SchoolHoliday[]
-  feeStructures            FeeStructure[]
-  invoices                 Invoice[]
+  subjectEnrollments         StudentSubjectEnrollment[]
+  timetableSlots             TimetableSlot[]
+  assessmentComponents       AssessmentComponent[]
+  subjectTermResults         SubjectTermResult[]
+  termReportCards            TermReportCard[]
+  skillRatings               SkillRating[]
+  reportWindows              ReportWindow[]
+  reportComments             ReportComment[]
+  classSubjectTermStatuses   ClassSubjectTermStatus[]
+  schoolHolidays             SchoolHoliday[]
+  feeStructures              FeeStructure[]
+  scheduleGenerationRequests ScheduleGenerationRequest[]
+  invoices                   Invoice[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -233,14 +235,15 @@ model ClassArm {
   capacity          Int?
   createdAt         DateTime        @default(now())
 
-  students           StudentProfile[]
-  staffAssignments   StaffAssignment[]
-  studentPositions   StudentPosition[]
-  subjectEnrollments StudentSubjectEnrollment[]
-  timetableSlots     TimetableSlot[]
-  scoreEntries       ScoreEntry[]
-  subjectTermResults SubjectTermResult[]
-  attendanceSessions AttendanceSession[]
+  students                   StudentProfile[]
+  staffAssignments           StaffAssignment[]
+  studentPositions           StudentPosition[]
+  subjectEnrollments         StudentSubjectEnrollment[]
+  timetableSlots             TimetableSlot[]
+  scoreEntries               ScoreEntry[]
+  subjectTermResults         SubjectTermResult[]
+  attendanceSessions         AttendanceSession[]
+  scheduleGenerationRequests ScheduleGenerationRequest[]
 
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
@@ -692,6 +695,104 @@ model TimetableSlot {
 }
 
 // ---------------------------------------------------------------------------
+// 3.8 AI Scheduling — async plumbing slice (PRD §3.8; BUILD_PLAN.md §9 Step
+// 1; ARCHITECTURE.md §9). ScheduleGenerationRequest is the tracking record
+// for an in-flight solver run — it exists before any TimetableSlot/
+// ExamSchedule/InvigilationAssignment/DutyAssignment rows are written, and is
+// what the timeout sweep (apps/worker) checks for a run that never got a
+// callback. Only CLASS_TIMETABLE/EXAM_TIMETABLE/INVIGILATION/WEEKLY_DUTY
+// scope values and SchedulingConstraint exist as of this slice; the
+// ExamSchedule/InvigilationAssignment/DutyAssignment models themselves arrive
+// per-scope in later BUILD_PLAN.md §9 steps.
+// ---------------------------------------------------------------------------
+
+enum ScheduleScope {
+  CLASS_TIMETABLE
+  EXAM_TIMETABLE
+  INVIGILATION
+  WEEKLY_DUTY
+}
+
+enum ScheduleGenerationStatus {
+  QUEUED
+  SOLVING
+  COMPLETED
+  FAILED
+  TIMED_OUT
+}
+
+// Same JSS/SSS vs. Creche/Nursery/Primary Principal/Headteacher scoping split
+// used throughout §6.6, formalized as its own enum since a weekly-duty run
+// has no class/subject/exam row of its own to derive the group from (PRD
+// §3.8's DutyAssignment bullet).
+enum ClassLevelCategoryGroup {
+  JSS_SSS
+  CRECHE_NURSERY_PRIMARY
+}
+
+// Lets Admin tune the AI generator's rules without a code change; seeded with
+// defaults at `pnpm setup:school` (see setup-school.ts) — PRD §3.8.
+model SchedulingConstraint {
+  id        String        @id @default(uuid())
+  scope     ScheduleScope
+  key       String
+  value     Json
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@unique([scope, key])
+  @@map("scheduling_constraints")
+}
+
+model ScheduleGenerationRequest {
+  id    String        @id @default(uuid())
+  scope ScheduleScope
+
+  // null = whole triggering-user scope (FR6.2 — a run always covers every
+  // in-scope class arm at once); set only for a single-arm regeneration
+  // (FR6.5's "regenerated individually without discarding the rest").
+  classArmId String?
+  classArm   ClassArm? @relation(fields: [classArmId], references: [id])
+
+  // FR6.3/FR6.4: the EXAM- or MID_TERM-type AssessmentComponent being
+  // scheduled/invigilated. PRD §3.8 calls this "assessmentWindowId" in
+  // prose; named for the actual FK target here instead.
+  assessmentComponentId String?
+  assessmentComponent   AssessmentComponent? @relation(fields: [assessmentComponentId], references: [id])
+
+  // FR6.11: a weekly-duty run generates a whole term's rotation in one solve.
+  termId String?
+  term   Term?   @relation(fields: [termId], references: [id])
+
+  // Set for WEEKLY_DUTY scope; derived from the triggering user's own scope
+  // the same way CLASS_TIMETABLE/EXAM_TIMETABLE/INVIGILATION derive theirs
+  // from classArmId/assessmentComponentId.
+  classLevelCategoryGroup ClassLevelCategoryGroup?
+
+  // Run-specific overrides layered on top of the stored SchedulingConstraint
+  // defaults for this run only — e.g. MID_TERM's maxSubjectsPerDay/duration
+  // params (FR6.3a) or a WEEKLY_DUTY run's teachersPerWeek (FR6.11).
+  parameters Json?
+
+  status ScheduleGenerationStatus @default(QUEUED)
+
+  // ARCHITECTURE.md §9: single-use, per-request secret generated at
+  // dispatch time, verified via timingSafeEqual on callback — not a shared
+  // static key, so a stray/replayed callback can't be mistaken for real.
+  callbackToken String @unique
+
+  requestedByUserId String
+  requestedByUser   User      @relation(fields: [requestedByUserId], references: [id])
+  requestedAt       DateTime  @default(now())
+  completedAt       DateTime?
+  errorMessage      String?
+
+  @@index([status])
+  @@map("schedule_generation_requests")
+}
+
+// ---------------------------------------------------------------------------
 // 3.6 Assessment & Reporting — components + scoring slice (PRD §3.6;
 // BUILD_PLAN.md §6). Status transitions off the three date fields via a
 // scheduled BullMQ sweep (apps/worker), with Admin override always available
@@ -737,7 +838,8 @@ model AssessmentComponent {
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 
-  scoreEntries ScoreEntry[]
+  scoreEntries               ScoreEntry[]
+  scheduleGenerationRequests ScheduleGenerationRequest[]
 
   @@unique([termId, classLevelCategory, type, sequence])
   @@map("assessment_components")
@@ -1346,6 +1448,9 @@ enum NotificationType {
   DISCOUNT_REQUEST_REJECTED
   MANUAL_PAYMENT_APPROVED
   MANUAL_PAYMENT_REJECTED
+  SCHEDULE_GENERATION_COMPLETED
+  SCHEDULE_GENERATION_TIMED_OUT
+  SCHEDULE_GENERATION_FAILED
 }
 
 enum NotificationChannel {

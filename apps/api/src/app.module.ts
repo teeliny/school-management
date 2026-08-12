@@ -16,6 +16,7 @@ import { TimetableModule } from "./timetable/timetable.module";
 import { AssessmentsModule } from "./assessments/assessments.module";
 import { CalendarModule } from "./calendar/calendar.module";
 import { AttendanceModule } from "./attendance/attendance.module";
+import { ExamSchedulingModule } from "./exam-scheduling/exam-scheduling.module";
 import { FeesModule } from "./fees/fees.module";
 import { StorageModule } from "./storage/storage.module";
 import { NotificationsModule } from "./notifications/notifications.module";
@@ -53,6 +54,7 @@ import { AuditModule } from "./audit/audit.module";
     AssessmentsModule,
     CalendarModule,
     AttendanceModule,
+    ExamSchedulingModule,
     FeesModule,
     NotificationsModule,
     HealthModule,

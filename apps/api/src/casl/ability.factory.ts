@@ -46,7 +46,9 @@ export type Subject =
   | "Receipt"
   | "PaymentGatewayConfig"
   | "DiscountRequest"
-  | "NotificationTemplate";
+  | "NotificationTemplate"
+  | "SchedulingConstraint"
+  | "ScheduleGenerationRequest";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;
@@ -109,6 +111,15 @@ export class AbilityFactory {
       // every authenticated user manages only their own, scoped entirely at
       // the service layer (same reasoning as `/auth/me`), not via CASL.
       can("manage", "NotificationTemplate");
+
+      // PRD §3.8: SchedulingConstraint is an Admin-config resource like
+      // AssessmentComponent/GradeScale. ScheduleGenerationRequest is
+      // deliberately NOT granted here — §5 footnote 5: a plain Admin holding
+      // neither PRINCIPAL nor HEADTEACHER cannot trigger generation at all;
+      // that grant lives only in the REGISTRAR/PRINCIPAL/HEADTEACHER
+      // branches below, additive on top of this one for an Admin who also
+      // holds one of those titles.
+      can("manage", "SchedulingConstraint");
     }
 
     // PRD §5: Registrar manages the class timetable even though it's not a
@@ -130,6 +141,14 @@ export class AbilityFactory {
       can("read", "AttendanceSession");
       can("manage", "AttendanceSession", { type: "STAFF" });
       can("manage", "AttendanceRecord");
+
+      // PRD §5 footnote 5: Registrar is unscoped for triggering AI
+      // schedule generation, same as Super-Admin — the category-scoping
+      // check itself (Principal→JSS/SSS, Headteacher→CRECHE/NURSERY/
+      // PRIMARY) is a service-layer check in
+      // ScheduleGenerationRequestService.assertCanTrigger, not a CASL
+      // condition.
+      can("manage", "ScheduleGenerationRequest");
     }
 
     // PRD §3.9/§5: the entire fee/finance domain is invisible to Admin —
@@ -187,6 +206,13 @@ export class AbilityFactory {
       can("manage", "NotificationTemplate");
 
       can("read", "Broadsheet");
+
+      // PRD §5 footnote 5: a Principal/Headteacher-held assignment is what
+      // unlocks triggering AI schedule generation at all for a non-Super-
+      // Admin/Registrar user — scoped to that title's class-level group
+      // (JSS/SSS vs. CRECHE/NURSERY/PRIMARY) by
+      // ScheduleGenerationRequestService.assertCanTrigger.
+      can("manage", "ScheduleGenerationRequest");
     }
 
     return build();

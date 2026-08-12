@@ -12,6 +12,8 @@ export const QUEUE_NAMES = {
   EMAIL_DISPATCH: "email-dispatch",
   INVOICE_OVERDUE_SWEEP: "invoice-overdue-sweep",
   SUBJECT_TERM_RESULT_RECOMPUTE: "subject-term-result-recompute",
+  SCHEDULING_SOLVE_DISPATCH: "scheduling-solve-dispatch",
+  SCHEDULING_TIMEOUT_SWEEP: "scheduling-timeout-sweep",
 } as const;
 
 export interface ReportCardGenerationJob {
@@ -33,6 +35,14 @@ export interface SubjectTermResultRecomputeJob {
 
 export interface ReceiptGenerationJob {
   receiptId: string;
+}
+
+// ARCHITECTURE.md §9: the dispatch job only ever carries the request id — the
+// processor re-fetches the ScheduleGenerationRequest, resolves its
+// SchedulingConstraint rows, and builds the /solve payload from the DB at
+// process time, same "re-fetch, don't embed" shape as every other job here.
+export interface SchedulingSolveDispatchJob {
+  requestId: string;
 }
 
 export interface EmailDispatchJob {

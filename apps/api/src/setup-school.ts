@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { Role } from "@prisma/client";
-import { DEFAULT_NOTIFICATION_TEMPLATES } from "@school/types";
+import { DEFAULT_NOTIFICATION_TEMPLATES, DEFAULT_SCHEDULING_CONSTRAINTS } from "@school/types";
 import { AppModule } from "./app.module";
 import { PrismaService } from "./prisma/prisma.service";
 import { InvitationService } from "./identity/invitations/invitation.service";
@@ -97,6 +97,19 @@ async function main() {
       });
     }
     logger.log(`Ensured ${DEFAULT_NOTIFICATION_TEMPLATES.length} default notification templates exist.`);
+
+    // BUILD_PLAN.md §9 Step 1, PRD §3.8: seed SchedulingConstraint defaults
+    // exactly once per (scope, key) — same idempotent upsert-with-`update:
+    // {}` pattern as notification templates, so a re-run never clobbers an
+    // Admin's prior tuning of these values.
+    for (const constraint of DEFAULT_SCHEDULING_CONSTRAINTS) {
+      await prisma.schedulingConstraint.upsert({
+        where: { scope_key: { scope: constraint.scope, key: constraint.key } },
+        update: {},
+        create: constraint,
+      });
+    }
+    logger.log(`Ensured ${DEFAULT_SCHEDULING_CONSTRAINTS.length} default scheduling constraints exist.`);
 
     const email = args.proprietorEmail.trim().toLowerCase();
     const existingUser = await prisma.user.findUnique({

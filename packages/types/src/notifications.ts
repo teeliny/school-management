@@ -13,7 +13,10 @@ export type NotificationType =
   | "DISCOUNT_REQUEST_APPROVED"
   | "DISCOUNT_REQUEST_REJECTED"
   | "MANUAL_PAYMENT_APPROVED"
-  | "MANUAL_PAYMENT_REJECTED";
+  | "MANUAL_PAYMENT_REJECTED"
+  | "SCHEDULE_GENERATION_COMPLETED"
+  | "SCHEDULE_GENERATION_TIMED_OUT"
+  | "SCHEDULE_GENERATION_FAILED";
 
 export type NotificationChannel = "IN_APP" | "EMAIL" | "BOTH";
 
@@ -100,6 +103,27 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     subject: "Bank transfer payment rejected",
     bodyTemplate:
       "The manual bank-transfer payment of {{amount}} for {{studentName}}'s invoice was rejected: {{reason}}.",
+    isCritical: false,
+  },
+  {
+    key: "SCHEDULE_GENERATION_COMPLETED",
+    channel: "BOTH",
+    subject: "Draft schedule ready to review",
+    bodyTemplate: "A draft {{scope}} schedule has finished generating and is ready for your review.",
+    isCritical: false,
+  },
+  {
+    key: "SCHEDULE_GENERATION_TIMED_OUT",
+    channel: "BOTH",
+    subject: "Schedule generation failed",
+    bodyTemplate: "The {{scope}} generation you requested did not complete in time and can be retried.",
+    isCritical: false,
+  },
+  {
+    key: "SCHEDULE_GENERATION_FAILED",
+    channel: "BOTH",
+    subject: "Schedule generation failed",
+    bodyTemplate: "The {{scope}} generation you requested failed: {{errorMessage}}.",
     isCritical: false,
   },
 ];
