@@ -5,6 +5,7 @@ import { DAYS_OF_WEEK } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationService } from "../notifications/notification";
 import { TimetableSlotService } from "../timetable/timetable-slot";
+import { ExamScheduleService } from "./exam-schedule";
 
 interface ClassTimetableGeneratedRow {
   classArmId: string;
@@ -15,9 +16,17 @@ interface ClassTimetableGeneratedRow {
   endTime: string;
 }
 
+interface ExamTimetableGeneratedRow {
+  classArmId: string;
+  subjectId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+}
+
 interface SchedulingCallbackBody {
   callbackToken: string;
-  result?: { generatedRows?: ClassTimetableGeneratedRow[] };
+  result?: { generatedRows?: ClassTimetableGeneratedRow[] | ExamTimetableGeneratedRow[] };
   error?: string;
 }
 
@@ -47,6 +56,7 @@ export class SchedulingCallbackController {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationService,
     private readonly timetableSlots: TimetableSlotService,
+    private readonly examSchedules: ExamScheduleService,
   ) {}
 
   @Post(":requestId")
@@ -69,7 +79,13 @@ export class SchedulingCallbackController {
     }
 
     if (request.scope === ScheduleScope.CLASS_TIMETABLE) {
-      await this.persistClassTimetableRows(request.termId, body.result?.generatedRows ?? []);
+      await this.persistClassTimetableRows(request.termId, (body.result?.generatedRows ?? []) as ClassTimetableGeneratedRow[]);
+    }
+    if (request.scope === ScheduleScope.EXAM_TIMETABLE) {
+      await this.persistExamTimetableRows(
+        request.assessmentComponentId,
+        (body.result?.generatedRows ?? []) as ExamTimetableGeneratedRow[],
+      );
     }
 
     await this.prisma.scheduleGenerationRequest.update({
@@ -130,6 +146,52 @@ export class SchedulingCallbackController {
             academicSessionId: term.academicSessionId,
             termId,
             dayOfWeek: row.dayOfWeek,
+            startTime: row.startTime,
+            endTime: row.endTime,
+            venue: null,
+            generatedBy: TimetableGeneratedBy.AI,
+            approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 3: persists the solver's result as `ExamSchedule`
+   * rows (`generatedBy=AI, approvalStatus=PENDING_REVIEW`, same not-visible-
+   * until-approved shape as Step 2's `TimetableSlot` rows, FR6.5). Reuses
+   * `ExamScheduleService.assertNoConflicts` per row inside a single
+   * transaction, same belt-and-suspenders pattern as
+   * `persistClassTimetableRows` — no `staffId`/venue involved here, since
+   * `ExamSchedule` has neither (PRD §3.8).
+   */
+  private async persistExamTimetableRows(assessmentComponentId: string | null, rows: ExamTimetableGeneratedRow[]) {
+    if (!assessmentComponentId) {
+      this.logger.warn("EXAM_TIMETABLE callback with no assessmentComponentId on the request — nothing to persist");
+      return;
+    }
+    if (rows.length === 0) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        const date = new Date(row.date);
+        if (Number.isNaN(date.getTime())) {
+          this.logger.warn(`Dropping generated row with unparseable date "${row.date}"`);
+          continue;
+        }
+
+        await this.examSchedules.assertNoConflicts(
+          { classArmId: row.classArmId, date, startTime: row.startTime, endTime: row.endTime },
+          tx,
+        );
+
+        await tx.examSchedule.create({
+          data: {
+            assessmentComponentId,
+            classArmId: row.classArmId,
+            subjectId: row.subjectId,
+            date,
             startTime: row.startTime,
             endTime: row.endTime,
             venue: null,

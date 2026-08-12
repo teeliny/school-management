@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
 import {
+  AssessmentComponentType,
   ClassLevelCategory,
   Role,
   ScheduleGenerationStatus,
@@ -23,6 +24,12 @@ import {
 } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 
+interface RequiredSubject {
+  id: string;
+  requiresCalculation: boolean;
+  periodsPerWeek: number;
+}
+
 interface ResolvedSubject {
   subjectId: string;
   staffId: string;
@@ -41,6 +48,17 @@ interface GroupPayload extends PeriodStructure {
   days: DayOfWeek[];
   classArms: ClassArmPayload[];
   staffBlockedPeriods: Record<string, Record<string, number[]>>;
+}
+
+interface ExamSubjectPayload {
+  subjectId: string;
+  requiresCalculation: boolean;
+}
+
+interface ExamClassArmPayload {
+  classArmId: string;
+  subjects: ExamSubjectPayload[];
+  existingByDate: Record<string, { count: number; hasCalc: boolean }>;
 }
 
 /**
@@ -82,7 +100,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const payload =
       request.scope === ScheduleScope.CLASS_TIMETABLE
         ? await this.buildClassTimetablePayload(request, callbackUrl)
-        : await this.buildGenericPayload(request, callbackUrl);
+        : request.scope === ScheduleScope.EXAM_TIMETABLE
+          ? await this.buildExamTimetablePayload(request, callbackUrl)
+          : await this.buildGenericPayload(request, callbackUrl);
 
     const response = await fetch(`${engineUrl}/solve`, {
       method: "POST",
@@ -197,6 +217,150 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
+   * BUILD_PLAN.md §9 Step 3: `AssessmentComponent.classLevelCategory`
+   * already fixes the category (unlike CLASS_TIMETABLE, no Principal/
+   * Headteacher re-derivation needed here — that authorization already
+   * happened at trigger time), and `ExamSchedule` has no `staffId`, so this
+   * payload needs neither a teacher lookup nor cross-class-arm constraints —
+   * each class arm's exam schedule is solved independently by the Python
+   * side (no shared teacher resource, no venue-capacity concept exists in
+   * this codebase to contend over).
+   */
+  private async buildExamTimetablePayload(
+    request: {
+      id: string;
+      assessmentComponentId: string | null;
+      classArmId: string | null;
+      parameters: unknown;
+      callbackToken: string;
+    },
+    callbackUrl: string,
+  ) {
+    // Validated required at trigger time (ScheduleGenerationRequestService.assertValidExamTimetableRequest) —
+    // re-checked here since the worker never trusts the job payload alone.
+    if (!request.assessmentComponentId) throw new Error(`EXAM_TIMETABLE request ${request.id} is missing assessmentComponentId`);
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: request.assessmentComponentId },
+      include: { term: true },
+    });
+
+    const classArmIds = request.classArmId
+      ? [request.classArmId]
+      : (
+          await this.prisma.classArm.findMany({
+            where: { academicSessionId: component.term.academicSessionId, classLevel: { category: component.classLevelCategory } },
+            select: { id: true },
+          })
+        ).map((a) => a.id);
+
+    const requiredSubjects = await this.resolveRequiredSubjects(component.classLevelCategory);
+    const subjectPayloads: ExamSubjectPayload[] = requiredSubjects.map((s) => ({
+      subjectId: s.id,
+      requiresCalculation: s.requiresCalculation,
+    }));
+
+    const parameters = (request.parameters ?? {}) as {
+      examStartDate: string;
+      examEndDate: string;
+      maxSubjectsPerDay?: number;
+      calculationSubjectDurationMinutes?: number;
+      nonCalculationSubjectDurationMinutes?: number;
+    };
+    const examStartDate = new Date(parameters.examStartDate);
+    const examEndDate = new Date(parameters.examEndDate);
+    const days = this.resolveWeekdayDates(examStartDate, examEndDate);
+
+    const group = categoryToGroup(component.classLevelCategory);
+    // MID_TERM and EXAM share one duration-split mechanism (Step 3 design
+    // decision) via separate key prefixes so both stay independently tunable.
+    const prefix = component.type === AssessmentComponentType.MID_TERM ? "MID_TERM" : "EXAM";
+    const groupConstraints = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.EXAM_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
+    });
+    const getGroup = (key: string): unknown => groupConstraints.find((c) => c.key === key)?.value;
+
+    const globalConstraints = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.EXAM_TIMETABLE, classLevelCategoryGroup: null, isActive: true },
+    });
+    const spreadCalculationSubjects =
+      (globalConstraints.find((c) => c.key === "SPREAD_CALCULATION_SUBJECTS")?.value as boolean | undefined) ?? true;
+    const minGapBetweenCalculationExamsDays = Number(
+      globalConstraints.find((c) => c.key === "MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS")?.value ?? 1,
+    );
+
+    const existingByClassArm = await this.summarizeExistingExamLoad(classArmIds, examStartDate, examEndDate);
+
+    const classArms: ExamClassArmPayload[] = classArmIds.map((classArmId) => ({
+      classArmId,
+      subjects: subjectPayloads,
+      existingByDate: existingByClassArm[classArmId] ?? {},
+    }));
+
+    return {
+      requestId: request.id,
+      scope: ScheduleScope.EXAM_TIMETABLE,
+      days,
+      examDayStartTime: String(getGroup("EXAM_DAY_START_TIME")),
+      maxSubjectsPerDay: parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`)),
+      calculationSubjectDurationMinutes:
+        parameters.calculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_CALCULATION_SUBJECT_DURATION_MINUTES`)),
+      nonCalculationSubjectDurationMinutes:
+        parameters.nonCalculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_NON_CALCULATION_SUBJECT_DURATION_MINUTES`)),
+      spreadCalculationSubjects,
+      minGapBetweenCalculationExamsDays,
+      classArms,
+      callbackUrl,
+      callbackToken: request.callbackToken,
+    };
+  }
+
+  /** Every weekday (Mon-Fri) between start and end inclusive, as "YYYY-MM-DD" strings. */
+  private resolveWeekdayDates(start: Date, end: Date): string[] {
+    const dates: string[] = [];
+    const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+    const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+    while (cursor.getTime() <= endUtc) {
+      const day = cursor.getUTCDay();
+      if (day !== 0 && day !== 6) {
+        dates.push(cursor.toISOString().slice(0, 10));
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return dates;
+  }
+
+  /**
+   * Per class arm, per date already scheduled (any generatedBy, excluding
+   * REJECTED): how many subjects already occupy it, and whether one of them
+   * is a calculation subject — what the solver checks capacity/spread
+   * against, playing the same role Step 2's blocked-period sets did.
+   */
+  private async summarizeExistingExamLoad(
+    classArmIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<Record<string, Record<string, { count: number; hasCalc: boolean }>>> {
+    const existing = await this.prisma.examSchedule.findMany({
+      where: {
+        classArmId: { in: classArmIds },
+        date: { gte: from, lte: to },
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
+      include: { subject: true },
+    });
+
+    const summary: Record<string, Record<string, { count: number; hasCalc: boolean }>> = {};
+    for (const row of existing) {
+      const dateKey = row.date.toISOString().slice(0, 10);
+      const byDate = (summary[row.classArmId] ??= {});
+      const entry = (byDate[dateKey] ??= { count: 0, hasCalc: false });
+      entry.count += 1;
+      if (row.subject.requiresCalculation) entry.hasCalc = true;
+    }
+    return summary;
+  }
+
+  /**
    * FR6.2/PRD §5 footnote 5: a whole-scope (classArmId=null) trigger covers
    * every class arm within the *triggering user's own* scope — re-derived
    * here from the DB, not trusted from the original HTTP request, matching
@@ -245,21 +409,40 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * A subject with no active SUBJECT_TEACHER for this exact class arm is
    * skipped — the solver has no one to assign it to.
    */
-  private async resolveSubjectsForClassArm(
-    category: ClassLevelCategory,
-    classArmId: string,
-    academicSessionId: string,
-  ): Promise<ResolvedSubject[]> {
+  /**
+   * PRD §3.3/CLAUDE.md: a `Subject` with `isGroup=true` is never itself
+   * assignable — only its `childSubjects` are — so any subject list built
+   * for scheduling must flatten group subjects, same pattern as
+   * report-card.processor.ts's scoreSubjectIds flatMap. Each flattened
+   * subject inherits its ClassSubject row's `periodsPerWeek` verbatim (no
+   * per-child split modeled yet). Shared between CLASS_TIMETABLE (which
+   * further resolves a teacher per class arm on top) and EXAM_TIMETABLE
+   * (which needs neither `periodsPerWeek` nor a teacher — a subject is
+   * examined exactly once, and `ExamSchedule` has no `staffId`, PRD §3.8).
+   */
+  private async resolveRequiredSubjects(category: ClassLevelCategory): Promise<RequiredSubject[]> {
     const classSubjects = await this.prisma.classSubject.findMany({
       where: { classLevelCategory: category },
       include: { subject: { include: { childSubjects: true } } },
     });
 
-    const candidates = classSubjects.flatMap((cs) =>
+    return classSubjects.flatMap((cs) =>
       cs.subject.isGroup
-        ? cs.subject.childSubjects.map((child) => ({ ...child, periodsPerWeek: cs.periodsPerWeek }))
-        : [{ ...cs.subject, periodsPerWeek: cs.periodsPerWeek }],
+        ? cs.subject.childSubjects.map((child) => ({
+            id: child.id,
+            requiresCalculation: child.requiresCalculation,
+            periodsPerWeek: cs.periodsPerWeek,
+          }))
+        : [{ id: cs.subject.id, requiresCalculation: cs.subject.requiresCalculation, periodsPerWeek: cs.periodsPerWeek }],
     );
+  }
+
+  private async resolveSubjectsForClassArm(
+    category: ClassLevelCategory,
+    classArmId: string,
+    academicSessionId: string,
+  ): Promise<ResolvedSubject[]> {
+    const candidates = await this.resolveRequiredSubjects(category);
 
     const resolved: ResolvedSubject[] = [];
     for (const subject of candidates) {

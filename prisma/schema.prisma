@@ -74,6 +74,7 @@ model User {
   notificationPreferences          NotificationPreference[]
   auditLogs                        AuditLog[]
   scheduleGenerationRequests       ScheduleGenerationRequest[]
+  approvedExamSchedules            ExamSchedule[]
 
   @@map("users")
 }
@@ -244,6 +245,7 @@ model ClassArm {
   subjectTermResults         SubjectTermResult[]
   attendanceSessions         AttendanceSession[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
+  examSchedules              ExamSchedule[]
 
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
@@ -523,6 +525,7 @@ model Subject {
   reportComments           ReportComment[]
   classSubjectTermStatuses ClassSubjectTermStatus[]
   attendanceSessions       AttendanceSession[]
+  examSchedules            ExamSchedule[]
 
   @@map("subjects")
 }
@@ -739,8 +742,8 @@ enum ClassLevelCategoryGroup {
 // Lets Admin tune the AI generator's rules without a code change; seeded with
 // defaults at `pnpm setup:school` (see setup-school.ts) — PRD §3.8.
 model SchedulingConstraint {
-  id       String        @id @default(uuid())
-  scope    ScheduleScope
+  id                      String                   @id @default(uuid())
+  scope                   ScheduleScope
   // null = applies to the whole scope (e.g. CALCULATION_SUBJECTS_MORNING);
   // set = overrides/defines this key for that group only (e.g. per-group
   // period/break structure, Step 2). A hand-added partial unique index
@@ -806,6 +809,37 @@ model ScheduleGenerationRequest {
   @@map("schedule_generation_requests")
 }
 
+// BUILD_PLAN.md §9 Step 3: one row per (assessmentComponent, classArm,
+// subject) — when that class arm sits that subject's exam. Reuses
+// TimetableGeneratedBy/TimetableApprovalStatus (identical MANUAL|AI /
+// DRAFT|PENDING_REVIEW|APPROVED|REJECTED shape as TimetableSlot) rather than
+// duplicating them. Deliberately no staffId: a subject's own teacher isn't
+// tied to when their students sit the exam — that's invigilation (Step 4), a
+// separate staff pool entirely.
+model ExamSchedule {
+  id                    String                  @id @default(uuid())
+  assessmentComponentId String
+  assessmentComponent   AssessmentComponent     @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
+  classArmId            String
+  classArm              ClassArm                @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId             String
+  subject               Subject                 @relation(fields: [subjectId], references: [id])
+  date                  DateTime                @db.Date
+  startTime             String
+  endTime               String
+  venue                 String?
+  generatedBy           TimetableGeneratedBy    @default(MANUAL)
+  approvalStatus        TimetableApprovalStatus @default(APPROVED)
+  approvedByUserId      String?
+  approvedByUser        User?                   @relation(fields: [approvedByUserId], references: [id])
+  approvedAt            DateTime?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([classArmId, date])
+  @@map("exam_schedules")
+}
+
 // ---------------------------------------------------------------------------
 // 3.6 Assessment & Reporting — components + scoring slice (PRD §3.6;
 // BUILD_PLAN.md §6). Status transitions off the three date fields via a
@@ -854,6 +888,7 @@ model AssessmentComponent {
 
   scoreEntries               ScoreEntry[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
+  examSchedules              ExamSchedule[]
 
   @@unique([termId, classLevelCategory, type, sequence])
   @@map("assessment_components")

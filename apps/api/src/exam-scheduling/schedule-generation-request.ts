@@ -13,7 +13,7 @@ import {
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { randomBytes } from "node:crypto";
-import { ClassLevelCategoryGroup, ScheduleGenerationStatus, ScheduleScope } from "@prisma/client";
+import { AssessmentComponentType, ClassLevelCategoryGroup, ScheduleGenerationStatus, ScheduleScope } from "@prisma/client";
 import { categoryToGroup, QUEUE_NAMES, type SchedulingSolveDispatchJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -98,6 +98,40 @@ export class ScheduleGenerationRequestService {
     }
   }
 
+  /**
+   * BUILD_PLAN.md §9 Step 3: assessmentComponentId must resolve to an EXAM
+   * or MID_TERM component (CA has no exam to schedule), and the
+   * exam-writing date range — which isn't stored anywhere else (PRD's
+   * inputOpensAt/inputClosesAt are score-entry windows, not exam-sitting
+   * dates) — comes from parameters.examStartDate/examEndDate, validated to
+   * fall within that component's own Term.
+   */
+  private async assertValidExamTimetableRequest(dto: CreateScheduleGenerationRequestDto) {
+    if (!dto.assessmentComponentId) {
+      throw new BadRequestException("assessmentComponentId is required for EXAM_TIMETABLE scope");
+    }
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: dto.assessmentComponentId },
+      include: { term: true },
+    });
+    if (component.type !== AssessmentComponentType.EXAM && component.type !== AssessmentComponentType.MID_TERM) {
+      throw new BadRequestException("assessmentComponentId must resolve to an EXAM or MID_TERM component");
+    }
+
+    const parameters = (dto.parameters ?? {}) as Record<string, unknown>;
+    const examStartDate = typeof parameters.examStartDate === "string" ? new Date(parameters.examStartDate) : null;
+    const examEndDate = typeof parameters.examEndDate === "string" ? new Date(parameters.examEndDate) : null;
+    if (!examStartDate || !examEndDate || Number.isNaN(examStartDate.getTime()) || Number.isNaN(examEndDate.getTime())) {
+      throw new BadRequestException("parameters.examStartDate and parameters.examEndDate (YYYY-MM-DD) are required for EXAM_TIMETABLE scope");
+    }
+    if (examStartDate > examEndDate) {
+      throw new BadRequestException("parameters.examStartDate must be on or before examEndDate");
+    }
+    if (examStartDate < component.term.startDate || examEndDate > component.term.endDate) {
+      throw new BadRequestException("The exam period must fall within the assessment component's term");
+    }
+  }
+
   async create(dto: CreateScheduleGenerationRequestDto, user: RequestUser) {
     // BUILD_PLAN.md §9 Step 2: TimetableSlot is already term-scoped (matching
     // manual CRUD), so a CLASS_TIMETABLE run generates exactly one term's
@@ -107,6 +141,9 @@ export class ScheduleGenerationRequestService {
     // not a schema-level requirement.
     if (dto.scope === "CLASS_TIMETABLE" && !dto.termId) {
       throw new BadRequestException("termId is required for CLASS_TIMETABLE scope");
+    }
+    if (dto.scope === "EXAM_TIMETABLE") {
+      await this.assertValidExamTimetableRequest(dto);
     }
 
     await this.assertCanTrigger(user, dto);

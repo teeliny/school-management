@@ -104,9 +104,84 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   { scope: "EXAM_TIMETABLE", key: "CALCULATION_SUBJECTS_MORNING", value: true },
   { scope: "EXAM_TIMETABLE", key: "SPREAD_CALCULATION_SUBJECTS", value: true },
   { scope: "EXAM_TIMETABLE", key: "MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS", value: 1 },
-  { scope: "EXAM_TIMETABLE", key: "MID_TERM_MAX_SUBJECTS_PER_DAY", value: 2 },
-  { scope: "EXAM_TIMETABLE", key: "MID_TERM_CALCULATION_SUBJECT_DURATION_MINUTES", value: 90 },
-  { scope: "EXAM_TIMETABLE", key: "MID_TERM_NON_CALCULATION_SUBJECT_DURATION_MINUTES", value: 60 },
+
+  // BUILD_PLAN.md §9 Step 3: duration/capacity keys, re-scoped per group
+  // (from Step 1's global seeding) for the same "varies by how young the
+  // students are" reasoning as Step 2's period structure. EXAM_* mirrors the
+  // MID_TERM_* trio — PRD only specifies the calc/non-calc duration split
+  // for MID_TERM (FR6.3a); reused identically for the plain EXAM type per
+  // the Step 3 design decision, since PRD leaves EXAM-type duration/capacity
+  // completely undefined otherwise.
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "EXAM_DAY_START_TIME", value: "09:00" },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "MID_TERM_MAX_SUBJECTS_PER_DAY", value: 2 },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "JSS_SSS",
+    key: "MID_TERM_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 90,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "JSS_SSS",
+    key: "MID_TERM_NON_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 60,
+  },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "EXAM_MAX_SUBJECTS_PER_DAY", value: 2 },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "JSS_SSS",
+    key: "EXAM_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 120,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "JSS_SSS",
+    key: "EXAM_NON_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 90,
+  },
+
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "EXAM_DAY_START_TIME",
+    value: "09:00",
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "MID_TERM_MAX_SUBJECTS_PER_DAY",
+    value: 1,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "MID_TERM_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 60,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "MID_TERM_NON_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 45,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "EXAM_MAX_SUBJECTS_PER_DAY",
+    value: 1,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "EXAM_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 60,
+  },
+  {
+    scope: "EXAM_TIMETABLE",
+    classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY",
+    key: "EXAM_NON_CALCULATION_SUBJECT_DURATION_MINUTES",
+    value: 45,
+  },
 
   { scope: "INVIGILATION", key: "MAX_INVIGILATIONS_PER_STAFF_PER_DAY", value: 2 },
   {

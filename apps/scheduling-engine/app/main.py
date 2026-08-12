@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.class_timetable import GroupPayload, solve_class_timetable
+from app.exam_timetable import ExamClassArmPayload, solve_exam_timetable
 
 
 class HealthResponse(BaseModel):
@@ -21,8 +22,7 @@ class SolveRequest(BaseModel):
     scope: str | None = None
 
     # Generic shape (BUILD_PLAN.md §9 Step 1) — used by every scope that
-    # doesn't yet have real solver logic (EXAM_TIMETABLE/INVIGILATION/
-    # WEEKLY_DUTY, Steps 3-5).
+    # doesn't yet have real solver logic (INVIGILATION/WEEKLY_DUTY, Steps 4-5).
     constraints: list[dict[str, Any]] = []
     parameters: dict[str, Any] = {}
 
@@ -30,6 +30,15 @@ class SolveRequest(BaseModel):
     calculationSubjectsMorning: bool = True
     spreadCalculationSubjects: bool = True
     groups: list[GroupPayload] = []
+
+    # EXAM_TIMETABLE-specific shape (BUILD_PLAN.md §9 Step 3).
+    days: list[str] = []
+    examDayStartTime: str = "09:00"
+    maxSubjectsPerDay: int = 2
+    calculationSubjectDurationMinutes: int = 90
+    nonCalculationSubjectDurationMinutes: int = 60
+    minGapBetweenCalculationExamsDays: int = 1
+    classArms: list[ExamClassArmPayload] = []
 
 
 class SolveAccepted(BaseModel):
@@ -66,9 +75,10 @@ def health() -> HealthResponse:
 
 async def _solve_and_callback(payload: SolveRequest) -> None:
     """
-    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2) runs the real CP-SAT model.
-    Every other scope still gets Step 1's stub behavior — an immediate
-    empty-result callback — until its own step lands (Steps 3-5).
+    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2) and EXAM_TIMETABLE (Step 3)
+    run real CP-SAT models. Every other scope still gets Step 1's stub
+    behavior — an immediate empty-result callback — until its own step
+    lands (Steps 4-5).
     """
     if payload.scope == "CLASS_TIMETABLE":
         body: dict[str, Any] = solve_class_timetable(
@@ -77,6 +87,19 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             calculation_subjects_morning=payload.calculationSubjectsMorning,
             spread_calculation_subjects=payload.spreadCalculationSubjects,
             groups=payload.groups,
+        )
+    elif payload.scope == "EXAM_TIMETABLE":
+        body = solve_exam_timetable(
+            request_id=payload.requestId,
+            callback_token=payload.callbackToken,
+            days=payload.days,
+            exam_day_start_time=payload.examDayStartTime,
+            max_subjects_per_day=payload.maxSubjectsPerDay,
+            calculation_subject_duration_minutes=payload.calculationSubjectDurationMinutes,
+            non_calculation_subject_duration_minutes=payload.nonCalculationSubjectDurationMinutes,
+            spread_calculation_subjects=payload.spreadCalculationSubjects,
+            min_gap_between_calculation_exams_days=payload.minGapBetweenCalculationExamsDays,
+            class_arms=payload.classArms,
         )
     else:
         body = {
