@@ -139,6 +139,60 @@ export class ScheduleGenerationRequestService {
   }
 
   /**
+   * BUILD_PLAN.md §9 Step 5: resolves the target ClassLevelCategoryGroup(s)
+   * for a WEEKLY_DUTY request — dto.classLevelCategoryGroup if set (always
+   * true for a Principal/Headteacher trigger, enforced by assertCanTrigger),
+   * otherwise both groups (a Super-Admin/Registrar combined run, FR6.11).
+   */
+  private resolveWeeklyDutyTargetGroups(dto: CreateScheduleGenerationRequestDto): ClassLevelCategoryGroup[] {
+    return dto.classLevelCategoryGroup
+      ? [dto.classLevelCategoryGroup]
+      : [ClassLevelCategoryGroup.JSS_SSS, ClassLevelCategoryGroup.CRECHE_NURSERY_PRIMARY];
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 5: termId's Term must exist (required earlier in
+   * create()); every target group is checked for a pre-existing, non-
+   * REJECTED DutyAssignment row already covering one of that term's weeks —
+   * DutyAssignment has no per-row conflict check the way TimetableSlot/
+   * ExamSchedule/InvigilationAssignment do (no overlap concept, just whole
+   * weeks), so a second run against an already-rostered term/group is
+   * rejected outright here instead, rather than silently double-staffing
+   * every week. parameters.teachersPerWeek, if supplied, must be a positive
+   * integer (falls back to the seeded TEACHERS_PER_WEEK default otherwise).
+   */
+  private async assertValidWeeklyDutyRequest(dto: CreateScheduleGenerationRequestDto) {
+    if (!dto.termId) {
+      throw new BadRequestException("termId is required for WEEKLY_DUTY scope");
+    }
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: dto.termId } });
+
+    const targetGroups = this.resolveWeeklyDutyTargetGroups(dto);
+    const existing = await this.prisma.dutyAssignment.findFirst({
+      where: {
+        classLevelCategoryGroup: { in: targetGroups },
+        weekStartDate: { gte: term.startDate, lte: term.endDate },
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        `A duty roster already exists for this term and ${existing.classLevelCategoryGroup} group — reject the existing rows first if you want to regenerate`,
+      );
+    }
+
+    const parameters = (dto.parameters ?? {}) as Record<string, unknown>;
+    if (
+      parameters.teachersPerWeek !== undefined &&
+      (typeof parameters.teachersPerWeek !== "number" ||
+        !Number.isInteger(parameters.teachersPerWeek) ||
+        parameters.teachersPerWeek < 1)
+    ) {
+      throw new BadRequestException("parameters.teachersPerWeek must be a positive integer");
+    }
+  }
+
+  /**
    * BUILD_PLAN.md §9 Step 4: assessmentComponentId must resolve to an EXAM
    * or MID_TERM component (same reuse of EXAM_TIMETABLE's FK, confirmed by
    * PRD §3.8), and — per the approval-order decision made for this step —
@@ -184,6 +238,9 @@ export class ScheduleGenerationRequestService {
     }
     if (dto.scope === "INVIGILATION") {
       await this.assertValidInvigilationRequest(dto);
+    }
+    if (dto.scope === "WEEKLY_DUTY") {
+      await this.assertValidWeeklyDutyRequest(dto);
     }
 
     await this.assertCanTrigger(user, dto);

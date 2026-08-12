@@ -77,6 +77,15 @@ interface StaffExistingLoad {
   blockedRanges: { date: string; startTime: string; endTime: string }[];
 }
 
+interface WeeklyDutyGroupPayload {
+  classLevelCategoryGroup: ClassLevelCategoryGroup;
+  weeks: string[];
+  teachersPerWeek: number;
+  minWeeksBetweenRepeatDuty: number;
+  eligibleStaffIds: string[];
+  recentDutyByStaff: Record<string, string>;
+}
+
 /**
  * ARCHITECTURE.md §9: hands a solve request to the scheduling-engine and
  * flips the tracking row to SOLVING. `CLASS_TIMETABLE` (BUILD_PLAN.md §9
@@ -120,7 +129,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           ? await this.buildExamTimetablePayload(request, callbackUrl)
           : request.scope === ScheduleScope.INVIGILATION
             ? await this.buildInvigilationPayload(request, callbackUrl)
-            : await this.buildGenericPayload(request, callbackUrl);
+            : request.scope === ScheduleScope.WEEKLY_DUTY
+              ? await this.buildWeeklyDutyPayload(request, callbackUrl)
+              : await this.buildGenericPayload(request, callbackUrl);
 
     const response = await fetch(`${engineUrl}/solve`, {
       method: "POST",
@@ -535,6 +546,164 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       entry.blockedRanges.push({ date: dateKey, startTime: row.examSchedule.startTime, endTime: row.examSchedule.endTime });
     }
     return summary;
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 5: unlike CLASS_TIMETABLE/EXAM_TIMETABLE (arm- or
+   * category-scoped) and INVIGILATION (one flat combined payload), a
+   * WEEKLY_DUTY run may cover one or both ClassLevelCategoryGroups at once
+   * (a Super-Admin/Registrar combined run, FR6.11) — solved independently
+   * per group since the two groups' staff pools are always disjoint (a
+   * teacher's own class-arm assignments fix their group), same per-group
+   * `groups[]` shape as Step 2's CLASS_TIMETABLE payload.
+   */
+  private async buildWeeklyDutyPayload(
+    request: {
+      id: string;
+      termId: string | null;
+      classLevelCategoryGroup: ClassLevelCategoryGroup | null;
+      parameters: unknown;
+      callbackToken: string;
+    },
+    callbackUrl: string,
+  ) {
+    if (!request.termId) throw new Error(`WEEKLY_DUTY request ${request.id} is missing termId`);
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: request.termId } });
+
+    const targetGroups: ClassLevelCategoryGroup[] = request.classLevelCategoryGroup
+      ? [request.classLevelCategoryGroup]
+      : ["JSS_SSS", "CRECHE_NURSERY_PRIMARY"];
+
+    const globalConstraints = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.WEEKLY_DUTY, classLevelCategoryGroup: null, isActive: true },
+    });
+    const defaultTeachersPerWeek = Number(globalConstraints.find((c) => c.key === "TEACHERS_PER_WEEK")?.value ?? 3);
+    const minWeeksBetweenRepeatDuty = Number(
+      globalConstraints.find((c) => c.key === "MIN_WEEKS_BETWEEN_REPEAT_DUTY")?.value ?? 4,
+    );
+    const excludedTypes =
+      (globalConstraints.find((c) => c.key === "EXCLUDED_DUTY_ASSIGNMENT_TYPES")?.value as string[] | undefined) ?? [];
+
+    const parameters = (request.parameters ?? {}) as { teachersPerWeek?: number };
+    const teachersPerWeek = parameters.teachersPerWeek ?? defaultTeachersPerWeek;
+
+    const weeks = this.resolveWeekStartDates(term.startDate, term.endDate);
+    const firstWeek = weeks[0];
+
+    const groups: WeeklyDutyGroupPayload[] = [];
+    for (const group of targetGroups) {
+      const eligibleStaffIds = await this.resolveEligibleDutyStaffIds(group, excludedTypes);
+      const recentDutyByStaff = firstWeek
+        ? await this.resolveRecentDutyByStaff(eligibleStaffIds, group, firstWeek, minWeeksBetweenRepeatDuty)
+        : {};
+      groups.push({
+        classLevelCategoryGroup: group,
+        weeks,
+        teachersPerWeek,
+        minWeeksBetweenRepeatDuty,
+        eligibleStaffIds,
+        recentDutyByStaff,
+      });
+    }
+
+    return {
+      requestId: request.id,
+      scope: ScheduleScope.WEEKLY_DUTY,
+      // "dutyGroups", not "groups" — CLASS_TIMETABLE's payload already owns
+      // the "groups" field name on the shared SolveRequest Pydantic model
+      // with a different element shape (GroupPayload vs WeeklyDutyGroupPayload).
+      dutyGroups: groups,
+      callbackUrl,
+      callbackToken: request.callbackToken,
+    };
+  }
+
+  /**
+   * Every Monday-anchored week overlapping [start, end]: floor `start` to
+   * that week's Monday, then step +7 days while the Monday is still <= end
+   * — as "YYYY-MM-DD" strings, same UTC-anchored date arithmetic as
+   * `resolveWeekdayDates`.
+   */
+  private resolveWeekStartDates(start: Date, end: Date): string[] {
+    const startUtc = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+    // getUTCDay(): 0=Sunday..6=Saturday. ISO week starts Monday (1); Sunday
+    // needs a 6-day rewind, every other day rewinds (day - 1).
+    const day = startUtc.getUTCDay();
+    const rewindDays = day === 0 ? 6 : day - 1;
+    startUtc.setUTCDate(startUtc.getUTCDate() - rewindDays);
+
+    const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+    const weeks: string[] = [];
+    const cursor = new Date(startUtc);
+    while (cursor.getTime() <= endUtc) {
+      weeks.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 7);
+    }
+    return weeks;
+  }
+
+  /**
+   * FR6.11's stricter pool (unlike invigilation's optional
+   * includeNonTeachingStaff toggle): always active CLASS_TEACHER/
+   * SUBJECT_TEACHER StaffAssignment holders, scoped to this group via their
+   * classArm's ClassLevel.category, minus EXCLUDED_DUTY_ASSIGNMENT_TYPES.
+   */
+  private async resolveEligibleDutyStaffIds(group: ClassLevelCategoryGroup, excludedTypes: string[]): Promise<string[]> {
+    const categories: ClassLevelCategory[] = group === "JSS_SSS" ? ["JSS", "SSS"] : ["CRECHE", "NURSERY", "PRIMARY"];
+
+    const excludedStaffIds = new Set(
+      (
+        await this.prisma.staffAssignment.findMany({
+          where: { assignmentType: { in: excludedTypes as AssignmentType[] }, isActive: true },
+          select: { staffId: true },
+        })
+      ).map((a) => a.staffId),
+    );
+
+    const teachingAssignments = await this.prisma.staffAssignment.findMany({
+      where: {
+        assignmentType: { in: [AssignmentType.CLASS_TEACHER, AssignmentType.SUBJECT_TEACHER] },
+        isActive: true,
+        classArm: { classLevel: { category: { in: categories } } },
+      },
+      select: { staffId: true },
+    });
+    const teachingStaffIds = new Set(teachingAssignments.map((a) => a.staffId));
+    return [...teachingStaffIds].filter((id) => !excludedStaffIds.has(id));
+  }
+
+  /**
+   * Each eligible staff member's most recent pre-term DutyAssignment (any
+   * non-REJECTED status) within `minWeeksBetweenRepeatDuty` weeks before the
+   * term's first generated week — seeds the solver's gap-violation check for
+   * the term's opening weeks so a staff member on duty the last week of the
+   * previous term isn't immediately reassigned in week 1.
+   */
+  private async resolveRecentDutyByStaff(
+    staffIds: string[],
+    group: ClassLevelCategoryGroup,
+    firstWeek: string,
+    minWeeksBetweenRepeatDuty: number,
+  ): Promise<Record<string, string>> {
+    const lookbackFrom = new Date(firstWeek);
+    lookbackFrom.setUTCDate(lookbackFrom.getUTCDate() - minWeeksBetweenRepeatDuty * 7);
+
+    const rows = await this.prisma.dutyAssignment.findMany({
+      where: {
+        staffId: { in: staffIds },
+        classLevelCategoryGroup: group,
+        weekStartDate: { gte: lookbackFrom, lt: new Date(firstWeek) },
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
+      orderBy: { weekStartDate: "desc" },
+    });
+
+    const recent: Record<string, string> = {};
+    for (const row of rows) {
+      if (recent[row.staffId]) continue; // rows are DESC-ordered, so the first hit per staff is their most recent
+      recent[row.staffId] = row.weekStartDate.toISOString().slice(0, 10);
+    }
+    return recent;
   }
 
   /**

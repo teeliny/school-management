@@ -1,6 +1,7 @@
 import { Body, Controller, Logger, Param, Post, UnauthorizedException } from "@nestjs/common";
 import { timingSafeEqual } from "node:crypto";
 import {
+  ClassLevelCategoryGroup,
   DayOfWeek,
   InvigilationRole,
   ScheduleGenerationStatus,
@@ -38,10 +39,20 @@ interface InvigilationGeneratedRow {
   role: string;
 }
 
+interface WeeklyDutyGeneratedRow {
+  classLevelCategoryGroup: string;
+  weekStartDate: string;
+  staffId: string;
+}
+
 interface SchedulingCallbackBody {
   callbackToken: string;
   result?: {
-    generatedRows?: ClassTimetableGeneratedRow[] | ExamTimetableGeneratedRow[] | InvigilationGeneratedRow[];
+    generatedRows?:
+      | ClassTimetableGeneratedRow[]
+      | ExamTimetableGeneratedRow[]
+      | InvigilationGeneratedRow[]
+      | WeeklyDutyGeneratedRow[];
   };
   error?: string;
 }
@@ -60,6 +71,10 @@ function isDayOfWeek(value: string): value is DayOfWeek {
 
 function isInvigilationRole(value: string): value is InvigilationRole {
   return value === InvigilationRole.LEAD || value === InvigilationRole.ASSISTANT;
+}
+
+function isClassLevelCategoryGroup(value: string): value is ClassLevelCategoryGroup {
+  return value === ClassLevelCategoryGroup.JSS_SSS || value === ClassLevelCategoryGroup.CRECHE_NURSERY_PRIMARY;
 }
 
 /**
@@ -110,6 +125,9 @@ export class SchedulingCallbackController {
     }
     if (request.scope === ScheduleScope.INVIGILATION) {
       await this.persistInvigilationRows((body.result?.generatedRows ?? []) as InvigilationGeneratedRow[]);
+    }
+    if (request.scope === ScheduleScope.WEEKLY_DUTY) {
+      await this.persistWeeklyDutyRows((body.result?.generatedRows ?? []) as WeeklyDutyGeneratedRow[]);
     }
 
     await this.prisma.scheduleGenerationRequest.update({
@@ -252,6 +270,46 @@ export class SchedulingCallbackController {
             examScheduleId: row.examScheduleId,
             staffId: row.staffId,
             role: row.role,
+            generatedBy: TimetableGeneratedBy.AI,
+            approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 5: persists the solver's result as
+   * `DutyAssignment` rows (`generatedBy=AI, approvalStatus=PENDING_REVIEW`,
+   * same not-visible-until-approved shape as Steps 2-4). No dedicated
+   * conflict-check service here — unlike TimetableSlot/ExamSchedule/
+   * InvigilationAssignment, a duty row has no overlap concept to check
+   * per-row; the re-trigger guard in `assertValidWeeklyDutyRequest`
+   * (schedule-generation-request.ts) already rejects triggering generation
+   * against a term/group that's already rostered, and the DB's
+   * `@@unique([weekStartDate, classLevelCategoryGroup, staffId])` is the
+   * final backstop against a duplicate row within one run.
+   */
+  private async persistWeeklyDutyRows(rows: WeeklyDutyGeneratedRow[]) {
+    if (rows.length === 0) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        if (!isClassLevelCategoryGroup(row.classLevelCategoryGroup)) {
+          this.logger.warn(`Dropping generated row with unrecognized classLevelCategoryGroup "${row.classLevelCategoryGroup}"`);
+          continue;
+        }
+        const weekStartDate = new Date(row.weekStartDate);
+        if (Number.isNaN(weekStartDate.getTime())) {
+          this.logger.warn(`Dropping generated row with unparseable weekStartDate "${row.weekStartDate}"`);
+          continue;
+        }
+
+        await tx.dutyAssignment.create({
+          data: {
+            classLevelCategoryGroup: row.classLevelCategoryGroup,
+            weekStartDate,
+            staffId: row.staffId,
             generatedBy: TimetableGeneratedBy.AI,
             approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
           },

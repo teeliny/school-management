@@ -76,6 +76,7 @@ model User {
   scheduleGenerationRequests       ScheduleGenerationRequest[]
   approvedExamSchedules            ExamSchedule[]
   approvedInvigilationAssignments  InvigilationAssignment[]
+  approvedDutyAssignments          DutyAssignment[]
 
   @@map("users")
 }
@@ -338,6 +339,7 @@ model StaffProfile {
   paymentsRecorded        Payment[]
   discountRequestsRaised  DiscountRequest[]
   invigilationAssignments InvigilationAssignment[]
+  dutyAssignments         DutyAssignment[]
 
   @@map("staff_profiles")
 }
@@ -872,6 +874,33 @@ model InvigilationAssignment {
   @@unique([examScheduleId, role])
   @@index([staffId])
   @@map("invigilation_assignments")
+}
+
+// BUILD_PLAN.md §9 Step 5: one row per (staff, week) pairing — general
+// weekly supervision duty (gate/assembly/break duty), a rotation distinct
+// from exam invigilation (PRD §3.8/FR6.11). No duty-type/role field and no
+// direct Term FK, matching PRD's field list exactly — term association is
+// derived by weekStartDate falling within a Term's date range, not stored
+// directly. @@unique is a plain composite index (all three columns always
+// non-null) — no hand-added partial-index SQL needed, unlike
+// SchedulingConstraint's null-group case.
+model DutyAssignment {
+  id                      String                  @id @default(uuid())
+  weekStartDate           DateTime                @db.Date
+  classLevelCategoryGroup ClassLevelCategoryGroup
+  staffId                 String
+  staff                   StaffProfile            @relation(fields: [staffId], references: [id])
+  generatedBy             TimetableGeneratedBy    @default(MANUAL)
+  approvalStatus          TimetableApprovalStatus @default(APPROVED)
+  approvedByUserId        String?
+  approvedByUser          User?                   @relation(fields: [approvedByUserId], references: [id])
+  approvedAt              DateTime?
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  @@unique([weekStartDate, classLevelCategoryGroup, staffId])
+  @@index([staffId])
+  @@map("duty_assignments")
 }
 
 // ---------------------------------------------------------------------------

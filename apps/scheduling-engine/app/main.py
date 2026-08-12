@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.class_timetable import GroupPayload, solve_class_timetable
 from app.exam_timetable import ExamClassArmPayload, solve_exam_timetable
 from app.invigilation import InvigilationExamPayload, StaffExistingLoadPayload, solve_invigilation
+from app.weekly_duty import WeeklyDutyGroupPayload, solve_weekly_duty
 
 
 class HealthResponse(BaseModel):
@@ -23,7 +24,7 @@ class SolveRequest(BaseModel):
     scope: str | None = None
 
     # Generic shape (BUILD_PLAN.md §9 Step 1) — used by every scope that
-    # doesn't yet have real solver logic (WEEKLY_DUTY, Step 5).
+    # doesn't yet have real solver logic.
     constraints: list[dict[str, Any]] = []
     parameters: dict[str, Any] = {}
 
@@ -47,6 +48,11 @@ class SolveRequest(BaseModel):
     exams: list[InvigilationExamPayload] = []
     eligibleStaffIds: list[str] = []
     existingLoad: dict[str, StaffExistingLoadPayload] = {}
+
+    # WEEKLY_DUTY-specific shape (BUILD_PLAN.md §9 Step 5). Named
+    # "dutyGroups", not "groups" — CLASS_TIMETABLE's "groups" field above
+    # already has a different element shape (GroupPayload).
+    dutyGroups: list[WeeklyDutyGroupPayload] = []
 
 
 class SolveAccepted(BaseModel):
@@ -83,10 +89,10 @@ def health() -> HealthResponse:
 
 async def _solve_and_callback(payload: SolveRequest) -> None:
     """
-    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2), EXAM_TIMETABLE (Step 3), and
-    INVIGILATION (Step 4) run real CP-SAT models. Every other scope still
-    gets Step 1's stub behavior — an immediate empty-result callback — until
-    its own step lands (WEEKLY_DUTY, Step 5).
+    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2), EXAM_TIMETABLE (Step 3),
+    INVIGILATION (Step 4), and WEEKLY_DUTY (Step 5) all run real CP-SAT
+    models. Any future scope still gets Step 1's stub behavior — an
+    immediate empty-result callback — until its own step lands.
     """
     if payload.scope == "CLASS_TIMETABLE":
         body: dict[str, Any] = solve_class_timetable(
@@ -118,6 +124,12 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             exams=payload.exams,
             eligible_staff_ids=payload.eligibleStaffIds,
             existing_load=payload.existingLoad,
+        )
+    elif payload.scope == "WEEKLY_DUTY":
+        body = solve_weekly_duty(
+            request_id=payload.requestId,
+            callback_token=payload.callbackToken,
+            groups=payload.dutyGroups,
         )
     else:
         body = {
