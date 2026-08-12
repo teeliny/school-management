@@ -1,11 +1,19 @@
 import { Body, Controller, Logger, Param, Post, UnauthorizedException } from "@nestjs/common";
 import { timingSafeEqual } from "node:crypto";
-import { DayOfWeek, ScheduleGenerationStatus, ScheduleScope, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
+import {
+  DayOfWeek,
+  InvigilationRole,
+  ScheduleGenerationStatus,
+  ScheduleScope,
+  TimetableApprovalStatus,
+  TimetableGeneratedBy,
+} from "@prisma/client";
 import { DAYS_OF_WEEK } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationService } from "../notifications/notification";
 import { TimetableSlotService } from "../timetable/timetable-slot";
 import { ExamScheduleService } from "./exam-schedule";
+import { InvigilationAssignmentService } from "./invigilation-assignment";
 
 interface ClassTimetableGeneratedRow {
   classArmId: string;
@@ -24,9 +32,17 @@ interface ExamTimetableGeneratedRow {
   endTime: string;
 }
 
+interface InvigilationGeneratedRow {
+  examScheduleId: string;
+  staffId: string;
+  role: string;
+}
+
 interface SchedulingCallbackBody {
   callbackToken: string;
-  result?: { generatedRows?: ClassTimetableGeneratedRow[] | ExamTimetableGeneratedRow[] };
+  result?: {
+    generatedRows?: ClassTimetableGeneratedRow[] | ExamTimetableGeneratedRow[] | InvigilationGeneratedRow[];
+  };
   error?: string;
 }
 
@@ -40,6 +56,10 @@ function tokensMatch(a: string, b: string): boolean {
 
 function isDayOfWeek(value: string): value is DayOfWeek {
   return (DAYS_OF_WEEK as string[]).includes(value);
+}
+
+function isInvigilationRole(value: string): value is InvigilationRole {
+  return value === InvigilationRole.LEAD || value === InvigilationRole.ASSISTANT;
 }
 
 /**
@@ -57,6 +77,7 @@ export class SchedulingCallbackController {
     private readonly notifications: NotificationService,
     private readonly timetableSlots: TimetableSlotService,
     private readonly examSchedules: ExamScheduleService,
+    private readonly invigilationAssignments: InvigilationAssignmentService,
   ) {}
 
   @Post(":requestId")
@@ -86,6 +107,9 @@ export class SchedulingCallbackController {
         request.assessmentComponentId,
         (body.result?.generatedRows ?? []) as ExamTimetableGeneratedRow[],
       );
+    }
+    if (request.scope === ScheduleScope.INVIGILATION) {
+      await this.persistInvigilationRows((body.result?.generatedRows ?? []) as InvigilationGeneratedRow[]);
     }
 
     await this.prisma.scheduleGenerationRequest.update({
@@ -195,6 +219,39 @@ export class SchedulingCallbackController {
             startTime: row.startTime,
             endTime: row.endTime,
             venue: null,
+            generatedBy: TimetableGeneratedBy.AI,
+            approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+          },
+        });
+      }
+    });
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 4: persists the solver's result as
+   * `InvigilationAssignment` rows (`generatedBy=AI, approvalStatus=
+   * PENDING_REVIEW`, same not-visible-until-approved shape as Steps 2/3).
+   * Reuses `InvigilationAssignmentService.assertNoConflicts` per row inside
+   * a single transaction — same belt-and-suspenders pattern, checking the
+   * staff member isn't already invigilating an overlapping exam.
+   */
+  private async persistInvigilationRows(rows: InvigilationGeneratedRow[]) {
+    if (rows.length === 0) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        if (!isInvigilationRole(row.role)) {
+          this.logger.warn(`Dropping generated row with unrecognized role "${row.role}"`);
+          continue;
+        }
+
+        await this.invigilationAssignments.assertNoConflicts(row.staffId, row.examScheduleId, tx);
+
+        await tx.invigilationAssignment.create({
+          data: {
+            examScheduleId: row.examScheduleId,
+            staffId: row.staffId,
+            role: row.role,
             generatedBy: TimetableGeneratedBy.AI,
             approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
           },

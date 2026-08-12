@@ -75,6 +75,7 @@ model User {
   auditLogs                        AuditLog[]
   scheduleGenerationRequests       ScheduleGenerationRequest[]
   approvedExamSchedules            ExamSchedule[]
+  approvedInvigilationAssignments  InvigilationAssignment[]
 
   @@map("users")
 }
@@ -336,6 +337,7 @@ model StaffProfile {
   attendanceSessionsTaken AttendanceSession[]
   paymentsRecorded        Payment[]
   discountRequestsRaised  DiscountRequest[]
+  invigilationAssignments InvigilationAssignment[]
 
   @@map("staff_profiles")
 }
@@ -836,8 +838,40 @@ model ExamSchedule {
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
 
+  invigilationAssignments InvigilationAssignment[]
+
   @@index([classArmId, date])
   @@map("exam_schedules")
+}
+
+enum InvigilationRole {
+  LEAD
+  ASSISTANT
+}
+
+// BUILD_PLAN.md §9 Step 4: one row per (examSchedule, staff) pairing — who
+// invigilates a given exam sitting. Fixed at exactly one LEAD + one
+// ASSISTANT per ExamSchedule (the @@unique below enforces it) — the only
+// signal in PRD is the two-value role enum itself; no hall-capacity field
+// exists anywhere in this codebase to scale an ASSISTANT count by.
+model InvigilationAssignment {
+  id               String                  @id @default(uuid())
+  examScheduleId   String
+  examSchedule     ExamSchedule            @relation(fields: [examScheduleId], references: [id], onDelete: Cascade)
+  staffId          String
+  staff            StaffProfile            @relation(fields: [staffId], references: [id])
+  role             InvigilationRole
+  generatedBy      TimetableGeneratedBy    @default(MANUAL)
+  approvalStatus   TimetableApprovalStatus @default(APPROVED)
+  approvedByUserId String?
+  approvedByUser   User?                   @relation(fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  @@unique([examScheduleId, role])
+  @@index([staffId])
+  @@map("invigilation_assignments")
 }
 
 // ---------------------------------------------------------------------------

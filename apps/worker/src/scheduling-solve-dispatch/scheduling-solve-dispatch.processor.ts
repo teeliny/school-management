@@ -4,10 +4,12 @@ import { Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
 import {
   AssessmentComponentType,
+  AssignmentType,
   ClassLevelCategory,
   Role,
   ScheduleGenerationStatus,
   ScheduleScope,
+  StaffStatus,
   TimetableApprovalStatus,
 } from "@prisma/client";
 import {
@@ -61,6 +63,20 @@ interface ExamClassArmPayload {
   existingByDate: Record<string, { count: number; hasCalc: boolean }>;
 }
 
+interface InvigilationExamPayload {
+  examScheduleId: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  ownSubjectTeacherStaffId: string | null;
+}
+
+interface StaffExistingLoad {
+  totalCount: number;
+  countByDate: Record<string, number>;
+  blockedRanges: { date: string; startTime: string; endTime: string }[];
+}
+
 /**
  * ARCHITECTURE.md §9: hands a solve request to the scheduling-engine and
  * flips the tracking row to SOLVING. `CLASS_TIMETABLE` (BUILD_PLAN.md §9
@@ -102,7 +118,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         ? await this.buildClassTimetablePayload(request, callbackUrl)
         : request.scope === ScheduleScope.EXAM_TIMETABLE
           ? await this.buildExamTimetablePayload(request, callbackUrl)
-          : await this.buildGenericPayload(request, callbackUrl);
+          : request.scope === ScheduleScope.INVIGILATION
+            ? await this.buildInvigilationPayload(request, callbackUrl)
+            : await this.buildGenericPayload(request, callbackUrl);
 
     const response = await fetch(`${engineUrl}/solve`, {
       method: "POST",
@@ -356,6 +374,165 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       const entry = (byDate[dateKey] ??= { count: 0, hasCalc: false });
       entry.count += 1;
       if (row.subject.requiresCalculation) entry.hasCalc = true;
+    }
+    return summary;
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 4: unlike EXAM_TIMETABLE (independent per class
+   * arm), staff are a shared, scarce resource across arms here — so this
+   * builds ONE flat payload covering every target `ExamSchedule` row at
+   * once, not grouped/independent. The trigger endpoint already enforced
+   * that every matching `ExamSchedule` is `APPROVED` (the approval-order
+   * decision for this step) — re-filtered here defensively rather than
+   * trusted from the job payload, same "don't trust upstream" precedent as
+   * every other branch.
+   */
+  private async buildInvigilationPayload(
+    request: {
+      id: string;
+      assessmentComponentId: string | null;
+      classArmId: string | null;
+      parameters: unknown;
+      callbackToken: string;
+    },
+    callbackUrl: string,
+  ) {
+    if (!request.assessmentComponentId) throw new Error(`INVIGILATION request ${request.id} is missing assessmentComponentId`);
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: request.assessmentComponentId },
+      include: { term: true },
+    });
+
+    const examSchedules = await this.prisma.examSchedule.findMany({
+      where: {
+        assessmentComponentId: request.assessmentComponentId,
+        classArmId: request.classArmId ?? undefined,
+        approvalStatus: TimetableApprovalStatus.APPROVED,
+      },
+    });
+
+    const globalConstraints = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.INVIGILATION, classLevelCategoryGroup: null, isActive: true },
+    });
+    const maxInvigilationsPerStaffPerDay = Number(
+      globalConstraints.find((c) => c.key === "MAX_INVIGILATIONS_PER_STAFF_PER_DAY")?.value ?? 2,
+    );
+    const excludedTypes =
+      (globalConstraints.find((c) => c.key === "EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES")?.value as string[] | undefined) ?? [];
+
+    const parameters = (request.parameters ?? {}) as { includeNonTeachingStaff?: boolean };
+    const eligibleStaffIds = await this.resolveEligibleInvigilatorIds(parameters.includeNonTeachingStaff === true, excludedTypes);
+
+    // FR6.4: hard-exclude for JSS/SSS runs, soft preference only for
+    // CRECHE/NURSERY/PRIMARY — derived once for the whole run from the
+    // component's own classLevelCategory, since a run always targets one
+    // component (one fixed category).
+    const hardExcludeOwnSubjectTeacher = categoryToGroup(component.classLevelCategory) === "JSS_SSS";
+
+    const exams: InvigilationExamPayload[] = [];
+    for (const es of examSchedules) {
+      const ownSubjectTeacherStaffId = await this.resolveOwnSubjectTeacher(
+        es.subjectId,
+        es.classArmId,
+        component.term.academicSessionId,
+      );
+      exams.push({
+        examScheduleId: es.id,
+        date: es.date.toISOString().slice(0, 10),
+        startTime: es.startTime,
+        endTime: es.endTime,
+        ownSubjectTeacherStaffId,
+      });
+    }
+
+    const existingLoad = await this.resolveExistingInvigilationLoad(eligibleStaffIds);
+
+    return {
+      requestId: request.id,
+      scope: ScheduleScope.INVIGILATION,
+      maxInvigilationsPerStaffPerDay,
+      hardExcludeOwnSubjectTeacher,
+      exams,
+      eligibleStaffIds,
+      existingLoad,
+      callbackUrl,
+      callbackToken: request.callbackToken,
+    };
+  }
+
+  /**
+   * FR6.4: "the pool of active staff" minus the named exclusions — no
+   * StaffCategory restriction stated in PRD. Per your Step 4 decision, the
+   * teaching-only-vs-everyone choice is a run-time toggle
+   * (`parameters.includeNonTeachingStaff`, default false/teaching-only,
+   * mirroring FR6.11's stricter weekly-duty rule) rather than a fixed rule.
+   */
+  private async resolveEligibleInvigilatorIds(includeNonTeachingStaff: boolean, excludedTypes: string[]): Promise<string[]> {
+    const excludedStaffIds = new Set(
+      (
+        await this.prisma.staffAssignment.findMany({
+          where: { assignmentType: { in: excludedTypes as AssignmentType[] }, isActive: true },
+          select: { staffId: true },
+        })
+      ).map((a) => a.staffId),
+    );
+
+    if (includeNonTeachingStaff) {
+      const allStaff = await this.prisma.staffProfile.findMany({
+        where: { status: StaffStatus.ACTIVE },
+        select: { id: true },
+      });
+      return allStaff.map((s) => s.id).filter((id) => !excludedStaffIds.has(id));
+    }
+
+    const teachingAssignments = await this.prisma.staffAssignment.findMany({
+      where: { assignmentType: { in: [AssignmentType.CLASS_TEACHER, AssignmentType.SUBJECT_TEACHER] }, isActive: true },
+      select: { staffId: true },
+    });
+    const teachingStaffIds = new Set(teachingAssignments.map((a) => a.staffId));
+    return [...teachingStaffIds].filter((id) => !excludedStaffIds.has(id));
+  }
+
+  /** Same active-SUBJECT_TEACHER lookup shape as Step 2's teacher resolution. */
+  private async resolveOwnSubjectTeacher(
+    subjectId: string,
+    classArmId: string,
+    academicSessionId: string,
+  ): Promise<string | null> {
+    const assignment = await this.prisma.staffAssignment.findFirst({
+      where: {
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        subjectId,
+        classArmId,
+        academicSessionId,
+        isActive: true,
+      },
+    });
+    return assignment?.staffId ?? null;
+  }
+
+  /**
+   * Existing (non-rejected) InvigilationAssignment load per eligible staff
+   * member — a total count (for the load-balancing objective, spanning
+   * beyond just this run), a per-date count (for MAX_INVIGILATIONS_PER_
+   * STAFF_PER_DAY), and blocked exam-time ranges (for cross-exam
+   * double-booking, since a staff member could already be invigilating an
+   * exam from an earlier, unrelated run at an overlapping time).
+   */
+  private async resolveExistingInvigilationLoad(staffIds: string[]): Promise<Record<string, StaffExistingLoad>> {
+    const existing = await this.prisma.invigilationAssignment.findMany({
+      where: { staffId: { in: staffIds }, approvalStatus: { not: TimetableApprovalStatus.REJECTED } },
+      include: { examSchedule: true },
+    });
+
+    const summary: Record<string, StaffExistingLoad> = {};
+    for (const row of existing) {
+      const dateKey = row.examSchedule.date.toISOString().slice(0, 10);
+      const entry = (summary[row.staffId] ??= { totalCount: 0, countByDate: {}, blockedRanges: [] });
+      entry.totalCount += 1;
+      entry.countByDate[dateKey] = (entry.countByDate[dateKey] ?? 0) + 1;
+      entry.blockedRanges.push({ date: dateKey, startTime: row.examSchedule.startTime, endTime: row.examSchedule.endTime });
     }
     return summary;
   }

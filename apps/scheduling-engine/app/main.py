@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.class_timetable import GroupPayload, solve_class_timetable
 from app.exam_timetable import ExamClassArmPayload, solve_exam_timetable
+from app.invigilation import InvigilationExamPayload, StaffExistingLoadPayload, solve_invigilation
 
 
 class HealthResponse(BaseModel):
@@ -22,7 +23,7 @@ class SolveRequest(BaseModel):
     scope: str | None = None
 
     # Generic shape (BUILD_PLAN.md §9 Step 1) — used by every scope that
-    # doesn't yet have real solver logic (INVIGILATION/WEEKLY_DUTY, Steps 4-5).
+    # doesn't yet have real solver logic (WEEKLY_DUTY, Step 5).
     constraints: list[dict[str, Any]] = []
     parameters: dict[str, Any] = {}
 
@@ -39,6 +40,13 @@ class SolveRequest(BaseModel):
     nonCalculationSubjectDurationMinutes: int = 60
     minGapBetweenCalculationExamsDays: int = 1
     classArms: list[ExamClassArmPayload] = []
+
+    # INVIGILATION-specific shape (BUILD_PLAN.md §9 Step 4).
+    maxInvigilationsPerStaffPerDay: int = 2
+    hardExcludeOwnSubjectTeacher: bool = True
+    exams: list[InvigilationExamPayload] = []
+    eligibleStaffIds: list[str] = []
+    existingLoad: dict[str, StaffExistingLoadPayload] = {}
 
 
 class SolveAccepted(BaseModel):
@@ -75,10 +83,10 @@ def health() -> HealthResponse:
 
 async def _solve_and_callback(payload: SolveRequest) -> None:
     """
-    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2) and EXAM_TIMETABLE (Step 3)
-    run real CP-SAT models. Every other scope still gets Step 1's stub
-    behavior — an immediate empty-result callback — until its own step
-    lands (Steps 4-5).
+    CLASS_TIMETABLE (BUILD_PLAN.md §9 Step 2), EXAM_TIMETABLE (Step 3), and
+    INVIGILATION (Step 4) run real CP-SAT models. Every other scope still
+    gets Step 1's stub behavior — an immediate empty-result callback — until
+    its own step lands (WEEKLY_DUTY, Step 5).
     """
     if payload.scope == "CLASS_TIMETABLE":
         body: dict[str, Any] = solve_class_timetable(
@@ -100,6 +108,16 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             spread_calculation_subjects=payload.spreadCalculationSubjects,
             min_gap_between_calculation_exams_days=payload.minGapBetweenCalculationExamsDays,
             class_arms=payload.classArms,
+        )
+    elif payload.scope == "INVIGILATION":
+        body = solve_invigilation(
+            request_id=payload.requestId,
+            callback_token=payload.callbackToken,
+            max_invigilations_per_staff_per_day=payload.maxInvigilationsPerStaffPerDay,
+            hard_exclude_own_subject_teacher=payload.hardExcludeOwnSubjectTeacher,
+            exams=payload.exams,
+            eligible_staff_ids=payload.eligibleStaffIds,
+            existing_load=payload.existingLoad,
         )
     else:
         body = {
