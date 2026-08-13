@@ -22,17 +22,19 @@ import { DutyGrid } from "../../components/organisms/duty-grid";
 import { TriggerGenerationForm } from "../../components/organisms/trigger-generation-form";
 import { GenerationRequestsList, type GenerationRequestsListHandle } from "../../components/organisms/generation-requests-list";
 import { SchedulingApprovalsQueue } from "../../components/organisms/scheduling-approvals-queue";
+import { SchedulingConstraintManager } from "../../components/organisms/scheduling-constraint-manager";
 
-type TabKey = "class-timetable" | "exam-timetable" | "invigilation" | "weekly-duty" | "generate-approve";
+type TabKey = "class-timetable" | "exam-timetable" | "invigilation" | "weekly-duty" | "generate-approve" | "constraints";
 type ClassLevelCategoryGroupValue = "JSS_SSS" | "CRECHE_NURSERY_PRIMARY";
 
-const TAB_KEYS: TabKey[] = ["class-timetable", "exam-timetable", "invigilation", "weekly-duty", "generate-approve"];
+const TAB_KEYS: TabKey[] = ["class-timetable", "exam-timetable", "invigilation", "weekly-duty", "generate-approve", "constraints"];
 const TAB_LABEL: Record<TabKey, string> = {
   "class-timetable": "Class Timetable",
   "exam-timetable": "Exam Timetable",
   invigilation: "Invigilation",
   "weekly-duty": "Weekly Duty",
   "generate-approve": "Generate & Approve",
+  constraints: "Constraints",
 };
 
 interface ClassArmOption {
@@ -266,7 +268,7 @@ function SchedulingPageInner() {
 
       <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
         <TabsList>
-          {TAB_KEYS.map((key) => (
+          {TAB_KEYS.filter((key) => key !== "constraints" || isAdmin).map((key) => (
             <TabsTrigger key={key} value={key}>
               {TAB_LABEL[key]}
             </TabsTrigger>
@@ -578,6 +580,18 @@ function SchedulingPageInner() {
             </Card>
           )}
         </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="constraints">
+            <Card>
+              <CardHeader
+                title="Scheduling constraints"
+                sub="Tunes the AI generator's rules (PRD §3.8) — seeded with defaults at setup, editable here without a code change"
+              />
+              <SchedulingConstraintManager />
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
     </AppShell>
   );

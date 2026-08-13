@@ -13,6 +13,7 @@ import {
   StaffCategory,
   SubjectType,
 } from "@prisma/client";
+import { DEFAULT_SCHEDULING_CONSTRAINTS } from "@school/types";
 import { AppModule } from "./app.module";
 import { PrismaService } from "./prisma/prisma.service";
 import { InvitationService } from "./identity/invitations/invitation.service";
@@ -714,6 +715,45 @@ async function main() {
       await prisma.gradeScale.create({ data: def });
     }
     logger.log(`Grade scale ready: ${gradeScaleDefs.length} bands.`);
+
+    // -------------------------------------------------------------------
+    // Scheduling constraints (PRD §3.8) — `pnpm setup:school` already seeds
+    // these same defaults (see setup-school.ts), but this script is
+    // documented to run against a freshly reset database and shouldn't
+    // silently depend on that earlier step having succeeded, so it's
+    // repeated here with the identical idempotent shape: a group-scoped row
+    // can use Prisma's typed .upsert() against the (scope,
+    // classLevelCategoryGroup, key) compound unique, but the global
+    // (classLevelCategoryGroup=null) rows can't — Postgres doesn't treat two
+    // NULLs as equal for that unique index, hence the hand-added partial
+    // index and the manual find-then-create fallback, same precedent as
+    // GradeScale above and StaffAssignment's reconciliation (CLAUDE.md). A
+    // second run is a no-op either way.
+    // -------------------------------------------------------------------
+    for (const constraint of DEFAULT_SCHEDULING_CONSTRAINTS) {
+      if (constraint.classLevelCategoryGroup) {
+        await prisma.schedulingConstraint.upsert({
+          where: {
+            scope_classLevelCategoryGroup_key: {
+              scope: constraint.scope,
+              classLevelCategoryGroup: constraint.classLevelCategoryGroup,
+              key: constraint.key,
+            },
+          },
+          update: {},
+          create: constraint,
+        });
+        continue;
+      }
+
+      const existing = await prisma.schedulingConstraint.findFirst({
+        where: { scope: constraint.scope, classLevelCategoryGroup: null, key: constraint.key },
+      });
+      if (!existing) {
+        await prisma.schedulingConstraint.create({ data: constraint });
+      }
+    }
+    logger.log(`Scheduling constraints ready: ${DEFAULT_SCHEDULING_CONSTRAINTS.length} rows.`);
 
     // -------------------------------------------------------------------
     // Admin + Bursar + Registrar + Principal
