@@ -118,23 +118,27 @@ export default function ReportCardsPage() {
     : false;
   const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
 
+  // Driven by the Generate panel's own Class arm/Term (genClassArmId/
+  // genTermId), not the Report cards list's filters below — whole-class
+  // generation is an action taken from the Generate panel, independent of
+  // whatever the list happens to be filtered to.
   useEffect(() => {
     setShowMissingDetails(false);
-    if (!canManageReports || classArmFilter === ALL || termFilter === ALL) {
+    if (!canManageReports || !genClassArmId || !genTermId) {
       setClassReadiness(null);
       return;
     }
     setClassGenResult(null);
     apiFetch<ClassReadiness>(
-      `/term-report-cards/class-readiness?classArmId=${classArmFilter}&termId=${termFilter}`,
+      `/term-report-cards/class-readiness?classArmId=${genClassArmId}&termId=${genTermId}`,
       { auth: true },
     )
       .then(setClassReadiness)
       .catch(() => setClassReadiness(null));
-  }, [canManageReports, classArmFilter, termFilter, refreshKey]);
+  }, [canManageReports, genClassArmId, genTermId, refreshKey]);
 
   async function handleGenerateClass() {
-    if (classArmFilter === ALL || termFilter === ALL) return;
+    if (!genClassArmId || !genTermId) return;
     setClassGenError(null);
     setClassGenResult(null);
     setGeneratingClass(true);
@@ -142,7 +146,7 @@ export default function ReportCardsPage() {
       const result = await apiFetch<GenerateClassResult>("/term-report-cards/generate-class", {
         method: "POST",
         auth: true,
-        body: { classArmId: classArmFilter, termId: termFilter },
+        body: { classArmId: genClassArmId, termId: genTermId },
       });
       setClassGenResult(result);
       setRefreshKey((k) => k + 1);
@@ -239,6 +243,74 @@ export default function ReportCardsPage() {
               </Button>
             </div>
           </div>
+
+          {classReadiness && classReadiness.totalStudents > 0 && (
+            <div className="mt-4 rounded-card border border-border bg-card-inset p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[12.5px] text-muted">
+                  Full-term readiness: {classReadiness.students.filter((s) => s.ready).length}/
+                  {classReadiness.totalStudents} students ready to generate
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  {classReadiness.students.some((s) => !s.ready) && (
+                    <button
+                      type="button"
+                      onClick={() => setShowMissingDetails((v) => !v)}
+                      className="text-[11px] text-muted underline"
+                    >
+                      {showMissingDetails ? "Hide details" : "View details"}
+                    </button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={generatingClass || classReadiness.students.every((s) => !s.ready)}
+                    onClick={handleGenerateClass}
+                  >
+                    {generatingClass ? "Generating…" : "Generate for whole class"}
+                  </Button>
+                </div>
+              </div>
+              {classGenError && <p className="mt-2 text-sm text-danger">{classGenError}</p>}
+              {classGenResult && (
+                <p className="mt-2 text-[12.5px] text-muted">
+                  Generated {classGenResult.generatedCount} report card(s)
+                  {classGenResult.skipped.length > 0
+                    ? `, skipped ${classGenResult.skipped.length} not-ready student(s)`
+                    : ""}
+                  .
+                </p>
+              )}
+              {showMissingDetails && (
+                <div className="mt-2 max-h-[250px] overflow-y-auto rounded-md border border-border">
+                  <table className="w-full text-left text-[12px]">
+                    <thead>
+                      <tr className="border-b border-border text-muted">
+                        <th className="py-1.5 px-2 text-[10px] font-medium uppercase tracking-wide">Student</th>
+                        <th className="py-1.5 px-2 text-[10px] font-medium uppercase tracking-wide">Missing</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {classReadiness.students
+                        .filter((s) => !s.ready)
+                        .map((s) => (
+                          <tr key={s.studentId} className="border-b border-border/60 last:border-none">
+                            <td className="py-1.5 px-2 align-top font-medium">{s.studentName}</td>
+                            <td className="py-1.5 px-2 align-top text-muted">
+                              <ul className="list-disc space-y-0.5 pl-4">
+                                {s.missing.map((reason) => (
+                                  <li key={reason}>{reason}</li>
+                                ))}
+                              </ul>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
@@ -260,71 +332,6 @@ export default function ReportCardsPage() {
           <p className="mb-4 text-[12.5px] text-muted">
             Reports generated: {progress.generatedCount}/{progress.totalStudents} students
           </p>
-        )}
-
-        {canManageReports && classReadiness && classReadiness.totalStudents > 0 && (
-          <div className="mb-4 rounded-card border border-border bg-card-inset p-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-[12.5px] text-muted">
-                Full-term readiness: {classReadiness.students.filter((s) => s.ready).length}/{classReadiness.totalStudents}{" "}
-                students ready to generate
-              </p>
-              <div className="flex flex-wrap items-center gap-3">
-                {classReadiness.students.some((s) => !s.ready) && (
-                  <button
-                    type="button"
-                    onClick={() => setShowMissingDetails((v) => !v)}
-                    className="text-[11px] text-muted underline"
-                  >
-                    {showMissingDetails ? "Hide details" : "View details"}
-                  </button>
-                )}
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={generatingClass || classReadiness.students.every((s) => !s.ready)}
-                  onClick={handleGenerateClass}
-                >
-                  {generatingClass ? "Generating…" : "Generate for whole class"}
-                </Button>
-              </div>
-            </div>
-            {classGenError && <p className="mt-2 text-sm text-danger">{classGenError}</p>}
-            {classGenResult && (
-              <p className="mt-2 text-[12.5px] text-muted">
-                Generated {classGenResult.generatedCount} report card(s)
-                {classGenResult.skipped.length > 0 ? `, skipped ${classGenResult.skipped.length} not-ready student(s)` : ""}.
-              </p>
-            )}
-            {showMissingDetails && (
-              <div className="mt-2 max-h-[250px] overflow-y-auto rounded-md border border-border">
-                <table className="w-full text-left text-[12px]">
-                  <thead>
-                    <tr className="border-b border-border text-muted">
-                      <th className="py-1.5 px-2 text-[10px] font-medium uppercase tracking-wide">Student</th>
-                      <th className="py-1.5 px-2 text-[10px] font-medium uppercase tracking-wide">Missing</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {classReadiness.students
-                      .filter((s) => !s.ready)
-                      .map((s) => (
-                        <tr key={s.studentId} className="border-b border-border/60 last:border-none">
-                          <td className="py-1.5 px-2 align-top font-medium">{s.studentName}</td>
-                          <td className="py-1.5 px-2 align-top text-muted">
-                            <ul className="list-disc space-y-0.5 pl-4">
-                              {s.missing.map((reason) => (
-                                <li key={reason}>{reason}</li>
-                              ))}
-                            </ul>
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
         )}
 
         <ReportCardList

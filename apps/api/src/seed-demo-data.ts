@@ -8,8 +8,10 @@ import {
   ClassLevelCategory,
   DepartmentName,
   GuardianRelationship,
+  ReportCommentType,
   Role,
   SkillCategory,
+  SkillRatingValue,
   StaffCategory,
   SubjectType,
 } from "@prisma/client";
@@ -19,12 +21,18 @@ import { PrismaService } from "./prisma/prisma.service";
 import { InvitationService } from "./identity/invitations/invitation.service";
 import { StudentService } from "./identity/students/student";
 import { SubjectService } from "./subjects/subject";
+import { StudentSubjectEnrollmentService } from "./subjects/student-subject-enrollment";
+import { StudentDepartmentService } from "./academic-structure/student-department";
 import { StaffAssignmentService } from "./staff-assignments/staff-assignment";
 import { AssessmentComponentService } from "./assessments/assessment-component";
 import { ReportWindowService } from "./assessments/report-window";
+import { ScoreEntryService } from "./assessments/score-entry";
+import { ReportCommentService } from "./assessments/report-comment";
+import { SkillRatingService } from "./assessments/skill-rating";
 import { FeeStructureService } from "./fees/fee-structure";
 import { InvoiceService } from "./fees/invoice";
 import { PaymentGatewayConfigService } from "./fees/gateway/payment-gateway-config";
+import type { RequestUser } from "./auth/jwt.strategy";
 
 /**
  * One-shot demo dataset for a fresh deployment (run after `pnpm setup:school`
@@ -64,9 +72,14 @@ async function main() {
   const invitations = app.get(InvitationService);
   const students = app.get(StudentService);
   const subjects = app.get(SubjectService);
+  const subjectEnrollments = app.get(StudentSubjectEnrollmentService);
+  const studentDepartments = app.get(StudentDepartmentService);
   const staffAssignments = app.get(StaffAssignmentService);
   const assessmentComponents = app.get(AssessmentComponentService);
   const reportWindows = app.get(ReportWindowService);
+  const scoreEntries = app.get(ScoreEntryService);
+  const reportComments = app.get(ReportCommentService);
+  const skillRatings = app.get(SkillRatingService);
   const feeStructures = app.get(FeeStructureService);
   const invoices = app.get(InvoiceService);
   const paymentGatewayConfigs = app.get(PaymentGatewayConfigService);
@@ -518,6 +531,28 @@ async function main() {
       `Subject catalogue ready: ${Object.keys(subjectIdByCode).length} subjects.`,
     );
 
+    // A ClassSubject/StudentSubjectEnrollment row for a grouped subject
+    // (ENG/BST/PVS/CCA/NVE) always names the group's own subjectId, never a
+    // child's — but ScoreEntryService rejects scoring the group directly
+    // (only children are scoreable). This is the single place that expands
+    // a class-subject code into the subject id(s) actual scores get entered
+    // against, so the score-seeding loop below and any future caller can't
+    // drift on which codes are groups.
+    const GROUP_CHILD_CODES: Record<string, string[]> = {
+      ENG: ["ENG-01", "ENG-02"],
+      BST: ["BSC", "BTN", "IT", "PHE"],
+      PVS: ["AGR", "HEC"],
+      CCA: ["MUS", "CRA"],
+      NVE: ["SOS", "SEC", "CIV"],
+    };
+    function scoreableSubjectIdsForCode(code: string): string[] {
+      const children = GROUP_CHILD_CODES[code];
+      if (children) {
+        return children.map((c) => req(subjectIdByCode[c], `subject id for ${c}`));
+      }
+      return [req(subjectIdByCode[code], `subject id for ${code}`)];
+    }
+
     // Class-subject applicability.
     const jssClassSubjects: { code: string; type: SubjectType }[] = [
       { code: "ENG", type: SubjectType.COMPULSORY },
@@ -615,6 +650,28 @@ async function main() {
       });
     }
     logger.log("Class-subject applicability ready.");
+
+    // JSS has no departments — every student opts into all three GENERAL
+    // electives (French, Yoruba, Cultural and Creative Arts) on top of their
+    // auto-enrolled COMPULSORY subjects.
+    const JSS_GENERAL_CODES = ["FRE", "YOR", "CCA"];
+
+    // SSS department elective lists (COMPULSORY English/Maths auto-enroll
+    // separately and aren't repeated here). Biology and Further Maths drop
+    // out for SSS 3 in every department, which is what takes each
+    // department's SSS 3 registered-subject count two below its SSS 1/2
+    // count (Science/Commercial 11→9, Art 12→10) — matching the brief's
+    // explicit SSS 3 counts.
+    const SSS_DEPARTMENT_ELECTIVE_BASE: Record<DepartmentName, string[]> = {
+      [DepartmentName.ART]: ["LIT", "YOR", "CRS", "GOV", "ECO", "CIVS", "MKT", "AGR"],
+      [DepartmentName.COMMERCIAL]: ["ACC", "COM", "GOV", "ECO", "CIVS", "MKT", "AGR"],
+      [DepartmentName.SCIENCE]: ["PHY", "CHM", "GEO", "ECO", "CIVS", "MKT", "AGR"],
+    };
+    const SSS3_DROPPED_CODES = ["BIO", "FMT"];
+    function sssElectiveCodesFor(department: DepartmentName, className: string): string[] {
+      const base = req(SSS_DEPARTMENT_ELECTIVE_BASE[department], `elective base for ${department}`);
+      return className === "SSS 3" ? base : [...base, ...SSS3_DROPPED_CODES];
+    }
 
     // -------------------------------------------------------------------
     // Skill assessment items for the session (PRD FR4.5 default lists)
@@ -949,6 +1006,12 @@ async function main() {
       { firstName: "David", lastName: "Osagie", subjectCodes: ["MKT", "FNU"] },
     ];
 
+    // Keyed by class name (e.g. "JSS 1"), populated below as each class
+    // teacher is assigned — used by the report-comment/skill-rating seeding
+    // further down so those write as the student's real class teacher
+    // rather than an anonymous Admin override.
+    const classTeacherUserIdByClassName: Record<string, string> = {};
+
     let classTeacherCount = 0;
     for (const def of teacherDefs) {
       const email = `${def.firstName.toLowerCase()}.${def.lastName.toLowerCase()}@${EMAIL_DOMAIN}`;
@@ -983,6 +1046,7 @@ async function main() {
           academicSessionId: session.id,
         });
         classTeacherCount++;
+        classTeacherUserIdByClassName[def.classTeacherOf] = teacherUser.id;
       }
     }
     logger.log(
@@ -992,107 +1056,302 @@ async function main() {
     // -------------------------------------------------------------------
     // Parents + students
     // -------------------------------------------------------------------
-    const parentAUser = await ensureRoleUser(prisma, invitations, {
-      email: `funmilayo.adebayo@${EMAIL_DOMAIN}`,
-      firstName: "Funmilayo",
-      lastName: "Adebayo",
-      role: Role.PARENT,
-      invitedByUserId: superAdmin.id,
-    });
-    const parentBUser = await ensureRoleUser(prisma, invitations, {
-      email: `michael.eze@${EMAIL_DOMAIN}`,
-      firstName: "Michael",
-      lastName: "Eze",
-      role: Role.PARENT,
-      invitedByUserId: superAdmin.id,
-    });
-    const parentCUser = await ensureRoleUser(prisma, invitations, {
-      email: `aisha.lawal@${EMAIL_DOMAIN}`,
-      firstName: "Aisha",
-      lastName: "Lawal",
-      role: Role.PARENT,
-      invitedByUserId: superAdmin.id,
-    });
-    const parentDUser = await ensureRoleUser(prisma, invitations, {
-      email: `chiamaka.nwankwo@${EMAIL_DOMAIN}`,
-      firstName: "Chiamaka",
-      lastName: "Nwankwo",
-      role: Role.PARENT,
-      invitedByUserId: superAdmin.id,
-    });
-    const parentAProfile = await prisma.parentProfile.findUniqueOrThrow({
-      where: { userId: parentAUser.id },
-    });
-    const parentBProfile = await prisma.parentProfile.findUniqueOrThrow({
-      where: { userId: parentBUser.id },
-    });
-    const parentCProfile = await prisma.parentProfile.findUniqueOrThrow({
-      where: { userId: parentCUser.id },
-    });
-    const parentDProfile = await prisma.parentProfile.findUniqueOrThrow({
-      where: { userId: parentDUser.id },
-    });
-    logger.log("4 parents ready.");
+    const superAdminId = superAdmin.id;
+    async function ensureParent(firstName: string, lastName: string) {
+      const user = await ensureRoleUser(prisma, invitations, {
+        email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@${EMAIL_DOMAIN}`,
+        firstName,
+        lastName,
+        role: Role.PARENT,
+        invitedByUserId: superAdminId,
+      });
+      return prisma.parentProfile.findUniqueOrThrow({ where: { userId: user.id } });
+    }
 
-    const studentDefs = [
-      {
-        admissionNumber: "DYCC/2026/0001",
-        firstName: "David",
-        lastName: "Adebayo",
-        classArmId: req(arms["JSS 1"], "class arm for JSS 1").id,
-        parentProfileId: parentAProfile.id,
-      },
-      {
-        admissionNumber: "DYCC/2026/0002",
-        firstName: "Feyisayo",
-        lastName: "Adebayo",
-        classArmId: req(arms["SSS 2"], "class arm for SSS 2").id,
-        parentProfileId: parentAProfile.id,
-      },
-      {
-        admissionNumber: "DYCC/2026/0003",
-        firstName: "Chinedu",
-        lastName: "Eze",
-        classArmId: req(arms["SSS 2"], "class arm for SSS 2").id,
-        parentProfileId: parentBProfile.id,
-      },
-      {
-        admissionNumber: "DYCC/2026/0004",
-        firstName: "Zainab",
-        lastName: "Lawal",
-        classArmId: req(arms["JSS 1"], "class arm for JSS 1").id,
-        parentProfileId: parentCProfile.id,
-      },
-      {
-        admissionNumber: "DYCC/2026/0005",
-        firstName: "Emeka",
-        lastName: "Nwankwo",
-        classArmId: req(arms["JSS 1"], "class arm for JSS 1").id,
-        parentProfileId: parentDProfile.id,
-      },
+    const parentAProfile = await ensureParent("Funmilayo", "Adebayo");
+    const parentBProfile = await ensureParent("Michael", "Eze");
+    const parentCProfile = await ensureParent("Aisha", "Lawal");
+    const parentDProfile = await ensureParent("Chiamaka", "Nwankwo");
+    // Parents E/F/H each guardian two students in different classes — some
+    // households have more than one child enrolled (PRD: a parent may have
+    // more than one student).
+    const parentEProfile = await ensureParent("Olumide", "Bakare");
+    const parentFProfile = await ensureParent("Amina", "Yusuf");
+    const parentGProfile = await ensureParent("Grace", "Chukwu");
+    const parentHProfile = await ensureParent("Chuka", "Obi");
+    const parentIProfile = await ensureParent("Wale", "Adeyemi");
+    const parentJProfile = await ensureParent("Musa", "Sani");
+    const parentKProfile = await ensureParent("Folake", "Alabi");
+    const parentLProfile = await ensureParent("Tunji", "Balogun");
+    const parentMProfile = await ensureParent("Kunle", "Ogundele");
+    const parentNProfile = await ensureParent("Ijeoma", "Okoro");
+    logger.log("14 parents ready.");
+
+    // 3 students per class arm (JSS 1 – SSS 3, 18 total). Every SSS student
+    // carries a `department` — one ART/COMMERCIAL/SCIENCE student per SSS
+    // class arm — consumed by the department-assignment + subject-opt-in
+    // loop below; JSS students opt into every GENERAL elective instead
+    // (no departments below SSS, PRD §3.2).
+    type StudentDef = {
+      admissionNumber: string;
+      firstName: string;
+      lastName: string;
+      className: string;
+      parentProfileId: string;
+      department?: DepartmentName;
+    };
+    const studentDefs: StudentDef[] = [
+      // JSS 1
+      { admissionNumber: "DYCC/2026/0001", firstName: "David", lastName: "Adebayo", className: "JSS 1", parentProfileId: parentAProfile.id },
+      { admissionNumber: "DYCC/2026/0004", firstName: "Zainab", lastName: "Lawal", className: "JSS 1", parentProfileId: parentCProfile.id },
+      { admissionNumber: "DYCC/2026/0005", firstName: "Emeka", lastName: "Nwankwo", className: "JSS 1", parentProfileId: parentDProfile.id },
+      // JSS 2
+      { admissionNumber: "DYCC/2026/0006", firstName: "Ade", lastName: "Bakare", className: "JSS 2", parentProfileId: parentEProfile.id },
+      { admissionNumber: "DYCC/2026/0007", firstName: "Kemi", lastName: "Yusuf", className: "JSS 2", parentProfileId: parentFProfile.id },
+      { admissionNumber: "DYCC/2026/0008", firstName: "Tobi", lastName: "Chukwu", className: "JSS 2", parentProfileId: parentGProfile.id },
+      // JSS 3
+      { admissionNumber: "DYCC/2026/0009", firstName: "Ifeanyi", lastName: "Obi", className: "JSS 3", parentProfileId: parentHProfile.id },
+      { admissionNumber: "DYCC/2026/0010", firstName: "Seun", lastName: "Adeyemi", className: "JSS 3", parentProfileId: parentIProfile.id },
+      { admissionNumber: "DYCC/2026/0011", firstName: "Halima", lastName: "Sani", className: "JSS 3", parentProfileId: parentJProfile.id },
+      // SSS 1 — one student per department
+      { admissionNumber: "DYCC/2026/0012", firstName: "Yetunde", lastName: "Bakare", className: "SSS 1", parentProfileId: parentEProfile.id, department: DepartmentName.ART },
+      { admissionNumber: "DYCC/2026/0013", firstName: "Ngozi", lastName: "Obi", className: "SSS 1", parentProfileId: parentHProfile.id, department: DepartmentName.COMMERCIAL },
+      { admissionNumber: "DYCC/2026/0014", firstName: "Damilola", lastName: "Alabi", className: "SSS 1", parentProfileId: parentKProfile.id, department: DepartmentName.SCIENCE },
+      // SSS 2 — one student per department
+      { admissionNumber: "DYCC/2026/0002", firstName: "Feyisayo", lastName: "Adebayo", className: "SSS 2", parentProfileId: parentAProfile.id, department: DepartmentName.ART },
+      { admissionNumber: "DYCC/2026/0003", firstName: "Chinedu", lastName: "Eze", className: "SSS 2", parentProfileId: parentBProfile.id, department: DepartmentName.COMMERCIAL },
+      { admissionNumber: "DYCC/2026/0015", firstName: "Ronke", lastName: "Balogun", className: "SSS 2", parentProfileId: parentLProfile.id, department: DepartmentName.SCIENCE },
+      // SSS 3 — one student per department
+      { admissionNumber: "DYCC/2026/0017", firstName: "Bimbo", lastName: "Ogundele", className: "SSS 3", parentProfileId: parentMProfile.id, department: DepartmentName.ART },
+      { admissionNumber: "DYCC/2026/0016", firstName: "Tayo", lastName: "Yusuf", className: "SSS 3", parentProfileId: parentFProfile.id, department: DepartmentName.COMMERCIAL },
+      { admissionNumber: "DYCC/2026/0018", firstName: "Chukwuemeka", lastName: "Okoro", className: "SSS 3", parentProfileId: parentNProfile.id, department: DepartmentName.SCIENCE },
     ];
 
+    const studentIdByAdmission: Record<string, string> = {};
     for (const def of studentDefs) {
-      const existing = await prisma.studentProfile.findUnique({
+      const classArmId = req(arms[def.className], `class arm for ${def.className}`).id;
+      let studentProfile = await prisma.studentProfile.findUnique({
         where: { admissionNumber: def.admissionNumber },
       });
-      if (existing) continue;
-      await students.create({
-        firstName: def.firstName,
-        lastName: def.lastName,
-        admissionNumber: def.admissionNumber,
-        admissionDate: session.startDate,
-        classArmId: def.classArmId,
-        guardians: [
-          {
-            existingParentProfileId: def.parentProfileId,
-            relationship: GuardianRelationship.GUARDIAN,
-            isPrimaryContact: true,
-          },
-        ],
-      });
+      if (!studentProfile) {
+        studentProfile = await students.create({
+          firstName: def.firstName,
+          lastName: def.lastName,
+          admissionNumber: def.admissionNumber,
+          admissionDate: session.startDate,
+          classArmId,
+          guardians: [
+            {
+              existingParentProfileId: def.parentProfileId,
+              relationship: GuardianRelationship.GUARDIAN,
+              isPrimaryContact: true,
+            },
+          ],
+        });
+      }
+      studentIdByAdmission[def.admissionNumber] = studentProfile.id;
     }
-    logger.log(`${studentDefs.length} students ready.`);
+    logger.log(`${studentDefs.length} students ready (3+ per class, JSS 1 – SSS 3).`);
+
+    // -------------------------------------------------------------------
+    // SSS department assignment + GENERAL/DEPARTMENT subject opt-in, and
+    // JSS's "every GENERAL elective" opt-in — enrollment itself is only
+    // recorded against 1st Term (the only `isCurrent` term, same limitation
+    // syncCompulsoryEnrollmentsOnClassAssignment already has), but the score
+    // entries below cover all three terms regardless, since ScoreEntry has
+    // no FK back to StudentSubjectEnrollment.
+    //
+    // Scores are entered as an Admin override (`isOverride: true`) so this
+    // doesn't depend on any AssessmentComponent ever being opened — every
+    // component seeded above is DRAFT, and nothing here calls forceOpen,
+    // publishes a component, or generates/publishes a TermReportCard.
+    // -------------------------------------------------------------------
+    const seedRequestUser: RequestUser = { id: superAdmin.id, roles: [Role.SUPER_ADMIN], assignmentTypes: [] };
+    const firstTermId = req(terms[0], "1st term").id;
+
+    const componentsByTermCategory = new Map<string, { id: string; maxScore: number }[]>();
+    for (const term of terms) {
+      for (const category of [ClassLevelCategory.JSS, ClassLevelCategory.SSS]) {
+        const rows = await prisma.assessmentComponent.findMany({
+          where: { termId: term.id, classLevelCategory: category },
+        });
+        componentsByTermCategory.set(
+          `${term.id}:${category}`,
+          rows.map((r) => ({ id: r.id, maxScore: Number(r.maxScore) })),
+        );
+      }
+    }
+
+    // Deterministic pseudo-random *whole-number* score within [55%, 95%] of
+    // a component's max — varied per student/subject/component but
+    // reproducible, so a re-run (score entry is upserted) doesn't churn
+    // values needlessly.
+    function seededScore(seed: string, maxScore: number): number {
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+      const ratio = 0.55 + ((hash % 1000) / 1000) * 0.4;
+      return Math.round(maxScore * ratio);
+    }
+
+    // Same hash, used to deterministically pick one item from a fixed list
+    // (a comment template, a skill rating value) per student/term/item.
+    function seededPick<T>(seed: string, items: readonly T[]): T {
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+      return req(items[hash % items.length], "seededPick item");
+    }
+
+    const skillItems = await prisma.skillAssessmentItem.findMany({
+      where: { academicSessionId: session.id, isActive: true },
+    });
+    const SKILL_RATING_VALUES: SkillRatingValue[] = [
+      SkillRatingValue.EXCELLENT,
+      SkillRatingValue.VERY_GOOD,
+      SkillRatingValue.GOOD,
+      SkillRatingValue.FAIR,
+      SkillRatingValue.POOR,
+    ];
+    const CLASS_TEACHER_COMMENT_TEMPLATES = [
+      "{name} has shown consistent improvement this term and participates actively in class.",
+      "{name} is diligent and works well with classmates — keep up the good attitude to schoolwork.",
+      "A pleasant term overall; {name} should pay closer attention to punctuality and homework completion.",
+      "{name} demonstrates strong potential — more consistency with class assignments will help going forward.",
+      "{name} has been attentive and cooperative this term, with steady progress across subjects.",
+    ];
+    const PRINCIPAL_COMMENT_TEMPLATES = [
+      "A commendable term. Keep up the good work.",
+      "Good result — there is room for improvement in a few areas.",
+      "Impressive performance this term. Well done.",
+      "Satisfactory result overall. Greater effort is encouraged next term.",
+      "A solid term's work. Continued diligence will bring even better results.",
+    ];
+
+    let enrollmentCount = 0;
+    let scoreEntryCount = 0;
+    let commentCount = 0;
+    let skillRatingCount = 0;
+    for (const def of studentDefs) {
+      const studentId = req(studentIdByAdmission[def.admissionNumber], `student id for ${def.admissionNumber}`);
+      const armInfo = req(arms[def.className], `class arm for ${def.className}`);
+      const classArmId = armInfo.id;
+
+      let compulsoryCodes: string[];
+      let electiveCodes: string[];
+      if (armInfo.category === ClassLevelCategory.JSS) {
+        compulsoryCodes = ["ENG", "MTH", "BST", "NVE", "PVS", "BUS", "CRS"];
+        electiveCodes = JSS_GENERAL_CODES;
+      } else {
+        compulsoryCodes = ["ENG", "MTH"];
+        const department = req(def.department, `department for ${def.firstName} ${def.lastName}`);
+        const existingDept = await prisma.studentDepartment.findUnique({
+          where: { studentId_academicSessionId: { studentId, academicSessionId: session.id } },
+        });
+        if (!existingDept) {
+          await studentDepartments.create({
+            studentId,
+            departmentId: req(departmentIds[department], `department id for ${department}`),
+            academicSessionId: session.id,
+          });
+        }
+        electiveCodes = sssElectiveCodesFor(department, def.className);
+      }
+
+      for (const code of electiveCodes) {
+        await subjectEnrollments.enroll({
+          studentId,
+          subjectId: req(subjectIdByCode[code], `subject id for ${code}`),
+          classArmId,
+          academicSessionId: session.id,
+          termId: firstTermId,
+        });
+        enrollmentCount++;
+      }
+
+      const scoreableSubjectIds = [
+        ...compulsoryCodes.flatMap(scoreableSubjectIdsForCode),
+        ...electiveCodes.flatMap(scoreableSubjectIdsForCode),
+      ];
+
+      const classTeacherUserId = req(
+        classTeacherUserIdByClassName[def.className],
+        `class teacher user id for ${def.className}`,
+      );
+
+      for (const term of terms) {
+        const components = req(
+          componentsByTermCategory.get(`${term.id}:${armInfo.category}`),
+          `assessment components for ${term.name}/${armInfo.category}`,
+        );
+        for (const subjectId of scoreableSubjectIds) {
+          for (const component of components) {
+            await scoreEntries.enter(
+              {
+                studentId,
+                subjectId,
+                assessmentComponentId: component.id,
+                classArmId,
+                score: seededScore(`${studentId}:${subjectId}:${component.id}`, component.maxScore),
+              },
+              seedRequestUser,
+              true,
+            );
+            scoreEntryCount++;
+          }
+        }
+
+        // Written as an override so it doesn't depend on the ReportWindow
+        // being OPEN, but with the real class teacher's/principal's user id
+        // (not superAdmin) so authorStaffId resolves to their actual
+        // StaffProfile — same "real service, real author" shape as the
+        // score entries above, minus the date gate.
+        await reportComments.write(
+          {
+            studentId,
+            termId: term.id,
+            commentType: ReportCommentType.CLASS_TEACHER,
+            comment: seededPick(`${studentId}:${term.id}:ct`, CLASS_TEACHER_COMMENT_TEMPLATES).replace(
+              "{name}",
+              def.firstName,
+            ),
+          },
+          { id: classTeacherUserId, roles: ["STAFF"], assignmentTypes: ["CLASS_TEACHER"] },
+          true,
+        );
+        await reportComments.write(
+          {
+            studentId,
+            termId: term.id,
+            commentType: ReportCommentType.PRINCIPAL,
+            comment: seededPick(`${studentId}:${term.id}:pr`, PRINCIPAL_COMMENT_TEMPLATES),
+          },
+          { id: principalUser.id, roles: ["STAFF"], assignmentTypes: ["PRINCIPAL"] },
+          true,
+        );
+        commentCount += 2;
+
+        for (const item of skillItems) {
+          await skillRatings.rate(
+            {
+              studentId,
+              termId: term.id,
+              skillAssessmentItemId: item.id,
+              rating: seededPick(`${studentId}:${term.id}:${item.id}`, SKILL_RATING_VALUES),
+            },
+            { id: classTeacherUserId, roles: ["STAFF"], assignmentTypes: ["CLASS_TEACHER"] },
+            true,
+          );
+          skillRatingCount++;
+        }
+      }
+    }
+    logger.log(`Departments + subject opt-ins ready (${enrollmentCount} GENERAL/DEPARTMENT enrollments).`);
+    logger.log(
+      `Score entries ready: ${scoreEntryCount} rows across ${terms.length} terms (every component left DRAFT/unpublished).`,
+    );
+    logger.log(
+      `Report comments ready: ${commentCount} rows (class-teacher + principal, per student per term).`,
+    );
+    logger.log(`Skill ratings ready: ${skillRatingCount} rows (every active skill item, per student per term).`);
 
     // -------------------------------------------------------------------
     // Fee structures + invoices — 1st Term only (Xmas Cantata wouldn't

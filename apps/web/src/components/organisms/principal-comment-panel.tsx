@@ -16,11 +16,16 @@ interface ClassArmOption {
 interface TermOption {
   id: string;
   name: string;
+  academicSessionId: string;
 }
 interface CommentRecord {
   studentId: string;
   commentType: string;
   comment: string;
+}
+interface EnrollmentRecord {
+  subjectId: string;
+  status: string;
 }
 interface ProgressSummary {
   totalStudents: number;
@@ -96,6 +101,36 @@ export function PrincipalCommentPanel({
     [broadsheet, studentId],
   );
   const subjectColumns = broadsheet?.subjectColumns ?? [];
+
+  // Broadsheet's subjectColumns is every subject catalogued for the whole
+  // class group (PRD §3.3 ClassSubject), not this one student's actual
+  // enrollment — narrowed here so the Principal isn't shown subjects (e.g. a
+  // Science student's row still carrying Commerce/Literature columns) the
+  // student never opted into.
+  const [enrolledSubjectIds, setEnrolledSubjectIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const term = terms.find((t) => t.id === termId);
+    if (!studentId || !termId || !term) {
+      setEnrolledSubjectIds(new Set());
+      return;
+    }
+    apiFetch<EnrollmentRecord[]>(
+      `/student-subject-enrollments?studentId=${studentId}&academicSessionId=${term.academicSessionId}&termId=${termId}`,
+      { auth: true },
+    )
+      .then((enrollments) => {
+        setEnrolledSubjectIds(new Set(enrollments.filter((e) => e.status === "ACTIVE").map((e) => e.subjectId)));
+      })
+      .catch(() => setEnrolledSubjectIds(new Set()));
+  }, [studentId, termId, terms]);
+
+  const visibleSubjects = useMemo(
+    () =>
+      subjectColumns
+        .map((subject, i) => ({ subject, cell: scoreRow?.subjects[i] }))
+        .filter(({ subject }) => enrolledSubjectIds.has(subject.id)),
+    [subjectColumns, scoreRow, enrolledSubjectIds],
+  );
 
   const load = useCallback(() => {
     if (!studentId || !termId) {
@@ -220,18 +255,15 @@ export function PrincipalCommentPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {subjectColumns.map((subject, i) => {
-                    const cell = scoreRow.subjects[i];
-                    return (
-                      <tr key={subject.id} className="border-b border-border/60 last:border-none">
-                        <td className="py-1.5 pr-4">{subject.name}</td>
-                        <td className="py-1.5 pr-4 font-mono">
-                          {cell?.totalScore == null ? <span className="text-muted">—</span> : cell.totalScore.toFixed(2)}
-                        </td>
-                        <td className="py-1.5 font-mono">{cell?.grade ?? <span className="text-muted">—</span>}</td>
-                      </tr>
-                    );
-                  })}
+                  {visibleSubjects.map(({ subject, cell }) => (
+                    <tr key={subject.id} className="border-b border-border/60 last:border-none">
+                      <td className="py-1.5 pr-4">{subject.name}</td>
+                      <td className="py-1.5 pr-4 font-mono">
+                        {cell?.totalScore == null ? <span className="text-muted">—</span> : cell.totalScore.toFixed(2)}
+                      </td>
+                      <td className="py-1.5 font-mono">{cell?.grade ?? <span className="text-muted">—</span>}</td>
+                    </tr>
+                  ))}
                   <tr>
                     <td className="pt-1.5 pr-4 font-medium">Overall</td>
                     <td className="pt-1.5 pr-4 font-mono font-medium">
