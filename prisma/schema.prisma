@@ -64,19 +64,20 @@ model User {
   parentProfile   ParentProfile?
   studentProfile  StudentProfile?
 
-  approvedTimetableSlots           TimetableSlot[]
-  createdAssessmentComponents      AssessmentComponent[]
-  generatedReportCards             TermReportCard[]
-  createdReportWindows             ReportWindow[]
-  disabledClassSubjectTermStatuses ClassSubjectTermStatus[]
-  paymentsMade                     Payment[]
-  notifications                    Notification[]
-  notificationPreferences          NotificationPreference[]
-  auditLogs                        AuditLog[]
-  scheduleGenerationRequests       ScheduleGenerationRequest[]
-  approvedExamSchedules            ExamSchedule[]
-  approvedInvigilationAssignments  InvigilationAssignment[]
-  approvedDutyAssignments          DutyAssignment[]
+  approvedTimetableSlots             TimetableSlot[]
+  createdAssessmentComponents        AssessmentComponent[]
+  generatedReportCards               TermReportCard[]
+  createdReportWindows               ReportWindow[]
+  disabledClassSubjectTermStatuses   ClassSubjectTermStatus[]
+  paymentsMade                       Payment[]
+  notifications                      Notification[]
+  notificationPreferences            NotificationPreference[]
+  auditLogs                          AuditLog[]
+  scheduleGenerationRequests         ScheduleGenerationRequest[] @relation("ScheduleGenerationRequestRequester")
+  reviewedScheduleGenerationRequests ScheduleGenerationRequest[] @relation("ScheduleGenerationRequestReviewer")
+  approvedExamSchedules              ExamSchedule[]
+  approvedInvigilationAssignments    InvigilationAssignment[]
+  approvedDutyAssignments            DutyAssignment[]
 
   @@map("users")
 }
@@ -674,36 +675,46 @@ enum TimetableApprovalStatus {
 // origin"), same precedent as the class-teacher-duplicate rule. The indexes
 // below just make that check's WHERE clauses efficient.
 model TimetableSlot {
-  id                String                  @id @default(uuid())
-  classArmId        String
-  classArm          ClassArm                @relation(fields: [classArmId], references: [id], onDelete: Cascade)
-  subjectId         String
-  subject           Subject                 @relation(fields: [subjectId], references: [id])
-  staffId           String
-  staff             StaffProfile            @relation(fields: [staffId], references: [id])
-  academicSessionId String
-  academicSession   AcademicSession         @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
-  termId            String
-  term              Term                    @relation(fields: [termId], references: [id], onDelete: Cascade)
-  dayOfWeek         DayOfWeek
+  id                          String                     @id @default(uuid())
+  classArmId                  String
+  classArm                    ClassArm                   @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId                   String
+  subject                     Subject                    @relation(fields: [subjectId], references: [id])
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  academicSessionId           String
+  academicSession             AcademicSession            @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  termId                      String
+  term                        Term                       @relation(fields: [termId], references: [id], onDelete: Cascade)
+  dayOfWeek                   DayOfWeek
   // "HH:mm" 24-hour strings, not @db.Time/DateTime — pairs directly with
   // <input type="time">, sidesteps the @db.Date/@IsDateString trap
   // (CLAUDE.md backend conventions). Compared as minutes-since-midnight in
   // the conflict-detection service, not lexicographically.
-  startTime         String
-  endTime           String
-  venue             String?
-  generatedBy       TimetableGeneratedBy    @default(MANUAL)
-  approvalStatus    TimetableApprovalStatus @default(APPROVED)
-  approvedByUserId  String?
-  approvedByUser    User?                   @relation(fields: [approvedByUserId], references: [id])
-  approvedAt        DateTime?
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
+  startTime                   String
+  endTime                     String
+  venue                       String?
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  // BUILD_PLAN.md §9 Step 6: set only when approvalStatus=REJECTED, matching
+  // the Payment/DiscountRequest reject-reason precedent.
+  rejectionReason             String?
+  // Set only on AI-generated rows (never on MANUAL, which are auto-approved
+  // at create time) — links this row back to the run that produced it, so a
+  // whole roster can be approved/rejected in one atomic transaction instead
+  // of per-row.
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
 
   @@index([staffId, dayOfWeek, academicSessionId, termId])
   @@index([venue, dayOfWeek, academicSessionId, termId])
   @@index([classArmId, dayOfWeek, academicSessionId, termId])
+  @@index([scheduleGenerationRequestId])
   @@map("timetable_slots")
 }
 
@@ -798,16 +809,37 @@ model ScheduleGenerationRequest {
 
   status ScheduleGenerationStatus @default(QUEUED)
 
+  // Roster-level human review, separate from `status` above (which tracks
+  // solver progress only). Set to PENDING_REVIEW by the callback controller
+  // once AI rows are persisted; a single approve/reject action here cascades
+  // to every PENDING_REVIEW row this request produced (see
+  // ScheduleGenerationRequestService.approve/reject) — the "one approval per
+  // roster, not per row" requirement. Reuses TimetableApprovalStatus, the
+  // same enum every generated row already carries.
+  reviewStatus     TimetableApprovalStatus @default(DRAFT)
+  reviewedByUserId String?
+  reviewedByUser   User?                   @relation("ScheduleGenerationRequestReviewer", fields: [reviewedByUserId], references: [id])
+  reviewedAt       DateTime?
+  rejectionReason  String?
+
   // ARCHITECTURE.md §9: single-use, per-request secret generated at
   // dispatch time, verified via timingSafeEqual on callback — not a shared
   // static key, so a stray/replayed callback can't be mistaken for real.
   callbackToken String @unique
 
   requestedByUserId String
-  requestedByUser   User      @relation(fields: [requestedByUserId], references: [id])
+  requestedByUser   User      @relation("ScheduleGenerationRequestRequester", fields: [requestedByUserId], references: [id])
   requestedAt       DateTime  @default(now())
   completedAt       DateTime?
   errorMessage      String?
+
+  // Every row this run persisted (AI-generated only — MANUAL rows never set
+  // this FK). Lets batch approve/reject operate on the run's real row set
+  // instead of a client-side natural-key group-by.
+  timetableSlots          TimetableSlot[]
+  examSchedules           ExamSchedule[]
+  invigilationAssignments InvigilationAssignment[]
+  dutyAssignments         DutyAssignment[]
 
   @@index([status])
   @@map("schedule_generation_requests")
@@ -821,28 +853,32 @@ model ScheduleGenerationRequest {
 // tied to when their students sit the exam — that's invigilation (Step 4), a
 // separate staff pool entirely.
 model ExamSchedule {
-  id                    String                  @id @default(uuid())
-  assessmentComponentId String
-  assessmentComponent   AssessmentComponent     @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
-  classArmId            String
-  classArm              ClassArm                @relation(fields: [classArmId], references: [id], onDelete: Cascade)
-  subjectId             String
-  subject               Subject                 @relation(fields: [subjectId], references: [id])
-  date                  DateTime                @db.Date
-  startTime             String
-  endTime               String
-  venue                 String?
-  generatedBy           TimetableGeneratedBy    @default(MANUAL)
-  approvalStatus        TimetableApprovalStatus @default(APPROVED)
-  approvedByUserId      String?
-  approvedByUser        User?                   @relation(fields: [approvedByUserId], references: [id])
-  approvedAt            DateTime?
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
+  id                          String                     @id @default(uuid())
+  assessmentComponentId       String
+  assessmentComponent         AssessmentComponent        @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
+  classArmId                  String
+  classArm                    ClassArm                   @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId                   String
+  subject                     Subject                    @relation(fields: [subjectId], references: [id])
+  date                        DateTime                   @db.Date
+  startTime                   String
+  endTime                     String
+  venue                       String?
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
 
   invigilationAssignments InvigilationAssignment[]
 
   @@index([classArmId, date])
+  @@index([scheduleGenerationRequestId])
   @@map("exam_schedules")
 }
 
@@ -857,22 +893,26 @@ enum InvigilationRole {
 // signal in PRD is the two-value role enum itself; no hall-capacity field
 // exists anywhere in this codebase to scale an ASSISTANT count by.
 model InvigilationAssignment {
-  id               String                  @id @default(uuid())
-  examScheduleId   String
-  examSchedule     ExamSchedule            @relation(fields: [examScheduleId], references: [id], onDelete: Cascade)
-  staffId          String
-  staff            StaffProfile            @relation(fields: [staffId], references: [id])
-  role             InvigilationRole
-  generatedBy      TimetableGeneratedBy    @default(MANUAL)
-  approvalStatus   TimetableApprovalStatus @default(APPROVED)
-  approvedByUserId String?
-  approvedByUser   User?                   @relation(fields: [approvedByUserId], references: [id])
-  approvedAt       DateTime?
-  createdAt        DateTime                @default(now())
-  updatedAt        DateTime                @updatedAt
+  id                          String                     @id @default(uuid())
+  examScheduleId              String
+  examSchedule                ExamSchedule               @relation(fields: [examScheduleId], references: [id], onDelete: Cascade)
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  role                        InvigilationRole
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
 
   @@unique([examScheduleId, role])
   @@index([staffId])
+  @@index([scheduleGenerationRequestId])
   @@map("invigilation_assignments")
 }
 
@@ -885,21 +925,25 @@ model InvigilationAssignment {
 // non-null) — no hand-added partial-index SQL needed, unlike
 // SchedulingConstraint's null-group case.
 model DutyAssignment {
-  id                      String                  @id @default(uuid())
-  weekStartDate           DateTime                @db.Date
-  classLevelCategoryGroup ClassLevelCategoryGroup
-  staffId                 String
-  staff                   StaffProfile            @relation(fields: [staffId], references: [id])
-  generatedBy             TimetableGeneratedBy    @default(MANUAL)
-  approvalStatus          TimetableApprovalStatus @default(APPROVED)
-  approvedByUserId        String?
-  approvedByUser          User?                   @relation(fields: [approvedByUserId], references: [id])
-  approvedAt              DateTime?
-  createdAt               DateTime                @default(now())
-  updatedAt               DateTime                @updatedAt
+  id                          String                     @id @default(uuid())
+  weekStartDate               DateTime                   @db.Date
+  classLevelCategoryGroup     ClassLevelCategoryGroup
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
 
   @@unique([weekStartDate, classLevelCategoryGroup, staffId])
   @@index([staffId])
+  @@index([scheduleGenerationRequestId])
   @@map("duty_assignments")
 }
 

@@ -5,6 +5,7 @@ import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
+import { MySchedule } from "../../components/organisms/my-schedule";
 
 export default function DashboardPage() {
   const { user, loading, logout } = useCurrentUser();
@@ -46,6 +47,8 @@ export default function DashboardPage() {
           arrive in later phases.
         </p>
       </Card>
+
+      <MySchedule user={user} />
     </AppShell>
   );
 }

@@ -13,7 +13,7 @@ const CLASS_ARM_DETAIL_INCLUDE = { classLevel: { select: { name: true, category:
 // just the raw arm name (e.g. "Topaz"), which is what an edit form should
 // pre-fill from — the class + session are already picked separately when
 // creating an arm, so its own name never needs to repeat them.
-function withDisplayName<T extends { name: string; classLevel: { name: string } }>(
+export function withDisplayName<T extends { name: string; classLevel: { name: string } }>(
   arm: T,
 ): T & { displayName: string } {
   return { ...arm, displayName: `${arm.classLevel.name} ${arm.name}` };

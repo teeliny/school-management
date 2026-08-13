@@ -6,6 +6,7 @@ import {
   Get,
   Injectable,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -27,7 +28,12 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { AbilityFactory } from "../casl/ability.factory";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
+import { Audited } from "../audit/audited.decorator";
 import { CreateScheduleGenerationRequestDto } from "./dto/schedule-generation-request.dto";
+import { RejectScheduleRowDto } from "./dto/reject-schedule-row.dto";
+import { TimetableSlotService } from "../timetable/timetable-slot";
+import { ExamScheduleService } from "./exam-schedule";
+import { InvigilationAssignmentService } from "./invigilation-assignment";
 
 @Injectable()
 export class ScheduleGenerationRequestService {
@@ -36,6 +42,9 @@ export class ScheduleGenerationRequestService {
     private readonly abilityFactory: AbilityFactory,
     @InjectQueue(QUEUE_NAMES.SCHEDULING_SOLVE_DISPATCH)
     private readonly dispatchQueue: Queue<SchedulingSolveDispatchJob>,
+    private readonly timetableSlots: TimetableSlotService,
+    private readonly examSchedules: ExamScheduleService,
+    private readonly invigilationAssignments: InvigilationAssignmentService,
   ) {}
 
   /**
@@ -272,6 +281,81 @@ export class ScheduleGenerationRequestService {
   findOne(id: string) {
     return this.prisma.scheduleGenerationRequest.findUniqueOrThrow({ where: { id } });
   }
+
+  /**
+   * Single atomic approval for a whole generated roster — the requirement
+   * that replaces per-row approve entirely (see the now-removed :id/approve
+   * endpoints on TimetableSlotController/ExamScheduleController/
+   * InvigilationAssignmentController/DutyAssignmentController). Every row
+   * this run produced (`scheduleGenerationRequestId = id`) still sitting at
+   * PENDING_REVIEW is re-checked with that row type's own assertNoConflicts
+   * (same belt-and-suspenders precedent already used by the callback
+   * controller when it first persisted them) and flipped to APPROVED in one
+   * transaction, alongside the request's own reviewStatus.
+   */
+  async approve(id: string, userId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const request = await tx.scheduleGenerationRequest.findUniqueOrThrow({ where: { id } });
+      if (request.reviewStatus !== TimetableApprovalStatus.PENDING_REVIEW) {
+        throw new BadRequestException("Only a PENDING_REVIEW generation request can be approved");
+      }
+
+      const approvedAt = new Date();
+      const approvalData = { approvalStatus: TimetableApprovalStatus.APPROVED, approvedByUserId: userId, approvedAt };
+      const pendingFilter = { scheduleGenerationRequestId: id, approvalStatus: TimetableApprovalStatus.PENDING_REVIEW };
+
+      if (request.scope === ScheduleScope.CLASS_TIMETABLE) {
+        const rows = await tx.timetableSlot.findMany({ where: pendingFilter });
+        for (const row of rows) await this.timetableSlots.assertNoConflicts(row, row.id, tx);
+        await tx.timetableSlot.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: approvalData });
+      }
+      if (request.scope === ScheduleScope.EXAM_TIMETABLE) {
+        const rows = await tx.examSchedule.findMany({ where: pendingFilter });
+        for (const row of rows) await this.examSchedules.assertNoConflicts(row, row.id, tx);
+        await tx.examSchedule.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: approvalData });
+      }
+      if (request.scope === ScheduleScope.INVIGILATION) {
+        const rows = await tx.invigilationAssignment.findMany({ where: pendingFilter });
+        for (const row of rows) await this.invigilationAssignments.assertNoConflicts(row.staffId, row.examScheduleId, tx);
+        await tx.invigilationAssignment.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: approvalData });
+      }
+      if (request.scope === ScheduleScope.WEEKLY_DUTY) {
+        // No per-row conflict check exists for DutyAssignment (no overlap
+        // concept, only the whole-week @@unique constraint — same reasoning
+        // DutyAssignmentService already documents).
+        await tx.dutyAssignment.updateMany({ where: pendingFilter, data: approvalData });
+      }
+
+      return tx.scheduleGenerationRequest.update({
+        where: { id },
+        data: { reviewStatus: TimetableApprovalStatus.APPROVED, reviewedByUserId: userId, reviewedAt: approvedAt },
+      });
+    });
+  }
+
+  /** Rejects every still-PENDING_REVIEW row this run produced, in one transaction. */
+  async reject(id: string, rejectionReason: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const request = await tx.scheduleGenerationRequest.findUniqueOrThrow({ where: { id } });
+      if (request.reviewStatus !== TimetableApprovalStatus.PENDING_REVIEW) {
+        throw new BadRequestException("Only a PENDING_REVIEW generation request can be rejected");
+      }
+
+      const rejectionData = { approvalStatus: TimetableApprovalStatus.REJECTED, rejectionReason };
+      const pendingFilter = { scheduleGenerationRequestId: id, approvalStatus: TimetableApprovalStatus.PENDING_REVIEW };
+
+      if (request.scope === ScheduleScope.CLASS_TIMETABLE) await tx.timetableSlot.updateMany({ where: pendingFilter, data: rejectionData });
+      if (request.scope === ScheduleScope.EXAM_TIMETABLE) await tx.examSchedule.updateMany({ where: pendingFilter, data: rejectionData });
+      if (request.scope === ScheduleScope.INVIGILATION)
+        await tx.invigilationAssignment.updateMany({ where: pendingFilter, data: rejectionData });
+      if (request.scope === ScheduleScope.WEEKLY_DUTY) await tx.dutyAssignment.updateMany({ where: pendingFilter, data: rejectionData });
+
+      return tx.scheduleGenerationRequest.update({
+        where: { id },
+        data: { reviewStatus: TimetableApprovalStatus.REJECTED, rejectionReason },
+      });
+    });
+  }
 }
 
 @Controller("schedule-generation-requests")
@@ -292,5 +376,30 @@ export class ScheduleGenerationRequestController {
   @Get(":id")
   findOne(@Param("id") id: string) {
     return this.service.findOne(id);
+  }
+
+  // Super-Admin only — the "only super-admin can approve" requirement.
+  // Manage/generate/edit (Registrar/Principal/Headteacher/Admin) stays a
+  // separate, broader grant on each row controller's own assertCanManage;
+  // this is deliberately narrower, same manual-role-check style already
+  // used for the (now-removed) per-row approve endpoints.
+  @Patch(":id/approve")
+  @Audited("ScheduleGenerationRequest", "scheduleGenerationRequest")
+  approve(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    this.assertCanApproveBatch(user);
+    return this.service.approve(id, user.id);
+  }
+
+  @Patch(":id/reject")
+  @Audited("ScheduleGenerationRequest", "scheduleGenerationRequest")
+  reject(@Param("id") id: string, @Body() dto: RejectScheduleRowDto, @CurrentUser() user: RequestUser) {
+    this.assertCanApproveBatch(user);
+    return this.service.reject(id, dto.rejectionReason);
+  }
+
+  private assertCanApproveBatch(user: RequestUser) {
+    if (!user.roles.includes("SUPER_ADMIN")) {
+      throw new ForbiddenException("Only Super-Admin can approve or reject a generated schedule roster");
+    }
   }
 }

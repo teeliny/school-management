@@ -114,25 +114,41 @@ export class SchedulingCallbackController {
       return { received: true };
     }
 
+    const rows = (body.result?.generatedRows ?? []) as
+      | ClassTimetableGeneratedRow[]
+      | ExamTimetableGeneratedRow[]
+      | InvigilationGeneratedRow[]
+      | WeeklyDutyGeneratedRow[];
+    let persistedCount = 0;
+
     if (request.scope === ScheduleScope.CLASS_TIMETABLE) {
-      await this.persistClassTimetableRows(request.termId, (body.result?.generatedRows ?? []) as ClassTimetableGeneratedRow[]);
+      persistedCount = await this.persistClassTimetableRows(requestId, request.termId, rows as ClassTimetableGeneratedRow[]);
     }
     if (request.scope === ScheduleScope.EXAM_TIMETABLE) {
-      await this.persistExamTimetableRows(
+      persistedCount = await this.persistExamTimetableRows(
+        requestId,
         request.assessmentComponentId,
-        (body.result?.generatedRows ?? []) as ExamTimetableGeneratedRow[],
+        rows as ExamTimetableGeneratedRow[],
       );
     }
     if (request.scope === ScheduleScope.INVIGILATION) {
-      await this.persistInvigilationRows((body.result?.generatedRows ?? []) as InvigilationGeneratedRow[]);
+      persistedCount = await this.persistInvigilationRows(requestId, rows as InvigilationGeneratedRow[]);
     }
     if (request.scope === ScheduleScope.WEEKLY_DUTY) {
-      await this.persistWeeklyDutyRows((body.result?.generatedRows ?? []) as WeeklyDutyGeneratedRow[]);
+      persistedCount = await this.persistWeeklyDutyRows(requestId, rows as WeeklyDutyGeneratedRow[]);
     }
 
     await this.prisma.scheduleGenerationRequest.update({
       where: { id: requestId },
-      data: { status: ScheduleGenerationStatus.COMPLETED, completedAt: new Date() },
+      data: {
+        status: ScheduleGenerationStatus.COMPLETED,
+        completedAt: new Date(),
+        // Roster-level human review — separate from `status` above. Only
+        // enters PENDING_REVIEW once at least one row actually landed; a
+        // completed-but-empty run (every row dropped as unparseable) has
+        // nothing for the batch approve/reject endpoints to act on.
+        reviewStatus: persistedCount > 0 ? TimetableApprovalStatus.PENDING_REVIEW : undefined,
+      },
     });
     await this.notifications.notify(request.requestedByUserId, "SCHEDULE_GENERATION_COMPLETED", {
       scope: request.scope,
@@ -150,14 +166,15 @@ export class SchedulingCallbackController {
    * belt-and-suspenders, not the primary defense (that's the CP-SAT model
    * itself).
    */
-  private async persistClassTimetableRows(termId: string | null, rows: ClassTimetableGeneratedRow[]) {
+  private async persistClassTimetableRows(requestId: string, termId: string | null, rows: ClassTimetableGeneratedRow[]) {
     if (!termId) {
       this.logger.warn("CLASS_TIMETABLE callback with no termId on the request — nothing to persist");
-      return;
+      return 0;
     }
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
 
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
+    let persisted = 0;
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
@@ -193,10 +210,13 @@ export class SchedulingCallbackController {
             venue: null,
             generatedBy: TimetableGeneratedBy.AI,
             approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+            scheduleGenerationRequestId: requestId,
           },
         });
+        persisted += 1;
       }
     });
+    return persisted;
   }
 
   /**
@@ -208,12 +228,17 @@ export class SchedulingCallbackController {
    * `persistClassTimetableRows` — no `staffId`/venue involved here, since
    * `ExamSchedule` has neither (PRD §3.8).
    */
-  private async persistExamTimetableRows(assessmentComponentId: string | null, rows: ExamTimetableGeneratedRow[]) {
+  private async persistExamTimetableRows(
+    requestId: string,
+    assessmentComponentId: string | null,
+    rows: ExamTimetableGeneratedRow[],
+  ) {
     if (!assessmentComponentId) {
       this.logger.warn("EXAM_TIMETABLE callback with no assessmentComponentId on the request — nothing to persist");
-      return;
+      return 0;
     }
-    if (rows.length === 0) return;
+    if (rows.length === 0) return 0;
+    let persisted = 0;
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
@@ -225,6 +250,7 @@ export class SchedulingCallbackController {
 
         await this.examSchedules.assertNoConflicts(
           { classArmId: row.classArmId, date, startTime: row.startTime, endTime: row.endTime },
+          undefined,
           tx,
         );
 
@@ -239,10 +265,13 @@ export class SchedulingCallbackController {
             venue: null,
             generatedBy: TimetableGeneratedBy.AI,
             approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+            scheduleGenerationRequestId: requestId,
           },
         });
+        persisted += 1;
       }
     });
+    return persisted;
   }
 
   /**
@@ -253,8 +282,9 @@ export class SchedulingCallbackController {
    * a single transaction — same belt-and-suspenders pattern, checking the
    * staff member isn't already invigilating an overlapping exam.
    */
-  private async persistInvigilationRows(rows: InvigilationGeneratedRow[]) {
-    if (rows.length === 0) return;
+  private async persistInvigilationRows(requestId: string, rows: InvigilationGeneratedRow[]) {
+    if (rows.length === 0) return 0;
+    let persisted = 0;
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
@@ -272,10 +302,13 @@ export class SchedulingCallbackController {
             role: row.role,
             generatedBy: TimetableGeneratedBy.AI,
             approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+            scheduleGenerationRequestId: requestId,
           },
         });
+        persisted += 1;
       }
     });
+    return persisted;
   }
 
   /**
@@ -290,8 +323,9 @@ export class SchedulingCallbackController {
    * `@@unique([weekStartDate, classLevelCategoryGroup, staffId])` is the
    * final backstop against a duplicate row within one run.
    */
-  private async persistWeeklyDutyRows(rows: WeeklyDutyGeneratedRow[]) {
-    if (rows.length === 0) return;
+  private async persistWeeklyDutyRows(requestId: string, rows: WeeklyDutyGeneratedRow[]) {
+    if (rows.length === 0) return 0;
+    let persisted = 0;
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
@@ -312,9 +346,12 @@ export class SchedulingCallbackController {
             staffId: row.staffId,
             generatedBy: TimetableGeneratedBy.AI,
             approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+            scheduleGenerationRequestId: requestId,
           },
         });
+        persisted += 1;
       }
     });
+    return persisted;
   }
 }

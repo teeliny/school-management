@@ -88,9 +88,17 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
       },
       {
-        href: "/timetable",
-        label: "Timetable",
+        href: "/scheduling",
+        label: "Scheduling",
         icon: CalendarClock,
+        // Union of who can generate/edit any of the four schedule types
+        // (every row controller's assertCanManage actor set) and who can
+        // trigger a generation run (ScheduleGenerationRequestService.
+        // assertCanTrigger) — one entry, tabbed internally, replacing the
+        // five separate Timetable/Exam timetable/Invigilation/Weekly duty/
+        // AI Scheduling links. Final batch approval narrows further to
+        // Super-Admin only, gated inside the page's own Generate & Approve
+        // tab, not here.
         visible: ({ isAdmin, user }) =>
           isAdmin ||
           user.assignmentTypes.includes("REGISTRAR") ||

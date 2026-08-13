@@ -12,14 +12,15 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { DayOfWeek, Prisma, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
-import { timeRangesOverlap } from "@school/types";
+import { ClassLevelCategoryGroup, DayOfWeek, Prisma, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
+import { categoryToGroup, timeRangesOverlap } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
+import { withDisplayName } from "../academic-structure/class-arm";
 import { CreateTimetableSlotDto, UpdateTimetableSlotDto } from "./dto/timetable-slot.dto";
 
 interface ConflictCheckInput {
@@ -102,12 +103,93 @@ export class TimetableSlotService {
     return this.prisma.timetableSlot.update({ where: { id }, data: dto });
   }
 
-  findAll(filters: { classArmId?: string; staffId?: string; academicSessionId?: string; termId?: string }) {
-    return this.prisma.timetableSlot.findMany({
-      where: filters,
-      include: { subject: true, staff: { include: { user: true } } },
+  // A parent caller may only ever see their own wards' classes — mirrors
+  // TermReportCardService.findForUser's PARENT branch (StudentGuardian join
+  // to the wards' currentClassId). Returns `null` for "no scoping needed"
+  // (any other caller) so findAll can tell "unrestricted" apart from "scoped
+  // to zero classes."
+  private async resolveParentScopedClassArmIds(user: RequestUser): Promise<string[] | null> {
+    if (!user.roles.includes("PARENT")) return null;
+    const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
+    if (!parentProfile) return [];
+    const wards = await this.prisma.studentProfile.findMany({
+      where: { guardians: { some: { parentId: parentProfile.id } } },
+      select: { currentClassId: true },
+    });
+    return wards.map((w) => w.currentClassId).filter((id): id is string => Boolean(id));
+  }
+
+  // PRD §5 footnote 6: the whole-school "all classes" overview (no single
+  // classArmId requested) scopes Principal to JSS/SSS and Headteacher to
+  // Creche/Nursery/Primary — Super-Admin/Admin/Registrar stay unscoped. Only
+  // applies to this no-classArmId "view everything" case, not to a request
+  // for one specific class arm (Principal/Headteacher's unconditioned
+  // "manage TimetableSlot" CASL grant already lets them touch any single
+  // class's rows today).
+  private async resolveCategoryGroupScopedClassArmIds(user: RequestUser): Promise<string[] | null> {
+    const isPrincipal = user.assignmentTypes.includes("PRINCIPAL");
+    const isHeadteacher = user.assignmentTypes.includes("HEADTEACHER");
+    if (!isPrincipal && !isHeadteacher) return null;
+    if (user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("REGISTRAR")) return null;
+
+    const allowedGroup = isPrincipal ? ClassLevelCategoryGroup.JSS_SSS : ClassLevelCategoryGroup.CRECHE_NURSERY_PRIMARY;
+    const classArms = await this.prisma.classArm.findMany({
+      select: { id: true, classLevel: { select: { category: true } } },
+    });
+    return classArms.filter((arm) => categoryToGroup(arm.classLevel.category) === allowedGroup).map((arm) => arm.id);
+  }
+
+  async findAll(
+    filters: {
+      classArmId?: string;
+      staffId?: string;
+      academicSessionId?: string;
+      termId?: string;
+      approvalStatus?: TimetableApprovalStatus;
+    },
+    user?: RequestUser,
+  ) {
+    let classArmWhere: Prisma.TimetableSlotWhereInput["classArmId"] = filters.classArmId;
+
+    if (user) {
+      const parentScoped = await this.resolveParentScopedClassArmIds(user);
+      if (parentScoped !== null) {
+        if (filters.classArmId) {
+          if (!parentScoped.includes(filters.classArmId)) return [];
+        } else if (parentScoped.length === 0) {
+          return [];
+        } else {
+          classArmWhere = { in: parentScoped };
+        }
+      } else if (!filters.classArmId) {
+        const groupScoped = await this.resolveCategoryGroupScopedClassArmIds(user);
+        if (groupScoped !== null) {
+          if (groupScoped.length === 0) return [];
+          classArmWhere = { in: groupScoped };
+        }
+      }
+    }
+
+    const rows = await this.prisma.timetableSlot.findMany({
+      where: {
+        staffId: filters.staffId,
+        academicSessionId: filters.academicSessionId,
+        termId: filters.termId,
+        classArmId: classArmWhere,
+        approvalStatus: filters.approvalStatus ?? TimetableApprovalStatus.APPROVED,
+      },
+      include: {
+        classArm: { include: { classLevel: { select: { name: true } } } },
+        subject: true,
+        staff: { include: { user: true } },
+      },
       orderBy: [{ dayOfWeek: "asc" }, { startTime: "asc" }],
     });
+    // withDisplayName (academic-structure/class-arm.ts) is the one place
+    // "{ClassLevel.name} {ClassArm.name}" is formatted — reused here so the
+    // approvals queue renders the same "JSS 1 DIAMOND" shape the class-arm
+    // dropdowns already use, instead of re-deriving it client-side.
+    return rows.map((row) => ({ ...row, classArm: withDisplayName(row.classArm) }));
   }
 
   findOne(id: string) {
@@ -133,14 +215,25 @@ export class TimetableSlotController {
     return this.service.create(dto, user.id);
   }
 
+  // Defaults to APPROVED-only when approvalStatus is omitted — a
+  // PENDING_REVIEW/DRAFT/REJECTED row is AI-generated-but-not-yet-published
+  // (or explicitly rejected) draft state, FR6.5's "not visible to staff,
+  // students, or parents until approved." Requesting anything else requires
+  // the same manage-check used for create/update/delete, reusing existing
+  // CASL infra rather than adding a new Subject just for this filter.
   @Get()
   findAll(
+    @CurrentUser() user: RequestUser,
     @Query("classArmId") classArmId?: string,
     @Query("staffId") staffId?: string,
     @Query("academicSessionId") academicSessionId?: string,
     @Query("termId") termId?: string,
+    @Query("approvalStatus") approvalStatus?: TimetableApprovalStatus,
   ) {
-    return this.service.findAll({ classArmId, staffId, academicSessionId, termId });
+    if (approvalStatus && approvalStatus !== TimetableApprovalStatus.APPROVED) {
+      this.assertCanManage(user);
+    }
+    return this.service.findAll({ classArmId, staffId, academicSessionId, termId, approvalStatus }, user);
   }
 
   @Get(":id")

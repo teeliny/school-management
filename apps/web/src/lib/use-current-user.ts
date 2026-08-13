@@ -11,6 +11,9 @@ export interface CurrentUser {
   lastName: string;
   roles: string[];
   assignmentTypes: string[];
+  staffProfileId: string | null;
+  studentProfileId: string | null;
+  parentProfileId: string | null;
 }
 
 /**

@@ -116,6 +116,9 @@ describe("AbilityFactory", () => {
       expect(ability.can("manage", "AcademicStructure")).toBe(true);
       expect(ability.can("manage", "Subject")).toBe(true);
       expect(ability.can("manage", "TimetableSlot")).toBe(true);
+      // Needed to pick a staff member for a TimetableSlot — same grant
+      // REGISTRAR already has, checked above.
+      expect(ability.can("read", "StaffProfile")).toBe(true);
       expect(ability.can("manage", "AssessmentComponent")).toBe(true);
       expect(ability.can("manage", "ScoreEntry")).toBe(true);
       expect(ability.can("manage", "TermReportCard")).toBe(true);

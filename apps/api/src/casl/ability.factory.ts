@@ -197,6 +197,13 @@ export class AbilityFactory {
         "TimetableSlot",
       ]);
 
+      // Needed to pick a staff member for a TimetableSlot — same "manage
+      // TimetableSlot needs the staff picker" reasoning as the REGISTRAR
+      // branch's own identical grant below. Without this, Principal/
+      // Headteacher could create/edit timetable slots (per the grant just
+      // above) but never populate the Teacher select at all.
+      can("read", "StaffProfile");
+
       can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
 
       can("manage", ["SkillAssessmentItem", "ReportWindow", "SkillRating", "ReportComment"]);

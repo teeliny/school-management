@@ -13,7 +13,12 @@ export type AuditModelKey =
   | "payment"
   | "discountRequest"
   | "staffAssignment"
-  | "invitation";
+  | "invitation"
+  | "timetableSlot"
+  | "examSchedule"
+  | "invigilationAssignment"
+  | "dutyAssignment"
+  | "scheduleGenerationRequest";
 
 export interface AuditOptions {
   entityType: string;

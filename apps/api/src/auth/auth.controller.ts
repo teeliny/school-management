@@ -9,12 +9,14 @@ import { CurrentUser } from "./current-user.decorator";
 import type { RequestUser } from "./jwt.strategy";
 import { UserService } from "../identity/users/user.service";
 import { Audited } from "../audit/audited.decorator";
+import { PrismaService } from "../prisma/prisma.service";
 
 @Controller("auth")
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly userService: UserService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Post("login")
@@ -60,6 +62,18 @@ export class AuthController {
     const user = await this.userService.findById(currentUser.id);
     if (!user) throw new UnauthorizedException();
 
+    // BUILD_PLAN.md §9 Step 6c: "who am I, concretely" — a plain STAFF user
+    // can't call GET /staff-profiles (CASL-gated to Admin/Super-Admin/
+    // Registrar) to find their own StaffProfile.id, and there was no
+    // equivalent self-lookup for any of the three profile kinds. Purely
+    // additive to the existing response shape (each nullable), so every
+    // other /auth/me consumer is unaffected.
+    const [staffProfile, studentProfile, parentProfile] = await Promise.all([
+      this.prisma.staffProfile.findUnique({ where: { userId: user.id }, select: { id: true } }),
+      this.prisma.studentProfile.findUnique({ where: { userId: user.id }, select: { id: true } }),
+      this.prisma.parentProfile.findUnique({ where: { userId: user.id }, select: { id: true } }),
+    ]);
+
     return {
       id: user.id,
       email: user.email,
@@ -67,6 +81,9 @@ export class AuthController {
       lastName: user.lastName,
       roles: user.roles.filter((r) => r.isActive).map((r) => r.role),
       assignmentTypes: await this.authService.activeAssignmentTypes(user.id),
+      staffProfileId: staffProfile?.id ?? null,
+      studentProfileId: studentProfile?.id ?? null,
+      parentProfileId: parentProfile?.id ?? null,
     };
   }
 }
