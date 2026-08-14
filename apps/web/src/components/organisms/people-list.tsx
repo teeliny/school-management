@@ -1,15 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
+import { PhotoUploadButton } from "../molecules/photo-upload-button";
 
 interface StudentListItem {
   id: string;
   admissionNumber: string;
   status: string;
   currentClassId: string | null;
+  currentClass: { name: string; classLevel: { name: string } } | null;
   user: { firstName: string; lastName: string };
 }
 
@@ -24,9 +28,13 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
  * Renders whatever `GET /students` returns — the API already applies PRD §5's
  * row-level scoping (all students for Admin/Super-Admin, own class for a
  * class/subject teacher, own wards for a parent, self for a student), so
- * this component doesn't branch on role at all.
+ * this component doesn't branch on role at all. `canUploadPhoto` gates the
+ * per-row passport-photo control separately — the caller passes Admin/
+ * Super-Admin OR an active CLASS_TEACHER assignment (students/page.tsx);
+ * the real per-class authorization is enforced server-side regardless
+ * (StudentService.uploadPhoto).
  */
-export function PeopleList({ refreshKey }: { refreshKey?: unknown }) {
+export function PeopleList({ refreshKey, canUploadPhoto = false }: { refreshKey?: unknown; canUploadPhoto?: boolean }) {
   const [students, setStudents] = useState<StudentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -71,13 +79,15 @@ export function PeopleList({ refreshKey }: { refreshKey?: unknown }) {
             <tr className="border-b border-border text-muted">
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Admission #</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Name</th>
-              <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Status</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Class</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
+              <th className="py-2 text-[10px] font-medium uppercase tracking-wide" />
             </tr>
           </thead>
           <tbody>
             {filteredStudents?.length === 0 && (
               <tr>
-                <td colSpan={3} className="py-3 text-muted">
+                <td colSpan={5} className="py-3 text-muted">
                   No students match &ldquo;{search}&rdquo;.
                 </td>
               </tr>
@@ -86,10 +96,28 @@ export function PeopleList({ refreshKey }: { refreshKey?: unknown }) {
               <tr key={student.id} className="border-b border-border/60 last:border-none">
                 <td className="py-2.5 pr-4 font-mono text-muted">{student.admissionNumber}</td>
                 <td className="py-2.5 pr-4 font-medium">
-                  {student.user.firstName} {student.user.lastName}
+                  <span className="inline-flex items-center gap-1.5">
+                    {student.user.firstName} {student.user.lastName}
+                    {canUploadPhoto && (
+                      <PhotoUploadButton
+                        studentId={student.id}
+                        label={`Upload photo for ${student.user.firstName} ${student.user.lastName}`}
+                      />
+                    )}
+                  </span>
                 </td>
-                <td className="py-2.5">
+                <td className="py-2.5 pr-4 text-muted">
+                  {student.currentClass
+                    ? `${student.currentClass.classLevel.name} ${student.currentClass.name}`
+                    : "—"}
+                </td>
+                <td className="py-2.5 pr-4">
                   <Badge variant={STATUS_VARIANT[student.status] ?? "muted"}>{student.status}</Badge>
+                </td>
+                <td className="py-2.5 text-right">
+                  <Button asChild variant="outline" size="sm">
+                    <Link href={`/students/${student.id}`}>View</Link>
+                  </Button>
                 </td>
               </tr>
             ))}

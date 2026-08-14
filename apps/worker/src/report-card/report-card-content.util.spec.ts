@@ -216,4 +216,36 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
     expect(content.classTeacherComment).toBeNull();
     expect(content.principalComment).toBeNull();
   });
+
+  it("defaults attendance to null when the caller has no attendance data to offer", () => {
+    const content = buildFullTermContent([], [], NO_OVERALL, [], { classTeacherComment: null, principalComment: null });
+
+    expect(content.attendance).toBeNull();
+  });
+
+  it("computes the attendance percentage from schoolDaysOpened/daysPresent (PRD §3.6/§3.7)", () => {
+    const content = buildFullTermContent(
+      [],
+      [],
+      NO_OVERALL,
+      [],
+      { classTeacherComment: null, principalComment: null },
+      { schoolDaysOpened: 60, daysPresent: 54 },
+    );
+
+    expect(content.attendance).toEqual({ schoolDaysOpened: 60, daysPresent: 54, percentage: 90 });
+  });
+
+  it("reports a null attendance percentage (not a divide-by-zero NaN) when no school days were opened", () => {
+    const content = buildFullTermContent(
+      [],
+      [],
+      NO_OVERALL,
+      [],
+      { classTeacherComment: null, principalComment: null },
+      { schoolDaysOpened: 0, daysPresent: 0 },
+    );
+
+    expect(content.attendance).toEqual({ schoolDaysOpened: 0, daysPresent: 0, percentage: null });
+  });
 });

@@ -24,6 +24,7 @@ import {
 } from "@prisma/client";
 import { QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { hashToken } from "../common/crypto/token";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
@@ -375,6 +376,41 @@ export class TermReportCardService {
     return this.prisma.termReportCard.delete({ where: { id } });
   }
 
+  /**
+   * Public verification lookup for the PDF's QR code (report-card.processor.ts,
+   * apps/worker, mints the token/hash pair on every generation). Reachable
+   * with no authentication — see ReportCardVerificationController below —
+   * so this deliberately returns no scores, just enough to confirm the
+   * document is genuine.
+   */
+  async verify(rawToken: string) {
+    const reportCard = await this.prisma.termReportCard.findFirst({
+      where: { verificationTokenHash: hashToken(rawToken) },
+      include: {
+        student: { include: { user: true, currentClass: { include: { classLevel: true } } } },
+        term: { include: { academicSession: true } },
+      },
+    });
+
+    if (!reportCard || reportCard.status !== TermReportCardStatus.PUBLISHED) {
+      return { valid: false as const };
+    }
+
+    return {
+      valid: true as const,
+      studentName: `${reportCard.student.user.firstName} ${reportCard.student.user.lastName}`,
+      admissionNumber: reportCard.student.admissionNumber,
+      className: reportCard.student.currentClass
+        ? `${reportCard.student.currentClass.classLevel.name} ${reportCard.student.currentClass.name}`
+        : null,
+      termName: reportCard.term.name,
+      sessionName: reportCard.term.academicSession.name,
+      reportType: reportCard.reportType,
+      generatedAt: reportCard.generatedAt,
+      publishedAt: reportCard.publishedAt,
+    };
+  }
+
   // Same shape as ReportCommentService.progress (assessments/report-comment.ts)
   // — totalStudents is everyone currently in the arm, generatedCount is
   // distinct students with at least one report card for the term (either
@@ -453,5 +489,22 @@ export class TermReportCardController {
       throw new ForbiddenException("Only the Super-Admin can delete a report card");
     }
     return this.service.remove(id);
+  }
+}
+
+/**
+ * Deliberately separate from TermReportCardController, which carries a
+ * class-level @UseGuards(JwtAuthGuard, PoliciesGuard) — this codebase has no
+ * @Public()-style guard bypass, so a route that must work with no login
+ * (scanning a report card's QR code) needs its own unguarded controller
+ * rather than an exception carved into the guarded one.
+ */
+@Controller("term-report-cards/verify")
+export class ReportCardVerificationController {
+  constructor(private readonly service: TermReportCardService) {}
+
+  @Get(":token")
+  verify(@Param("token") token: string) {
+    return this.service.verify(token);
   }
 }

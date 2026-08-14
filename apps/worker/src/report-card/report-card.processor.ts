@@ -1,14 +1,26 @@
 import { Inject, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
-import { AssessmentComponentType, EnrollmentStatus, ReportCommentType, TermReportCardStatus } from "@prisma/client";
-import { findGradeScaleMatch, QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
+import QRCode from "qrcode";
+import {
+  AssessmentComponentType,
+  AttendancePersonType,
+  AttendanceSessionType,
+  AttendanceStatus,
+  EnrollmentStatus,
+  ReportCommentType,
+  TermReportCardStatus,
+} from "@prisma/client";
+import { computeSchoolDaysOpened, findGradeScaleMatch, QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
 import { SubjectTermResultService } from "../subject-term-result/subject-term-result.service";
+import { generateRawToken, hashToken } from "../common/crypto/token";
 import {
   buildFullTermContent,
   buildMidTermSnapshot,
+  type FullTermAttendanceInput,
   type FullTermOverallInput,
   type FullTermSkillRatingInput,
   type FullTermSubjectResultInput,
@@ -25,6 +37,7 @@ export class ReportCardProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly subjectTermResults: SubjectTermResultService,
+    private readonly config: ConfigService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {
     super();
@@ -61,7 +74,7 @@ export class ReportCardProcessor extends WorkerHost {
         where: { id: studentId },
         include: { user: true, currentClass: { include: { classLevel: true } } },
       }),
-      this.prisma.term.findUniqueOrThrow({ where: { id: termId } }),
+      this.prisma.term.findUniqueOrThrow({ where: { id: termId }, include: { academicSession: true } }),
     ]);
 
     if (!student.currentClass) {
@@ -146,6 +159,9 @@ export class ReportCardProcessor extends WorkerHost {
 
     const generatedAt = new Date();
     const school = await this.fetchSchoolHeaderMeta();
+    const parentName = await this.fetchParentName(studentId);
+    const photoBuffer = student.user.avatarUrl ? await this.fetchImageBuffer(student.user.avatarUrl) : null;
+    const { verificationTokenHash, qrCodeBuffer } = await this.buildVerificationAssets();
 
     const pdfBuffer = await renderMidTermPdf(snapshot, {
       studentName: `${student.user.firstName} ${student.user.lastName}`,
@@ -155,6 +171,12 @@ export class ReportCardProcessor extends WorkerHost {
       schoolAddress: school.address,
       logoBuffer: school.logoBuffer,
       generatedAt,
+      gender: student.user.gender,
+      className: `${student.currentClass.classLevel.name} ${student.currentClass.name}`,
+      sessionName: term.academicSession.name,
+      parentName,
+      photoBuffer,
+      qrCodeBuffer,
     });
 
     const key = `report-cards/${studentId}/${termId}/mid-term.pdf`;
@@ -174,6 +196,7 @@ export class ReportCardProcessor extends WorkerHost {
         needsRegeneration: false,
         staleReason: null,
         staleSince: null,
+        verificationTokenHash,
       },
     });
 
@@ -200,7 +223,7 @@ export class ReportCardProcessor extends WorkerHost {
         where: { id: studentId },
         include: { user: true, currentClass: { include: { classLevel: true } } },
       }),
-      this.prisma.term.findUniqueOrThrow({ where: { id: termId } }),
+      this.prisma.term.findUniqueOrThrow({ where: { id: termId }, include: { academicSession: true } }),
     ]);
 
     if (!student.currentClass) {
@@ -359,6 +382,8 @@ export class ReportCardProcessor extends WorkerHost {
       overall = { isAnnual: false, average, grade, remark };
     }
 
+    const attendance = await this.fetchAttendanceSummary(studentId, term);
+
     const content = buildFullTermContent(
       subjects,
       components.map((c) => ({ name: c.name, maxScore: Number(c.maxScore) })),
@@ -371,10 +396,14 @@ export class ReportCardProcessor extends WorkerHost {
         }),
       ),
       { classTeacherComment: classTeacherComment?.comment ?? null, principalComment: principalComment?.comment ?? null },
+      attendance,
     );
 
     const generatedAt = new Date();
     const school = await this.fetchSchoolHeaderMeta();
+    const parentName = await this.fetchParentName(studentId);
+    const photoBuffer = student.user.avatarUrl ? await this.fetchImageBuffer(student.user.avatarUrl) : null;
+    const { verificationTokenHash, qrCodeBuffer } = await this.buildVerificationAssets();
 
     const pdfBuffer = await renderFullTermPdf(content, {
       studentName: `${student.user.firstName} ${student.user.lastName}`,
@@ -384,6 +413,12 @@ export class ReportCardProcessor extends WorkerHost {
       schoolAddress: school.address,
       logoBuffer: school.logoBuffer,
       generatedAt,
+      gender: student.user.gender,
+      className: `${student.currentClass.classLevel.name} ${student.currentClass.name}`,
+      sessionName: term.academicSession.name,
+      parentName,
+      photoBuffer,
+      qrCodeBuffer,
     });
 
     const key = `report-cards/${studentId}/${termId}/full-term.pdf`;
@@ -401,6 +436,7 @@ export class ReportCardProcessor extends WorkerHost {
         overallRemark: overall.remark,
         needsRegeneration: false,
         staleReason: null,
+        verificationTokenHash,
         staleSince: null,
       },
     });
@@ -421,21 +457,103 @@ export class ReportCardProcessor extends WorkerHost {
     logoBuffer: Buffer | null;
   }> {
     const school = await this.prisma.schoolProfile.findFirstOrThrow();
+    const logoBuffer = school.logoUrl ? await this.fetchImageBuffer(school.logoUrl) : null;
+    return { name: school.name, address: school.address, logoBuffer };
+  }
 
-    let logoBuffer: Buffer | null = null;
-    if (school.logoUrl) {
-      try {
-        const response = await fetch(school.logoUrl);
-        if (response.ok) {
-          logoBuffer = Buffer.from(await response.arrayBuffer());
-        } else {
-          this.logger.warn(`School logo fetch returned ${response.status}, omitting from report card`);
-        }
-      } catch (error) {
-        this.logger.warn(`Failed to fetch school logo, omitting from report card: ${error}`);
+  /**
+   * Shared "fetch bytes over the network, degrade to null on any failure"
+   * contract for header images — used for both the school logo
+   * (SchoolProfile.logoUrl) and the student passport photo
+   * (User.avatarUrl). Neither is required content, so a bad/unreachable URL
+   * just omits the image rather than failing report generation.
+   */
+  private async fetchImageBuffer(url: string): Promise<Buffer | null> {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return Buffer.from(await response.arrayBuffer());
       }
+      this.logger.warn(`Image fetch returned ${response.status}, omitting from report card: ${url}`);
+    } catch (error) {
+      this.logger.warn(`Failed to fetch image, omitting from report card: ${error}`);
+    }
+    return null;
+  }
+
+  /**
+   * Primary-guardian name for the report header — prefers
+   * StudentGuardian.isPrimaryContact, falling back to the earliest-linked
+   * guardian if none is flagged primary (nothing currently enforces exactly
+   * one primary contact). Null only when the student has no guardian at all.
+   */
+  private async fetchParentName(studentId: string): Promise<string | null> {
+    const guardian = await this.prisma.studentGuardian.findFirst({
+      where: { studentId },
+      orderBy: [{ isPrimaryContact: "desc" }, { createdAt: "asc" }],
+      include: { parent: { include: { user: true } } },
+    });
+    return guardian ? `${guardian.parent.user.firstName} ${guardian.parent.user.lastName}` : null;
+  }
+
+  /**
+   * PRD §3.6/§3.7: "days present / school-days-opened this term" — same
+   * computeSchoolDaysOpened/SchoolHoliday/SchoolProfile.attendanceGranularity
+   * rule apps/api's AttendanceAnalyticsService.forStudent uses (shared via
+   * packages/types precisely so the two don't drift apart). FULL_TERM only,
+   * per PRD — generateMidTerm never calls this.
+   */
+  private async fetchAttendanceSummary(
+    studentId: string,
+    term: { startDate: Date; endDate: Date },
+  ): Promise<FullTermAttendanceInput> {
+    const [schoolProfile, holidays, daysPresent] = await Promise.all([
+      this.prisma.schoolProfile.findFirstOrThrow(),
+      this.prisma.schoolHoliday.findMany({
+        where: { date: { gte: term.startDate, lte: term.endDate } },
+        select: { date: true },
+      }),
+      this.prisma.attendanceRecord.count({
+        where: {
+          personId: studentId,
+          personType: AttendancePersonType.STUDENT,
+          status: AttendanceStatus.PRESENT,
+          attendanceSession: { type: AttendanceSessionType.STUDENT, date: { gte: term.startDate, lte: term.endDate } },
+        },
+      }),
+    ]);
+
+    const schoolDaysOpened = computeSchoolDaysOpened(
+      { start: term.startDate, end: term.endDate },
+      holidays.map((h) => h.date),
+      schoolProfile.attendanceGranularity,
+    );
+
+    return { schoolDaysOpened, daysPresent };
+  }
+
+  /**
+   * QR-code verification asset (PRD post-Phase-4 addition): a fresh opaque
+   * token is minted on every (re)generation — same generateRawToken/
+   * hashToken pattern as Invitation.tokenHash — so an old printed QR code
+   * stops resolving once the report is regenerated. Only the hash is
+   * persisted (TermReportCard.verificationTokenHash); the raw token goes
+   * into the QR's verification URL, resolved by the unguarded
+   * GET /term-report-cards/verify/:token endpoint (api). QR generation
+   * failure degrades to no QR code rather than failing the whole report.
+   */
+  private async buildVerificationAssets(): Promise<{ verificationTokenHash: string; qrCodeBuffer: Buffer | null }> {
+    const rawToken = generateRawToken();
+    const verificationTokenHash = hashToken(rawToken);
+
+    let qrCodeBuffer: Buffer | null = null;
+    try {
+      const verifyUrl = `${this.config.getOrThrow<string>("WEB_BASE_URL")}/verify-report/${rawToken}`;
+      qrCodeBuffer = await QRCode.toBuffer(verifyUrl, { width: 160, margin: 1 });
+    } catch (error) {
+      this.logger.warn(`Failed to generate verification QR code, omitting from report card: ${error}`);
     }
 
-    return { name: school.name, address: school.address, logoBuffer };
+    return { verificationTokenHash, qrCodeBuffer };
   }
 }

@@ -4,7 +4,7 @@ import { QUEUE_NAMES } from "@school/types";
 import { AssessmentComponentController, AssessmentComponentService } from "./assessment-component";
 import { ScoreEntryController, ScoreEntryService } from "./score-entry";
 import { GradeScaleController, GradeScaleService } from "./grade-scale";
-import { TermReportCardController, TermReportCardService } from "./term-report-card";
+import { TermReportCardController, TermReportCardService, ReportCardVerificationController } from "./term-report-card";
 import { SkillAssessmentItemController, SkillAssessmentItemService } from "./skill-assessment-item";
 import { ReportWindowController, ReportWindowService } from "./report-window";
 import { SkillRatingController, SkillRatingService } from "./skill-rating";
@@ -30,6 +30,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     ScoreEntryController,
     GradeScaleController,
     TermReportCardController,
+    ReportCardVerificationController,
     SkillAssessmentItemController,
     ReportWindowController,
     SkillRatingController,

@@ -14,6 +14,7 @@ import {
 } from "../molecules/select";
 
 type Relationship = "FATHER" | "MOTHER" | "GUARDIAN" | "OTHER";
+type Gender = "MALE" | "FEMALE" | "OTHER";
 
 interface GuardianRow {
   email: string;
@@ -36,7 +37,7 @@ function emptyGuardian(): GuardianRow {
 export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [admissionNumber, setAdmissionNumber] = useState("");
+  const [gender, setGender] = useState<Gender | "">("");
   const [admissionDate, setAdmissionDate] = useState("");
   const [classArmId, setClassArmId] = useState<string>("");
   const [classArms, setClassArms] = useState<ClassArm[]>([]);
@@ -67,24 +68,28 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+    if (!classArmId) {
+      setError("Class is required — the admission number is generated from it.");
+      return;
+    }
     setSubmitting(true);
     try {
-      await apiFetch("/students", {
+      const created = await apiFetch<{ admissionNumber: string }>("/students", {
         method: "POST",
         auth: true,
         body: {
           firstName,
           lastName,
-          admissionNumber,
+          gender: gender || undefined,
           admissionDate,
-          classArmId: classArmId || undefined,
+          classArmId,
           guardians,
         },
       });
-      setSuccess(`${firstName} ${lastName} was created.`);
+      setSuccess(`${firstName} ${lastName} was created — admission number ${created.admissionNumber}.`);
       setFirstName("");
       setLastName("");
-      setAdmissionNumber("");
+      setGender("");
       setAdmissionDate("");
       setClassArmId("");
       setGuardians([emptyGuardian()]);
@@ -117,13 +122,6 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
           onChange={(e) => setLastName(e.target.value)}
         />
         <FormField
-          label="Admission number"
-          id="student-admission-number"
-          required
-          value={admissionNumber}
-          onChange={(e) => setAdmissionNumber(e.target.value)}
-        />
-        <FormField
           label="Admission date"
           id="student-admission-date"
           type="date"
@@ -131,13 +129,29 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
           value={admissionDate}
           onChange={(e) => setAdmissionDate(e.target.value)}
         />
+        <div>
+          <Label htmlFor="student-gender">Gender</Label>
+          <Select value={gender} onValueChange={(value) => setGender(value as Gender)}>
+            <SelectTrigger id="student-gender" className="mt-1">
+              <SelectValue placeholder="Not specified" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="MALE">Male</SelectItem>
+              <SelectItem value="FEMALE">Female</SelectItem>
+              <SelectItem value="OTHER">Other</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div>
-        <Label htmlFor="student-class-arm">Class (optional)</Label>
+        <Label htmlFor="student-class-arm">
+          Class <span className="text-danger">*</span>{" "}
+          <span className="text-muted">(admission number is generated from this)</span>
+        </Label>
         <Select value={classArmId} onValueChange={setClassArmId}>
           <SelectTrigger id="student-class-arm" className="mt-1">
-            <SelectValue placeholder="Not yet assigned" />
+            <SelectValue placeholder="Select a class" />
           </SelectTrigger>
           <SelectContent>
             {classArms.map((classArm) => (

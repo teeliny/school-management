@@ -7,13 +7,15 @@ function buildTxMock() {
   return {
     user: { create: jest.fn(), findUnique: jest.fn() },
     userRole: { create: jest.fn() },
-    studentProfile: { create: jest.fn() },
+    studentProfile: { create: jest.fn(), findFirst: jest.fn() },
     studentGuardian: { create: jest.fn() },
     parentProfile: {
       create: jest.fn(),
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
     },
+    classArm: { findUnique: jest.fn() },
+    $executeRaw: jest.fn(),
   };
 }
 
@@ -21,7 +23,7 @@ function buildDto(guardian: CreateStudentDto["guardians"][number]): CreateStuden
   return {
     firstName: "Ada",
     lastName: "Lovelace",
-    admissionNumber: "ADM-001",
+    classArmId: "arm-1",
     admissionDate: new Date("2025-09-01"),
     guardians: [guardian],
   };
@@ -44,12 +46,19 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
 
     tx.user.create.mockResolvedValue({ id: "student-user-1" });
     tx.studentProfile.create.mockResolvedValue({ id: "student-1" });
+    tx.classArm.findUnique.mockResolvedValue({
+      id: "arm-1",
+      classLevel: { category: "JSS" },
+      academicSession: { startDate: new Date("2025-09-01") },
+    });
+    tx.studentProfile.findFirst.mockResolvedValue(null);
 
     service = new StudentService(
       prisma as never,
       userService as never,
       invitationService as never,
       enrollmentService as never,
+      {} as never,
     );
   });
 
@@ -140,7 +149,7 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
       staffProfile: { findUnique: jest.fn().mockResolvedValue({ id: "staff-1" }) },
       staffAssignment: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
     };
-    service = new StudentService(prisma as never, {} as never, {} as never, {} as never);
+    service = new StudentService(prisma as never, {} as never, {} as never, {} as never, {} as never);
   });
 
   function staffUser(): RequestUser {

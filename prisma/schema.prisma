@@ -1124,6 +1124,11 @@ model TermReportCard {
   needsRegeneration Boolean              @default(false)
   staleReason       String?
   staleSince        DateTime?
+  // Hash of the opaque token embedded in the PDF's verification QR code
+  // (same generateRawToken/hashToken pattern as Invitation.tokenHash) —
+  // re-generated on every (re)generation, so an old printed QR code stops
+  // resolving once the report is regenerated. Null until first generated.
+  verificationTokenHash String?          @unique
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 

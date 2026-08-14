@@ -1,4 +1,4 @@
-import { findGradeScaleMatch, type GradeScaleRow } from "@school/types";
+import { computeAttendancePercentage, findGradeScaleMatch, type GradeScaleRow } from "@school/types";
 
 export interface MidTermSubjectScoreInput {
   subjectId: string;
@@ -124,6 +124,17 @@ export interface FullTermComponentHeader {
   maxScore: number;
 }
 
+export interface FullTermAttendanceInput {
+  schoolDaysOpened: number;
+  daysPresent: number;
+}
+
+export interface FullTermAttendanceSummary {
+  schoolDaysOpened: number;
+  daysPresent: number;
+  percentage: number | null;
+}
+
 export interface FullTermContent {
   subjects: FullTermSubjectResultInput[];
   // The term's assessment components (name + obtainable score) in display
@@ -142,6 +153,10 @@ export interface FullTermContent {
   affectiveCognitiveSkills: FullTermSkillRatingInput[];
   classTeacherComment: string | null;
   principalComment: string | null;
+  // PRD §3.6/§3.7: "days present / school-days-opened this term" — null when
+  // the caller has no attendance data to offer (kept optional at the call
+  // site so every existing 5-arg buildFullTermContent call keeps compiling).
+  attendance: FullTermAttendanceSummary | null;
 }
 
 /**
@@ -159,6 +174,7 @@ export function buildFullTermContent(
   overall: FullTermOverallInput,
   skillRatings: FullTermSkillRatingInput[],
   comments: FullTermCommentsInput,
+  attendance: FullTermAttendanceInput | null = null,
 ): FullTermContent {
   return {
     subjects: [...subjectResults].sort((a, b) => a.subjectName.localeCompare(b.subjectName)),
@@ -172,5 +188,10 @@ export function buildFullTermContent(
     affectiveCognitiveSkills: skillRatings.filter((s) => s.category === "AFFECTIVE_COGNITIVE"),
     classTeacherComment: comments.classTeacherComment,
     principalComment: comments.principalComment,
+    attendance: attendance && {
+      schoolDaysOpened: attendance.schoolDaysOpened,
+      daysPresent: attendance.daysPresent,
+      percentage: computeAttendancePercentage(attendance.daysPresent, attendance.schoolDaysOpened),
+    },
   };
 }

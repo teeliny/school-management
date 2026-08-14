@@ -4,29 +4,53 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Inject,
   Injectable,
   Param,
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
-import { AssignmentType, Prisma, Role } from "@prisma/client";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { memoryStorage } from "multer";
+import { AssignmentType, ClassLevelCategory, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../../casl/policies.guard";
 import { CheckPolicies } from "../../casl/check-policies.decorator";
+import { AbilityFactory } from "../../casl/ability.factory";
 import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { UserService } from "../users/user.service";
 import { InvitationService } from "../invitations/invitation.service";
 import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
+import { STORAGE_ADAPTER, type StorageAdapter } from "../../storage/storage-adapter";
 import { CreateStudentDto, GuardianInputDto } from "./dto/create-student.dto";
 import { UpdateStudentDto } from "./dto/update-student.dto";
 
 type Tx = Prisma.TransactionClient;
 
-const STUDENT_LIST_INCLUDE = { user: true } satisfies Prisma.StudentProfileInclude;
+const STUDENT_LIST_INCLUDE = {
+  user: true,
+  currentClass: { include: { classLevel: true } },
+} satisfies Prisma.StudentProfileInclude;
+
+const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
+const MAX_PHOTO_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_PHOTO_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+// Maps ClassLevelCategory to the 2-digit admission-number code (see
+// generateAdmissionNumber): creche=01, nursery=02, primary=03, jss=04, sss=05.
+const CLASS_LEVEL_CATEGORY_CODE: Record<ClassLevelCategory, string> = {
+  CRECHE: "01",
+  NURSERY: "02",
+  PRIMARY: "03",
+  JSS: "04",
+  SSS: "05",
+};
 
 @Injectable()
 export class StudentService {
@@ -35,6 +59,7 @@ export class StudentService {
     private readonly userService: UserService,
     private readonly invitationService: InvitationService,
     private readonly enrollmentService: StudentSubjectEnrollmentService,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
   /**
@@ -53,13 +78,15 @@ export class StudentService {
     const pendingInvites: { email: string; rawToken: string }[] = [];
 
     const student = await this.prisma.$transaction(async (tx) => {
+      const admissionNumber = await this.generateAdmissionNumber(tx, dto.classArmId);
+
       // Students are created directly, never invited (PRD FR1.3), and are
       // frequently minors with no independent email. A synthetic,
       // non-deliverable address satisfies User.email's NOT NULL + UNIQUE
       // constraint without being usable for login — no passwordHash is ever
       // set for this path, and login requires one.
       const syntheticEmail = UserService.normalizeEmail(
-        `student.${dto.admissionNumber}@no-email.internal`,
+        `student.${admissionNumber}@no-email.internal`,
       );
 
       const user = await tx.user.create({
@@ -78,7 +105,7 @@ export class StudentService {
       const studentProfile = await tx.studentProfile.create({
         data: {
           userId: user.id,
-          admissionNumber: dto.admissionNumber,
+          admissionNumber,
           admissionDate: dto.admissionDate,
           currentClassId: dto.classArmId,
         },
@@ -100,12 +127,10 @@ export class StudentService {
       // PRD §3.3: COMPULSORY subjects auto-enroll on class assignment —
       // same transaction, so a student is never left without their required
       // subjects if anything downstream fails.
-      if (dto.classArmId) {
-        await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
-          studentId: studentProfile.id,
-          classArmId: dto.classArmId,
-        });
-      }
+      await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
+        studentId: studentProfile.id,
+        classArmId: dto.classArmId,
+      });
 
       return studentProfile;
     });
@@ -117,6 +142,44 @@ export class StudentService {
     }
 
     return student;
+  }
+
+  /**
+   * Admission number format: YYYY/CC/NNNN — YYYY is the assigned class arm's
+   * academic session start year, CC is the 2-digit class-level-category code
+   * (CLASS_LEVEL_CATEGORY_CODE), NNNN is a 4-digit sequence that resets per
+   * (session, category) and is derived from existing admissionNumbers rather
+   * than a class-arm headcount, so it stays correct even after a student is
+   * later promoted/reassigned to a different class arm.
+   *
+   * pg_advisory_xact_lock serializes concurrent creates for the same
+   * (session, category) prefix for the lifetime of this transaction (auto
+   * released on commit/rollback) — without it, two concurrent requests could
+   * both read the same "last" admission number and collide on the same
+   * NNNN, which the admissionNumber @unique constraint would then reject.
+   */
+  private async generateAdmissionNumber(tx: Tx, classArmId: string): Promise<string> {
+    const classArm = await tx.classArm.findUnique({
+      where: { id: classArmId },
+      include: { classLevel: true, academicSession: true },
+    });
+    if (!classArm) {
+      throw new BadRequestException(`No ClassArm found for id ${classArmId}`);
+    }
+
+    const year = classArm.academicSession.startDate.getFullYear();
+    const code = CLASS_LEVEL_CATEGORY_CODE[classArm.classLevel.category];
+    const prefix = `${year}/${code}/`;
+
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${prefix}))`;
+
+    const last = await tx.studentProfile.findFirst({
+      where: { admissionNumber: { startsWith: prefix } },
+      orderBy: { admissionNumber: "desc" },
+    });
+    const nextSeq = last ? Number(last.admissionNumber.slice(prefix.length)) + 1 : 1;
+
+    return `${prefix}${String(nextSeq).padStart(4, "0")}`;
   }
 
   private async resolveGuardian(
@@ -185,6 +248,55 @@ export class StudentService {
       });
       return updated;
     });
+  }
+
+  /**
+   * Passport photo for the term report card (report-card.processor.ts,
+   * apps/worker, renders User.avatarUrl if set). Stores a freshly-signed
+   * URL directly on User.avatarUrl — same "store the signed URL, not the
+   * key" convention TermReportCard.pdfUrl already uses — rather than a
+   * stable public URL, since StorageAdapter only exposes signed URLs.
+   *
+   * Admin/Super-Admin can upload for any student (isOverride, computed by
+   * the controller from CASL's "manage StudentProfile"); anyone else must
+   * be the active CLASS_TEACHER for this student's current class arm — same
+   * row-level assignment check as ReportCommentService's CLASS_TEACHER
+   * branch, not a CASL condition (CASL has no instance data to scope by at
+   * guard time).
+   */
+  async uploadPhoto(studentId: string, file: Express.Multer.File, userId: string, isOverride: boolean) {
+    const student = await this.prisma.studentProfile.findUniqueOrThrow({ where: { id: studentId } });
+
+    if (!isOverride) {
+      await this.assertIsClassTeacherFor(userId, student.currentClassId);
+    }
+
+    const key = `student-photos/${studentId}/${Date.now()}-${file.originalname}`;
+    await this.storage.put(key, file.buffer, file.mimetype);
+    const avatarUrl = await this.storage.getSignedUrl(key, SIGNED_URL_TTL_SECONDS);
+
+    await this.prisma.user.update({ where: { id: student.userId }, data: { avatarUrl } });
+    return { avatarUrl };
+  }
+
+  private async assertIsClassTeacherFor(userId: string, classArmId: string | null): Promise<void> {
+    if (!classArmId) {
+      throw new ForbiddenException("Student has no current class — only Admin/Super-Admin can upload a photo");
+    }
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    const assignment = staffProfile
+      ? await this.prisma.staffAssignment.findFirst({
+          where: {
+            staffId: staffProfile.id,
+            isActive: true,
+            assignmentType: AssignmentType.CLASS_TEACHER,
+            classArmId,
+          },
+        })
+      : null;
+    if (!assignment) {
+      throw new ForbiddenException("You are not the class teacher for this student");
+    }
   }
 
   /**
@@ -281,7 +393,10 @@ export class StudentService {
   async findOneForUser(id: string, user: RequestUser) {
     const student = await this.prisma.studentProfile.findUniqueOrThrow({
       where: { id },
-      include: { ...STUDENT_LIST_INCLUDE, guardians: true },
+      include: {
+        ...STUDENT_LIST_INCLUDE,
+        guardians: { include: { parent: { include: { user: true } } } },
+      },
     });
 
     if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) return student;
@@ -339,7 +454,10 @@ export class StudentService {
 @Controller("students")
 @UseGuards(JwtAuthGuard, PoliciesGuard)
 export class StudentController {
-  constructor(private readonly service: StudentService) {}
+  constructor(
+    private readonly service: StudentService,
+    private readonly abilityFactory: AbilityFactory,
+  ) {}
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "StudentProfile"))
@@ -372,5 +490,38 @@ export class StudentController {
   @CheckPolicies((ability) => ability.can("manage", "StudentProfile"))
   update(@Param("id") id: string, @Body() dto: UpdateStudentDto) {
     return this.service.update(id, dto);
+  }
+
+  @Post(":id/photo")
+  @UseInterceptors(
+    FileInterceptor("file", {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_PHOTO_FILE_SIZE_BYTES },
+      fileFilter: (_req, file, callback) => {
+        if (!ALLOWED_PHOTO_MIME_TYPES.includes(file.mimetype)) {
+          callback(new BadRequestException("Photo must be a JPEG, PNG, or WebP image"), false);
+          return;
+        }
+        callback(null, true);
+      },
+    }),
+  )
+  // No @CheckPolicies here — a class teacher (no "manage StudentProfile"
+  // grant at all) must reach the service to be authorized, since that's a
+  // row-level "are you the class teacher for *this* student" check CASL
+  // can't express at guard time. Same shape as ReportCommentController's
+  // write() route. StudentService.uploadPhoto does the actual gating,
+  // Admin/Super-Admin bypassing it via the isOverride computed below.
+  uploadPhoto(
+    @Param("id") id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: RequestUser,
+  ) {
+    if (!file) {
+      throw new BadRequestException("Photo file is required");
+    }
+    const ability = this.abilityFactory.createForUser(user);
+    const isOverride = ability.can("manage", "StudentProfile");
+    return this.service.uploadPhoto(id, file, user.id, isOverride);
   }
 }

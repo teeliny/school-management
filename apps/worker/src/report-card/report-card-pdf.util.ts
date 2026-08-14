@@ -13,6 +13,20 @@ export interface ReportCardMeta {
   // there's no logo configured or it couldn't be fetched, in which case the
   // header just omits it rather than failing report generation.
   logoBuffer: Buffer | null;
+  gender: string | null;
+  className: string;
+  sessionName: string;
+  // Primary guardian's name (falls back to the earliest-linked guardian if
+  // none is flagged primary) — null only when the student has no guardian
+  // on file at all.
+  parentName: string | null;
+  // Same "fetch over network, degrade to null on failure" contract as
+  // logoBuffer, sourced from User.avatarUrl.
+  photoBuffer: Buffer | null;
+  // PNG bytes of a QR code encoding this report's verification URL — null
+  // only if QR generation itself failed, in which case it's omitted rather
+  // than failing the whole report.
+  qrCodeBuffer: Buffer | null;
 }
 
 // Brand colors (see CLAUDE.md's web theming notes) reused here for visual
@@ -55,6 +69,8 @@ function headerRow(labels: string[]): { text: string; font: { src: string } }[] 
  * pattern, no need for a second one on top.
  */
 function renderHeader(doc: PDFKit.PDFDocument, meta: ReportCardMeta, title: string): void {
+  const headerTop = doc.y;
+
   if (meta.logoBuffer) {
     try {
       doc.image(meta.logoBuffer, { fit: [64, 64], align: "center" });
@@ -70,6 +86,23 @@ function renderHeader(doc: PDFKit.PDFDocument, meta: ReportCardMeta, title: stri
   }
   doc.moveDown(0.5);
 
+  // Student photo — placed at an absolute x/y (top-right corner) rather
+  // than flowed, so it doesn't disturb the centered logo/school-name block
+  // above. If the flowed content above ended up shorter than the photo
+  // (e.g. no logo), doc.y is nudged down so the divider rule below doesn't
+  // cut through it.
+  if (meta.photoBuffer) {
+    try {
+      const photoSize = 56;
+      const photoX = doc.page.margins.left + contentWidth(doc) - photoSize;
+      doc.image(meta.photoBuffer, photoX, headerTop, { fit: [photoSize, photoSize] });
+      const photoBottom = headerTop + photoSize + 6;
+      if (doc.y < photoBottom) doc.y = photoBottom;
+    } catch {
+      // Malformed/unsupported image bytes — skip, same as the logo.
+    }
+  }
+
   const left = doc.page.margins.left;
   const width = contentWidth(doc);
   doc.moveTo(left, doc.y).lineTo(left + width, doc.y).lineWidth(1.25).strokeColor(NAVY).stroke();
@@ -84,11 +117,44 @@ function renderHeader(doc: PDFKit.PDFDocument, meta: ReportCardMeta, title: stri
   doc.fillColor("black").fontSize(10.5);
   doc.font("Helvetica-Bold").text("Student: ", { continued: true });
   doc.font("Helvetica").text(`${meta.studentName} (${meta.admissionNumber})`);
+  doc.font("Helvetica-Bold").text("Gender: ", { continued: true });
+  doc.font("Helvetica").text(meta.gender ?? "-");
+  doc.font("Helvetica-Bold").text("Class: ", { continued: true });
+  doc.font("Helvetica").text(meta.className);
+  doc.font("Helvetica-Bold").text("Session: ", { continued: true });
+  doc.font("Helvetica").text(meta.sessionName);
   doc.font("Helvetica-Bold").text("Term: ", { continued: true });
   doc.font("Helvetica").text(meta.termName);
+  doc.font("Helvetica-Bold").text("Parent/Guardian: ", { continued: true });
+  doc.font("Helvetica").text(meta.parentName ?? "-");
   doc.moveDown(0.7);
 
   doc.fillColor("black").font("Helvetica").fontSize(10);
+}
+
+/**
+ * QR code + caption, placed bottom-right of wherever the document's flow
+ * currently is (i.e. after everything else has rendered) — an authenticity
+ * signature a parent/employer can scan to confirm the report card is
+ * genuine (GET /term-report-cards/verify/:token, apps/api). Absent
+ * (qrCodeBuffer null) if generation failed upstream; that degrades
+ * silently rather than blocking the report, same contract as the logo.
+ */
+function renderVerificationQr(doc: PDFKit.PDFDocument, qrCodeBuffer: Buffer | null): void {
+  if (!qrCodeBuffer) return;
+  const size = 64;
+  if (doc.y > doc.page.height - doc.page.margins.bottom - size - 20) doc.addPage();
+
+  const left = doc.page.margins.left;
+  const width = contentWidth(doc);
+  const x = left + width - size;
+  const y = doc.y + 8;
+  try {
+    doc.image(qrCodeBuffer, x, y, { fit: [size, size] });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text("Scan to verify", x, y + size + 2, { width: size, align: "center" });
+  } catch {
+    // Malformed QR bytes — skip rather than fail the report.
+  }
 }
 
 /** Section title with a navy rule beneath it, replacing plain underlined text. */
@@ -185,17 +251,19 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
     doc.fillColor("black").font("Helvetica").fontSize(10);
     doc.y = boxY + 26 + 10;
 
+    renderVerificationQr(doc, meta.qrCodeBuffer);
+
     doc.end();
   });
 }
 
 /**
  * Full-term report — final SubjectTermResult totals/grades/positions, both
- * skill categories, and the two required comments. Rendering only, same
- * "not meaningfully unit-testable" note as renderMidTermPdf; content
- * assembly (buildFullTermContent) is what's tested. Note attendance (days
- * present / school-days-opened) is deliberately absent — deferred to
- * Phase 5 per PRD §3.6/§3.7, not built here.
+ * skill categories, the two required comments, and (PRD §3.6/§3.7) an
+ * attendance line — "days present / school-days-opened" — when the caller
+ * supplies it. Rendering only, same "not meaningfully unit-testable" note as
+ * renderMidTermPdf; content assembly (buildFullTermContent) is what's
+ * tested.
  */
 export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -284,6 +352,22 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
       doc.y = boxY + 26 + 10;
     }
 
+    // PRD §3.6/§3.7: "days present / school-days-opened this term" — absent
+    // (content.attendance null) if the caller had no attendance data to
+    // offer, same degrade-quietly contract as the logo/photo/QR images.
+    if (content.attendance) {
+      sectionHeader(doc, "Attendance");
+      const left = doc.page.margins.left;
+      const width = contentWidth(doc);
+      const boxY = doc.y;
+      const percentageText = content.attendance.percentage === null ? "-" : `${content.attendance.percentage}%`;
+      const line = `Days present: ${content.attendance.daysPresent} / ${content.attendance.schoolDaysOpened} school days opened     Attendance: ${percentageText}`;
+      doc.save().fillColor(BAND).rect(left, boxY, width, 26).fill().restore();
+      doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(10).text(line, left + 10, boxY + 8);
+      doc.fillColor("black").font("Helvetica").fontSize(10);
+      doc.y = boxY + 26 + 10;
+    }
+
     renderSkillSectionsSideBySide(doc, content.psychomotorSkills, content.affectiveCognitiveSkills);
 
     sectionHeader(doc, "Class Teacher's Comment");
@@ -291,6 +375,8 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
 
     sectionHeader(doc, "Principal's Comment");
     commentBox(doc, content.principalComment);
+
+    renderVerificationQr(doc, meta.qrCodeBuffer);
 
     doc.end();
   });

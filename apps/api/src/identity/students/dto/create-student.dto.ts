@@ -71,17 +71,15 @@ export class CreateStudentDto {
   @IsDate()
   dateOfBirth?: Date;
 
-  @IsString()
-  @IsNotEmpty()
-  admissionNumber!: string;
-
   @Type(() => Date)
   @IsDate()
   admissionDate!: Date;
 
-  @IsOptional()
+  // Required, not optional: the class arm's academic session + class-level
+  // category are what the admission number (YYYY/CC/NNNN) is derived from —
+  // see StudentService.create.
   @IsUUID()
-  classArmId?: string;
+  classArmId!: string;
 
   @IsArray()
   @ArrayMinSize(1)

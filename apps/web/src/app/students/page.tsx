@@ -22,6 +22,7 @@ export default function StudentsPage() {
   if (!user) return null;
 
   const canCreate = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
+  const canUploadPhoto = canCreate || user.assignmentTypes.includes("CLASS_TEACHER");
 
   return (
     <AppShell user={user} onLogout={logout}>
@@ -30,7 +31,7 @@ export default function StudentsPage() {
       <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
         <Card>
           <CardHeader title="Students" sub="Scoped to what your role can see" />
-          <PeopleList refreshKey={refreshKey} />
+          <PeopleList refreshKey={refreshKey} canUploadPhoto={canUploadPhoto} />
         </Card>
 
         {canCreate && (

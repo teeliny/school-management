@@ -1,4 +1,5 @@
 import { AssessmentComponentType } from "@prisma/client";
+import { computeAttendancePercentage, computeSchoolDaysOpened } from "@school/types";
 import { ReportCardProcessor } from "./report-card.processor";
 import * as reportCardPdfUtil from "./report-card-pdf.util";
 
@@ -20,8 +21,15 @@ function buildFullPrismaMock() {
     skillRating: { findMany: jest.fn() },
     reportComment: { findFirst: jest.fn() },
     schoolProfile: { findFirstOrThrow: jest.fn() },
+    studentGuardian: { findFirst: jest.fn().mockResolvedValue(null) },
+    schoolHoliday: { findMany: jest.fn().mockResolvedValue([]) },
+    attendanceRecord: { count: jest.fn().mockResolvedValue(0) },
     termReportCard: { update: jest.fn() },
   };
+}
+
+function buildConfigMock() {
+  return { getOrThrow: jest.fn().mockReturnValue("http://localhost:3000") };
 }
 
 function buildSubjectTermResultsMock() {
@@ -41,7 +49,14 @@ const STUDENT = {
   admissionNumber: "STU-2291",
   currentClass: { id: "arm-1", classLevel: { category: "JSS" } },
 };
-const TERM_1 = { id: "term-1", name: "Term 1", academicSessionId: "session-1", startDate: new Date("2025-09-01") };
+const TERM_1 = {
+  id: "term-1",
+  name: "Term 1",
+  academicSessionId: "session-1",
+  startDate: new Date("2025-09-01"),
+  endDate: new Date("2025-12-18"),
+  academicSession: { name: "2025/2026" },
+};
 
 // fetchSchoolHeaderMeta is private — accessed via a standalone (non-
 // intersected) helper type, same pragmatic pattern used elsewhere in this
@@ -64,7 +79,7 @@ describe("ReportCardProcessor.fetchSchoolHeaderMeta (PDF header — logo/address
 
   beforeEach(() => {
     prisma = buildPrismaMock();
-    processor = new ReportCardProcessor(prisma as never, {} as never, {} as never);
+    processor = new ReportCardProcessor(prisma as never, {} as never, {} as never, {} as never);
     fetchSpy = jest.spyOn(global, "fetch");
   });
 
@@ -138,7 +153,7 @@ describe("ReportCardProcessor.process — MID_TERM (only the MID_TERM component,
     prisma = buildFullPrismaMock();
     subjectTermResults = buildSubjectTermResultsMock();
     storage = buildStorageMock();
-    processor = new ReportCardProcessor(prisma as never, subjectTermResults as never, storage as never);
+    processor = new ReportCardProcessor(prisma as never, subjectTermResults as never, buildConfigMock() as never, storage as never);
 
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue(STUDENT);
     prisma.term.findUniqueOrThrow.mockResolvedValue(TERM_1);
@@ -274,7 +289,7 @@ describe("ReportCardProcessor.process — FULL_TERM (breakdown, prior terms, ann
     prisma = buildFullPrismaMock();
     subjectTermResults = buildSubjectTermResultsMock();
     storage = buildStorageMock();
-    processor = new ReportCardProcessor(prisma as never, subjectTermResults as never, storage as never);
+    processor = new ReportCardProcessor(prisma as never, subjectTermResults as never, buildConfigMock() as never, storage as never);
 
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue(STUDENT);
     prisma.term.findUniqueOrThrow.mockResolvedValue(TERM_1);
@@ -283,7 +298,12 @@ describe("ReportCardProcessor.process — FULL_TERM (breakdown, prior terms, ann
     prisma.scoreEntry.findMany.mockResolvedValue([]);
     prisma.skillRating.findMany.mockResolvedValue([]);
     prisma.reportComment.findFirst.mockResolvedValue(null);
-    prisma.schoolProfile.findFirstOrThrow.mockResolvedValue({ name: "Ridgeview Academy", address: null, logoUrl: null });
+    prisma.schoolProfile.findFirstOrThrow.mockResolvedValue({
+      name: "Ridgeview Academy",
+      address: null,
+      logoUrl: null,
+      attendanceGranularity: "DAILY",
+    });
   });
 
   it("falls back to this term's own totals when computeAnnualSummary returns null (not the session's last term)", async () => {
@@ -461,8 +481,37 @@ describe("ReportCardProcessor.process — FULL_TERM (breakdown, prior terms, ann
     renderSpy.mockRestore();
   });
 
+  it("computes the attendance summary (school days opened + days present) and threads it into the report content", async () => {
+    const renderSpy = jest.spyOn(reportCardPdfUtil, "renderFullTermPdf");
+    prisma.subjectTermResult.findMany.mockResolvedValue([]);
+    prisma.schoolHoliday.findMany.mockResolvedValue([{ date: new Date("2025-10-01") }]);
+    prisma.attendanceRecord.count.mockResolvedValue(54);
+
+    await processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "FULL_TERM" } } as never);
+
+    const expectedSchoolDaysOpened = computeSchoolDaysOpened(
+      { start: TERM_1.startDate, end: TERM_1.endDate },
+      [new Date("2025-10-01")],
+      "DAILY",
+    );
+    const content = renderSpy.mock.calls[0]![0];
+    expect(content.attendance).toEqual({
+      schoolDaysOpened: expectedSchoolDaysOpened,
+      daysPresent: 54,
+      percentage: computeAttendancePercentage(54, expectedSchoolDaysOpened),
+    });
+    renderSpy.mockRestore();
+  });
+
   it("adds one additive prior-term column per prior term, in chronological order", async () => {
-    const term2 = { id: "term-2", name: "Term 2", academicSessionId: "session-1", startDate: new Date("2026-01-01") };
+    const term2 = {
+      id: "term-2",
+      name: "Term 2",
+      academicSessionId: "session-1",
+      startDate: new Date("2026-01-01"),
+      endDate: new Date("2026-04-30"),
+      academicSession: { name: "2025/2026" },
+    };
     prisma.term.findUniqueOrThrow.mockResolvedValue(term2);
     prisma.term.findMany.mockResolvedValue([TERM_1, term2]);
     prisma.subjectTermResult.findMany.mockImplementation((args: { where: { termId: unknown } }) => {
