@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch, ApiError } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
@@ -47,11 +48,24 @@ interface GenerateClassResult {
 }
 
 export default function ReportCardsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ReportCardsPageInner />
+    </Suspense>
+  );
+}
+
+function ReportCardsPageInner() {
   const { user, loading, logout } = useCurrentUser();
+  const searchParams = useSearchParams();
   const [students, setStudents] = useState<StudentOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
-  const [studentFilter, setStudentFilter] = useState(ALL);
+  // A student profile's "Report card" quick link arrives as
+  // `?studentId=...` — pre-selects the filter so the list opens already
+  // scoped to that one student, same term-auto-select ReportCardFilters
+  // already does for "current term."
+  const [studentFilter, setStudentFilter] = useState(searchParams.get("studentId") ?? ALL);
   const [termFilter, setTermFilter] = useState(ALL);
   const [classArmFilter, setClassArmFilter] = useState(ALL);
   const [progress, setProgress] = useState<ProgressSummary | null>(null);

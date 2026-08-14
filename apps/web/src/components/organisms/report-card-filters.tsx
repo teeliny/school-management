@@ -106,14 +106,18 @@ export function ReportCardFilters({
   // PRD ask: a parent with one ward shouldn't need a picker at all; with
   // several, default to whichever is still active this academic year rather
   // than an arbitrary one. Runs once (guarded by the ref) so it doesn't
-  // fight a manual re-selection later.
+  // fight a manual re-selection later — and never runs at all if a specific
+  // studentFilter already arrived from outside (a student profile's "Report
+  // card" quick link, `?studentId=...` on page.tsx), so that deep link isn't
+  // clobbered by the "most recently active ward" default.
   const hasAutoSelectedStudent = useRef(false);
   useEffect(() => {
     if (!isParent || hasAutoSelectedStudent.current || students.length === 0) return;
     hasAutoSelectedStudent.current = true;
+    if (studentFilter !== REPORT_CARD_FILTER_ALL) return;
     const activeWard = students.find((s) => s.status === "ACTIVE");
     onStudentFilterChange(activeWard?.id ?? students[0]!.id);
-  }, [isParent, students, onStudentFilterChange]);
+  }, [isParent, students, studentFilter, onStudentFilterChange]);
 
   // Picking a class arm invalidates whichever student was selected under a
   // different (or no) arm — same "narrower filter clears the stale child

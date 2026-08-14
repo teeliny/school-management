@@ -46,6 +46,7 @@ interface ClassArmOption {
 interface AcademicSessionOption {
   id: string;
   name: string;
+  isCurrent: boolean;
 }
 interface TermOption {
   id: string;
@@ -53,6 +54,7 @@ interface TermOption {
   academicSessionId: string;
   startDate: string;
   endDate: string;
+  isCurrent: boolean;
 }
 interface AssessmentComponentOption {
   id: string;
@@ -124,6 +126,33 @@ function PlannerPageInner() {
       .catch(() => setComponents([]));
   }, []);
 
+  // Default Class Timetable's session/term to whichever is `isCurrent` once
+  // nothing else has already set one — same "current unless picked"
+  // precedent as ReportCardFilters/useCurrentTerm. This is what actually
+  // makes a bare `?classArmId=` deep link (the approvals queue, a student
+  // profile's quick links) show data instead of an empty grid, since
+  // TimetableGrid needs all three of classArmId/academicSessionId/termId.
+  useEffect(() => {
+    if (ctAcademicSessionId || sessions.length === 0) return;
+    setCtAcademicSessionId(sessions.find((s) => s.isCurrent)?.id ?? sessions[0]!.id);
+  }, [sessions, ctAcademicSessionId]);
+
+  useEffect(() => {
+    if (ctTermId || !ctAcademicSessionId) return;
+    const forSession = terms.filter((t) => t.academicSessionId === ctAcademicSessionId);
+    if (forSession.length === 0) return;
+    setCtTermId(forSession.find((t) => t.isCurrent)?.id ?? forSession[0]!.id);
+  }, [terms, ctAcademicSessionId, ctTermId]);
+
+  // Same default for Exam Timetable's term — skipped when an
+  // assessmentComponentId arrived via URL, since that case is owned by the
+  // effect below instead (a deep-linked component may be from a past term,
+  // not necessarily the current one).
+  useEffect(() => {
+    if (etTermId || terms.length === 0 || etComponentId) return;
+    setEtTermId(terms.find((t) => t.isCurrent)?.id ?? terms[0]!.id);
+  }, [terms, etTermId, etComponentId]);
+
   // The approvals queue's "View & edit" links point back at this same route
   // with a different `?tab=`/`classArmId`/`assessmentComponentId`/
   // `classLevelCategoryGroup` — since the user is already on /planner,
@@ -145,8 +174,16 @@ function PlannerPageInner() {
       }
     } else if (urlTab === "exam-timetable") {
       const componentId = searchParams.get("assessmentComponentId");
-      if (componentId) {
-        setEtComponentId(componentId);
+      if (componentId) setEtComponentId(componentId);
+      // A classArmId (student profile quick links) always means "show this
+      // one class" — takes priority over the approvals queue's componentId-
+      // only "all classes for this batch" deep link, which is the only other
+      // source of this query param.
+      const armId = searchParams.get("classArmId");
+      if (armId) {
+        setEtClassArmId(armId);
+        setEtViewMode("single");
+      } else if (componentId) {
         setEtViewMode("all");
       }
     } else if (urlTab === "invigilation") {

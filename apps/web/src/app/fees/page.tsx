@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
@@ -14,7 +15,20 @@ import { PaymentGatewayConfigList } from "../../components/organisms/payment-gat
 import { PaymentLedger } from "../../components/organisms/payment-ledger";
 
 export default function FeesPage() {
+  return (
+    <Suspense fallback={null}>
+      <FeesPageInner />
+    </Suspense>
+  );
+}
+
+function FeesPageInner() {
   const { user, loading, logout } = useCurrentUser();
+  const searchParams = useSearchParams();
+  // A student profile's "Fees" quick link arrives as `?studentId=...`,
+  // narrowing the invoice list to that one student — same pattern as the
+  // report-cards page's own studentId deep link.
+  const studentId = searchParams.get("studentId") ?? undefined;
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
 
@@ -81,7 +95,7 @@ export default function FeesPage() {
       <div className="mb-4 grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
         <Card>
           <CardHeader title="Invoices" sub={canManageFees ? "School-wide" : "Your children"} />
-          <InvoiceList canManageFees={canManageFees} refreshKey={refreshKey} onSelect={setSelectedInvoiceId} />
+          <InvoiceList canManageFees={canManageFees} studentId={studentId} refreshKey={refreshKey} onSelect={setSelectedInvoiceId} />
         </Card>
         {selectedInvoiceId && (
           <Card>

@@ -3,21 +3,11 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
+import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
 import { ReadOnlyScheduleTable } from "../molecules/read-only-schedule-table";
 import { TimetableGrid } from "./timetable-grid";
 
-interface AcademicSessionOption {
-  id: string;
-  name: string;
-  isCurrent: boolean;
-}
-interface TermOption {
-  id: string;
-  name: string;
-  academicSessionId: string;
-  isCurrent: boolean;
-}
 interface StudentRecord {
   id: string;
   currentClassId: string | null;
@@ -48,35 +38,6 @@ interface DutyAssignmentItem {
   id: string;
   weekStartDate: string;
   classLevelCategoryGroup: string;
-}
-
-// GET /academic-sessions and /terms have no `isCurrent` filter (confirmed —
-// only PATCH :id/set-current mutates it) — fetch and filter client-side,
-// same shape as other client-side filtering already in this codebase.
-function useCurrentTerm() {
-  const [academicSessionId, setAcademicSessionId] = useState("");
-  const [termId, setTermId] = useState("");
-
-  useEffect(() => {
-    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true })
-      .then((sessions) => {
-        const current = sessions.find((s) => s.isCurrent);
-        if (current) setAcademicSessionId(current.id);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!academicSessionId) return;
-    apiFetch<TermOption[]>(`/terms?academicSessionId=${academicSessionId}`, { auth: true })
-      .then((terms) => {
-        const current = terms.find((t) => t.isCurrent);
-        if (current) setTermId(current.id);
-      })
-      .catch(() => {});
-  }, [academicSessionId]);
-
-  return { academicSessionId, termId };
 }
 
 /**

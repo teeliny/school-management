@@ -39,10 +39,17 @@ const STATUS_VARIANT: Record<InvoiceStatus, BadgeVariant> = {
  */
 export function InvoiceList({
   canManageFees,
+  studentId,
   refreshKey,
   onSelect,
 }: {
   canManageFees: boolean;
+  // A student profile's "Fees" quick link — narrows to one student's
+  // invoices. Safe to apply even for a Parent (whose invoices are already
+  // scoped server-side to her own wards): InvoiceService.findAllForUser ANDs
+  // this onto that scope rather than replacing it, so passing a studentId
+  // that isn't actually her ward just yields zero rows, not a leak.
+  studentId?: string;
   refreshKey?: unknown;
   onSelect: (invoiceId: string) => void;
 }) {
@@ -64,11 +71,12 @@ export function InvoiceList({
       if (termId) params.set("termId", termId);
       if (status !== ALL_STATUSES) params.set("status", status);
     }
+    if (studentId) params.set("studentId", studentId);
     const qs = params.toString();
     apiFetch<InvoiceListItem[]>(`/invoices${qs ? `?${qs}` : ""}`, { auth: true })
       .then(setInvoices)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load invoices"));
-  }, [canManageFees, termId, status]);
+  }, [canManageFees, studentId, termId, status]);
 
   useEffect(() => {
     load();

@@ -4,8 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, User as UserIcon } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
+import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import { Button } from "../atoms/button";
 import { PhotoUploadButton } from "../molecules/photo-upload-button";
 
 interface Guardian {
@@ -25,7 +27,7 @@ interface StudentDetail {
   studentTitle: string | null;
   bloodGroup: string | null;
   medicalNotes: string | null;
-  currentClass: { name: string; classLevel: { name: string } } | null;
+  currentClass: { id: string; name: string; classLevel: { name: string; category: string } } | null;
   user: {
     firstName: string;
     lastName: string;
@@ -43,15 +45,34 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   SUSPENDED: "danger",
 };
 
+interface AssessmentComponentOption {
+  id: string;
+  type: "CA" | "MID_TERM" | "EXAM";
+}
+
 /**
  * Full detail view for one student — reached via the "View" button on the
  * PeopleList row (students/page.tsx). `canUploadPhoto` mirrors the same
  * Admin/Super-Admin-or-CLASS_TEACHER gate the list uses; the real per-class
  * authorization is enforced server-side (StudentService.uploadPhoto).
+ * `canViewFees` mirrors fees/page.tsx's own gate (Bursar/Super-Admin, or a
+ * Parent — safe to compute from role alone here since a Parent could only
+ * ever have loaded this profile in the first place if this is her own ward,
+ * per StudentService.findOneForUser's own scoping).
  */
-export function StudentProfile({ studentId, canUploadPhoto = false }: { studentId: string; canUploadPhoto?: boolean }) {
+export function StudentProfile({
+  studentId,
+  canUploadPhoto = false,
+  canViewFees = false,
+}: {
+  studentId: string;
+  canUploadPhoto?: boolean;
+  canViewFees?: boolean;
+}) {
   const [student, setStudent] = useState<StudentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { termId } = useCurrentTerm();
+  const [components, setComponents] = useState<AssessmentComponentOption[]>([]);
 
   const load = useCallback(() => {
     apiFetch<StudentDetail>(`/students/${studentId}`, { auth: true })
@@ -62,6 +83,27 @@ export function StudentProfile({ studentId, canUploadPhoto = false }: { studentI
   useEffect(() => {
     load();
   }, [load]);
+
+  // Resolves this term's Mid-Term/Exam `AssessmentComponent` for the
+  // student's own class-level category, so the quick-link buttons below can
+  // jump straight to the right Planner tab+component instead of landing on
+  // a blank "pick a term" screen. Either (or both) may not exist yet if
+  // Admin hasn't defined this term's structure for that category — those
+  // buttons are simply omitted rather than linking somewhere empty.
+  const category = student?.currentClass?.classLevel.category;
+  useEffect(() => {
+    if (!termId || !category) {
+      setComponents([]);
+      return;
+    }
+    apiFetch<AssessmentComponentOption[]>(`/assessment-components?termId=${termId}&classLevelCategory=${category}`, {
+      auth: true,
+    })
+      .then((all) => setComponents(all.filter((c) => c.type === "MID_TERM" || c.type === "EXAM")))
+      .catch(() => setComponents([]));
+  }, [termId, category]);
+  const midTermComponent = components.find((c) => c.type === "MID_TERM");
+  const examComponent = components.find((c) => c.type === "EXAM");
 
   return (
     <div className="space-y-4">
@@ -146,6 +188,43 @@ export function StudentProfile({ studentId, canUploadPhoto = false }: { studentI
                   )}
                 </dl>
               </div>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader title="This term" sub="Jumps straight to the current term's records for this student" />
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/report-cards?studentId=${student.id}`}>Report card</Link>
+              </Button>
+              {student.currentClass && (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/planner?tab=class-timetable&classArmId=${student.currentClass.id}`}>Class timetable</Link>
+                </Button>
+              )}
+              {student.currentClass && midTermComponent && (
+                <Button asChild variant="outline" size="sm">
+                  <Link
+                    href={`/planner?tab=exam-timetable&classArmId=${student.currentClass.id}&assessmentComponentId=${midTermComponent.id}`}
+                  >
+                    Mid-term timetable
+                  </Link>
+                </Button>
+              )}
+              {student.currentClass && examComponent && (
+                <Button asChild variant="outline" size="sm">
+                  <Link
+                    href={`/planner?tab=exam-timetable&classArmId=${student.currentClass.id}&assessmentComponentId=${examComponent.id}`}
+                  >
+                    Exam timetable
+                  </Link>
+                </Button>
+              )}
+              {canViewFees && (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/fees?studentId=${student.id}`}>Fees</Link>
+                </Button>
+              )}
             </div>
           </Card>
 
