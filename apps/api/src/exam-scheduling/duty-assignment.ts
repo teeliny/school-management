@@ -121,6 +121,11 @@ export class DutyAssignmentController {
     @Query("weekStartDateFrom") weekStartDateFrom?: string,
     @Query("weekStartDateTo") weekStartDateTo?: string,
   ) {
+    // Weekly duty is a staff-only rotation (gate/assembly/break duty) with
+    // nothing a parent/student has a stake in — same "not this account
+    // type" treatment as InvigilationAssignmentController, per PRD FR6.7's
+    // invigilation precedent extended to this analogous roster.
+    this.assertNotStudentOrParent(user);
     if (approvalStatus && approvalStatus !== TimetableApprovalStatus.APPROVED) {
       this.assertCanManage(user);
     }
@@ -159,6 +164,16 @@ export class DutyAssignmentController {
       ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
     if (!canManage) {
       throw new ForbiddenException("Insufficient permissions to manage duty assignments");
+    }
+  }
+
+  // Same "pure Student/Parent account excluded outright" rule as
+  // InvigilationAssignmentController.assertNotStudentOrParent.
+  private assertNotStudentOrParent(user: RequestUser) {
+    const isStaffOrAdmin =
+      user.roles.includes("STAFF") || user.roles.includes("ADMIN") || user.roles.includes("SUPER_ADMIN");
+    if (!isStaffOrAdmin) {
+      throw new ForbiddenException("Weekly duty rosters are not visible to this account type");
     }
   }
 }

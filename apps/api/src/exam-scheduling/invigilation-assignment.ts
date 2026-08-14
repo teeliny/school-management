@@ -170,6 +170,12 @@ export class InvigilationAssignmentController {
     @Query("assessmentComponentId") assessmentComponentId?: string,
     @Query("approvalStatus") approvalStatus?: TimetableApprovalStatus,
   ) {
+    // PRD FR6.7: invigilation rosters are visible to assigned staff/
+    // Registrar/Super-Admin/Admin — never to students or parents, unlike
+    // TimetableSlot/ExamSchedule which those two roles do get (scoped to
+    // their own class/wards). A user who also holds STAFF (e.g. a teacher
+    // who's separately a parent) still passes.
+    this.assertNotStudentOrParent(user);
     if (approvalStatus && approvalStatus !== TimetableApprovalStatus.APPROVED) {
       this.assertCanManage(user);
     }
@@ -202,6 +208,19 @@ export class InvigilationAssignmentController {
       ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
     if (!canManage) {
       throw new ForbiddenException("Insufficient permissions to manage invigilation assignments");
+    }
+  }
+
+  // PRD FR6.7: a pure Student/Parent account (holding neither STAFF nor
+  // ADMIN/SUPER_ADMIN) never sees this resource, regardless of
+  // approvalStatus — unlike TimetableSlot/ExamSchedule's read endpoints,
+  // which scope those two roles down to their own class/wards instead of
+  // excluding them outright.
+  private assertNotStudentOrParent(user: RequestUser) {
+    const isStaffOrAdmin =
+      user.roles.includes("STAFF") || user.roles.includes("ADMIN") || user.roles.includes("SUPER_ADMIN");
+    if (!isStaffOrAdmin) {
+      throw new ForbiddenException("Invigilation rosters are not visible to this account type");
     }
   }
 }

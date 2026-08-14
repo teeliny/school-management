@@ -88,21 +88,17 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
       },
       {
-        href: "/scheduling",
-        label: "Scheduling",
+        href: "/planner",
+        label: "Planner",
         icon: CalendarClock,
-        // Union of who can generate/edit any of the four schedule types
-        // (every row controller's assertCanManage actor set) and who can
-        // trigger a generation run (ScheduleGenerationRequestService.
-        // assertCanTrigger) — one entry, tabbed internally, replacing the
-        // five separate Timetable/Exam timetable/Invigilation/Weekly duty/
-        // AI Scheduling links. Final batch approval narrows further to
-        // Super-Admin only, gated inside the page's own Generate & Approve
-        // tab, not here.
-        visible: ({ isAdmin, user }) =>
-          isAdmin ||
-          user.assignmentTypes.includes("REGISTRAR") ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+        // Visible to every authenticated user — the four read endpoints
+        // behind this page (TimetableSlot/ExamSchedule/InvigilationAssignment/
+        // DutyAssignment) already default to APPROVED-only with no CASL gate
+        // of their own, scoped for a Parent to their own ward(s) and derived
+        // group-scoping for Principal/Headteacher. Only who can generate/
+        // edit (the Union above) and who can give final approval
+        // (Super-Admin only) still narrow, gated inside the page's own
+        // Generate & Approve tab, not here — no `visible` predicate needed.
       },
     ],
   },

@@ -80,12 +80,13 @@ function useCurrentTerm() {
 }
 
 /**
- * BUILD_PLAN.md §9 Step 6c: "My schedule" on /dashboard — the first UI
- * surface where a student, parent, or staff member can see any AI-generated
- * (or manual) schedule at all; `/timetable` and `/scheduling` are staff/
- * admin-only. Reuses the four GET endpoints Step 6 already built, which
- * default to APPROVED-only with no extra auth gate — no backend permission
- * change needed, only the "whose scope is this" resolution
+ * BUILD_PLAN.md §9 Step 6c: "My schedule" on /dashboard — a personal,
+ * pre-filtered view of a student/parent/staff member's own schedule.
+ * `/planner` (formerly `/scheduling`) is now visible to every authenticated
+ * user too, per the same underlying read endpoints, for anyone who wants to
+ * browse beyond just their own rows. Reuses the four GET endpoints Step 6
+ * already built, which default to APPROVED-only with no extra auth gate —
+ * no backend permission change needed, only the "whose scope is this" resolution
  * (staffProfileId/studentProfileId/parentProfileId, now on /auth/me).
  * Renders nothing when there's nothing relevant to show (e.g. a pure Admin
  * with no staff profile) — no empty-state clutter on every dashboard.

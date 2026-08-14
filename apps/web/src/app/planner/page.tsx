@@ -69,15 +69,15 @@ function groupOf(classLevelCategory: string): ClassLevelCategoryGroupValue {
   return classLevelCategory === "JSS" || classLevelCategory === "SSS" ? "JSS_SSS" : "CRECHE_NURSERY_PRIMARY";
 }
 
-export default function SchedulingPage() {
+export default function PlannerPage() {
   return (
     <Suspense fallback={null}>
-      <SchedulingPageInner />
+      <PlannerPageInner />
     </Suspense>
   );
 }
 
-function SchedulingPageInner() {
+function PlannerPageInner() {
   const { user, loading, logout } = useCurrentUser();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -126,7 +126,7 @@ function SchedulingPageInner() {
 
   // The approvals queue's "View & edit" links point back at this same route
   // with a different `?tab=`/`classArmId`/`assessmentComponentId`/
-  // `classLevelCategoryGroup` — since the user is already on /scheduling,
+  // `classLevelCategoryGroup` — since the user is already on /planner,
   // Next's <Link> updates the URL without remounting this component, so the
   // useState(searchParams.get(...)) initializers above only ever fire once,
   // at first mount. This effect re-syncs from the live `searchParams` object
@@ -196,6 +196,14 @@ function SchedulingPageInner() {
     user.assignmentTypes.includes("REGISTRAR") ||
     ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
 
+  // PRD FR6.7: invigilation rosters are visible to assigned staff/Registrar/
+  // Super-Admin/Admin, never to students or parents — same treatment applied
+  // here to the weekly duty roster (also a staff-only rotation, nothing a
+  // parent/student has a stake in). A user who is STAFF via any assignment
+  // (including one who's *also* a Parent on a separate profile) still sees
+  // these; a pure Parent/Student account does not.
+  const canSeeStaffRosters = isAdmin || user.roles.includes("STAFF");
+
   // A Principal/Headteacher who isn't also unscoped (Super-Admin/Registrar)
   // only ever sees their own class-level group's assessment components —
   // mirrors ScheduleGenerationRequestService.assertCanTrigger's scoping, now
@@ -212,7 +220,7 @@ function SchedulingPageInner() {
 
   function changeTab(next: TabKey) {
     setTab(next);
-    router.replace(`/scheduling?tab=${next}`);
+    router.replace(`/planner?tab=${next}`);
   }
 
   // Scoped to a term first (every term has its own same-named "Mid-Term
@@ -264,11 +272,16 @@ function SchedulingPageInner() {
 
   return (
     <AppShell user={user} onLogout={logout}>
-      <Letterhead eyebrow="Academics · Scheduling" title="Scheduling" />
+      <Letterhead eyebrow="Academics · Planner" title="Planner" />
 
       <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
         <TabsList>
-          {TAB_KEYS.filter((key) => key !== "constraints" || isAdmin).map((key) => (
+          {TAB_KEYS.filter(
+            (key) =>
+              (key !== "constraints" || isAdmin) &&
+              (key !== "generate-approve" || canManage) &&
+              (!["invigilation", "weekly-duty"].includes(key) || canSeeStaffRosters),
+          ).map((key) => (
             <TabsTrigger key={key} value={key}>
               {TAB_LABEL[key]}
             </TabsTrigger>
@@ -464,109 +477,111 @@ function SchedulingPageInner() {
           </CollapsibleCard>
         </TabsContent>
 
-        <TabsContent value="invigilation">
-          <CollapsibleCard title="Select term and assessment component" className="mb-4">
-            <div className="grid max-w-lg grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="iv-term">Term</Label>
-                <Select
-                  value={ivTermId}
-                  onValueChange={(v) => {
-                    setIvTermId(v);
-                    setIvComponentId("");
-                  }}
-                >
-                  <SelectTrigger id="iv-term" className="mt-1">
-                    <SelectValue placeholder="Select term" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {terms.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        {canSeeStaffRosters && (
+          <TabsContent value="invigilation">
+            <CollapsibleCard title="Select term and assessment component" className="mb-4">
+              <div className="grid max-w-lg grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="iv-term">Term</Label>
+                  <Select
+                    value={ivTermId}
+                    onValueChange={(v) => {
+                      setIvTermId(v);
+                      setIvComponentId("");
+                    }}
+                  >
+                    <SelectTrigger id="iv-term" className="mt-1">
+                      <SelectValue placeholder="Select term" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {terms.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="iv-component">Assessment component</Label>
+                  <Select value={ivComponentId} onValueChange={setIvComponentId}>
+                    <SelectTrigger id="iv-component" className="mt-1">
+                      <SelectValue placeholder={ivTermId ? "Select a component for this term" : "Select a term first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <GroupedComponentOptions termId={ivTermId} />
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="iv-component">Assessment component</Label>
-                <Select value={ivComponentId} onValueChange={setIvComponentId}>
-                  <SelectTrigger id="iv-component" className="mt-1">
-                    <SelectValue placeholder={ivTermId ? "Select a component for this term" : "Select a term first"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <GroupedComponentOptions termId={ivTermId} />
-                  </SelectContent>
-                </Select>
+            </CollapsibleCard>
+
+            <CollapsibleCard title="Invigilation roster">
+              <InvigilationGrid assessmentComponentId={ivComponentId} canManage={canManage} />
+            </CollapsibleCard>
+          </TabsContent>
+        )}
+
+        {canSeeStaffRosters && (
+          <TabsContent value="weekly-duty">
+            <CollapsibleCard title="Select group and term" className="mb-4">
+              <div className="grid max-w-lg grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="duty-group">Class level group</Label>
+                  <Select value={dutyGroup} onValueChange={(v) => setDutyGroup(v as ClassLevelCategoryGroupValue)}>
+                    <SelectTrigger id="duty-group" className="mt-1">
+                      <SelectValue placeholder="Select a group" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(!scopedGroup || scopedGroup === "JSS_SSS") && <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>}
+                      {(!scopedGroup || scopedGroup === "CRECHE_NURSERY_PRIMARY") && (
+                        <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="duty-term">Term</Label>
+                  <Select value={dutyTermId} onValueChange={setDutyTermId}>
+                    <SelectTrigger id="duty-term" className="mt-1">
+                      <SelectValue placeholder="Select term" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {terms.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </div>
-          </CollapsibleCard>
+            </CollapsibleCard>
 
-          <CollapsibleCard title="Invigilation roster">
-            <InvigilationGrid assessmentComponentId={ivComponentId} canManage={canManage} />
-          </CollapsibleCard>
-        </TabsContent>
+            <CollapsibleCard title="Weekly duty roster">
+              <DutyGrid
+                classLevelCategoryGroup={dutyGroup as ClassLevelCategoryGroupValue}
+                weekStartDateFrom={selectedDutyTerm?.startDate ?? ""}
+                weekStartDateTo={selectedDutyTerm?.endDate ?? ""}
+                canManage={canManage}
+              />
+            </CollapsibleCard>
+          </TabsContent>
+        )}
 
-        <TabsContent value="weekly-duty">
-          <CollapsibleCard title="Select group and term" className="mb-4">
-            <div className="grid max-w-lg grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="duty-group">Class level group</Label>
-                <Select value={dutyGroup} onValueChange={(v) => setDutyGroup(v as ClassLevelCategoryGroupValue)}>
-                  <SelectTrigger id="duty-group" className="mt-1">
-                    <SelectValue placeholder="Select a group" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(!scopedGroup || scopedGroup === "JSS_SSS") && <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>}
-                    {(!scopedGroup || scopedGroup === "CRECHE_NURSERY_PRIMARY") && (
-                      <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="duty-term">Term</Label>
-                <Select value={dutyTermId} onValueChange={setDutyTermId}>
-                  <SelectTrigger id="duty-term" className="mt-1">
-                    <SelectValue placeholder="Select term" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {terms.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CollapsibleCard>
-
-          <CollapsibleCard title="Weekly duty roster">
-            <DutyGrid
-              classLevelCategoryGroup={dutyGroup as ClassLevelCategoryGroupValue}
-              weekStartDateFrom={selectedDutyTerm?.startDate ?? ""}
-              weekStartDateTo={selectedDutyTerm?.endDate ?? ""}
-              canManage={canManage}
-            />
-          </CollapsibleCard>
-        </TabsContent>
-
-        <TabsContent value="generate-approve">
-          <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1fr_1.3fr]">
-            {canManage && (
+        {canManage && (
+          <TabsContent value="generate-approve">
+            <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1fr_1.3fr]">
               <Card>
                 <CardHeader title="Start a new generation run" sub="Runs asynchronously — check status below" />
                 <TriggerGenerationForm onTriggered={() => requestsListRef.current?.refresh()} />
               </Card>
-            )}
-            <Card>
-              <CardHeader title="Recent generation requests" />
-              <GenerationRequestsList ref={requestsListRef} />
-            </Card>
-          </div>
+              <Card>
+                <CardHeader title="Recent generation requests" />
+                <GenerationRequestsList ref={requestsListRef} />
+              </Card>
+            </div>
 
-          {canManage && (
             <Card className="mt-4">
               <CardHeader
                 title="Pending review"
@@ -578,8 +593,8 @@ function SchedulingPageInner() {
               />
               <SchedulingApprovalsQueue ref={approvalsQueueRef} canAct={isSuperAdmin} />
             </Card>
-          )}
-        </TabsContent>
+          </TabsContent>
+        )}
 
         {isAdmin && (
           <TabsContent value="constraints">

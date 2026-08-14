@@ -137,27 +137,27 @@ export const SchedulingApprovalsQueue = forwardRef<{ refresh: () => void }, { ca
           (requestId, items) => {
             const distinctArms = [...new Set(items.map((i) => i.classArmId))];
             return distinctArms.length === 1
-              ? `/scheduling?tab=class-timetable&classArmId=${distinctArms[0]}`
-              : `/scheduling?tab=class-timetable`;
+              ? `/planner?tab=class-timetable&classArmId=${distinctArms[0]}`
+              : `/planner?tab=class-timetable`;
           },
         );
         const examGroups = groupByRequest(
           examSchedules,
           "EXAM_TIMETABLE",
           (items) => [...new Set(items.map((i) => i.classArm.displayName))].join(", "),
-          (_requestId, items) => `/scheduling?tab=exam-timetable&assessmentComponentId=${items[0]!.assessmentComponentId}`,
+          (_requestId, items) => `/planner?tab=exam-timetable&assessmentComponentId=${items[0]!.assessmentComponentId}`,
         );
         const invigGroups = groupByRequest(
           invigilations,
           "INVIGILATION",
           (items) => [...new Set(items.map((i) => i.examSchedule.classArm.displayName))].join(", "),
-          (_requestId, items) => `/scheduling?tab=invigilation&assessmentComponentId=${items[0]!.examSchedule.assessmentComponentId}`,
+          (_requestId, items) => `/planner?tab=invigilation&assessmentComponentId=${items[0]!.examSchedule.assessmentComponentId}`,
         );
         const dutyGroups = groupByRequest(
           duties,
           "WEEKLY_DUTY",
           (items) => items[0]?.classLevelCategoryGroup ?? "",
-          (_requestId, items) => `/scheduling?tab=weekly-duty&classLevelCategoryGroup=${items[0]!.classLevelCategoryGroup}`,
+          (_requestId, items) => `/planner?tab=weekly-duty&classLevelCategoryGroup=${items[0]!.classLevelCategoryGroup}`,
         );
 
         setGroups(
