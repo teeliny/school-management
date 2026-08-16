@@ -48,5 +48,11 @@ import { NotificationsModule } from "../notifications/notifications.module";
     ReportCommentService,
     BroadsheetService,
   ],
+  // BroadsheetService is consumed directly by DashboardModule's Principal/
+  // Headteacher broadsheet-snapshot widget (BUILD_PLAN.md §10) — computing
+  // it fresh per request rather than duplicating ~200 lines of subject-
+  // weighting/positioning logic the way cross-process boundaries force
+  // elsewhere (see BroadsheetService's own comment).
+  exports: [BroadsheetService],
 })
 export class AssessmentsModule {}

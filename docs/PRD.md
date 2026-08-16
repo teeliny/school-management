@@ -486,6 +486,114 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR8.5: Users can mark notifications read/unread; unread count exposed via API and pushed live via socket.
 - FR8.6: Critical notifications (report card published, invoice overdue, password reset) cannot be disabled via `NotificationPreference`; informational ones (e.g. attendance marked) can be.
 
+### 6.9 Dashboards
+
+- FR9.1: Each role's dashboard surfaces only the stats that role's permissions already cover per §5 — the dashboard is a summary view onto data the role can access elsewhere, not a separate visibility grant. In particular, **Admin's dashboard carries no finance/fee data anywhere** (outstanding balances, invoices, payments, discount requests) — that stays Bursar/Super-Admin only, per §5 footnote 3.
+- FR9.2: Presentation format is chosen per stat, not uniformly per role, using this general pattern: single trending/headline numbers → stat cards; time-based or open-ended windows → countdown badges or progress bars; row-by-row scan-and-act data → tables; inherently day/time-structured data (timetables) → grids (matching the by-day/by-class overview pattern from §5 footnote 6); composition-of-a-whole numbers (paid vs. unpaid, gender split) → donut/bar charts; genuine trend-over-time data (attendance history, invitation acceptance rate) → line charts, reserved for actual trends since most counts are single-point-in-time and don't need one.
+- FR9.3: Where a stat depends on cached/precomputed data rather than a live query (e.g. Principal/Headteacher's broadsheet snapshot, FR9.4), the widget shows a "last updated" timestamp rather than implying it's live.
+
+The tables below specify format and rationale per stat, by role. Roles/titles match §5's Roles & Permissions Matrix and §3.4's `StaffAssignment.assignmentType` values.
+
+**FR9.4 — Super-Admin**
+
+| Stat | Format | Why |
+|---|---|---|
+| Outstanding fees school-wide | Stat card (large number + trend arrow vs. last term) | Single headline KPI |
+| Payment reconciliation queue | Stat card with count, links to list on click | Actionable count, not detail-heavy |
+| Discount requests pending | List (requester, student, amount, reason) | Needs enough detail to act, but low volume |
+| Invitation acceptance rate/time | Small bar or line chart (by role: Admin/Staff/Parent) | Trend over time matters more than one number |
+| Pending schedule approvals | Grid of cards (one per schedule type: class/exam/invigilation/duty) with count + "Review" CTA | Distinct categories, each needing its own entry point |
+| Ownership/Super-Admin status | Inline text/badge, not a widget | Rarely changes, low visual weight needed |
+| Total students/staff/parents | 3 stat cards side by side | Classic headline-metric row |
+| Audit log highlights | Table (timestamp, actor, action, entity) | Structured, scannable, sortable |
+| Report card publish % | Progress bar / gauge per class or school-wide | % completion is exactly what a progress bar communicates |
+
+**FR9.5 — Admin**
+
+*No finance/fee data anywhere on this dashboard — Bursar/Super-Admin only, per FR9.1.*
+
+| Stat | Format | Why |
+|---|---|---|
+| Total enrolled students (by level/dept) | Stacked bar chart or donut | Composition across categories |
+| Staff headcount + unfilled assignments | Stat card + list of gaps (e.g. "JSS2B: no class teacher") | Count up top, actionable list below |
+| Assessment window status | List/table (component, class level, close date, countdown) | Multiple concurrent windows across class levels |
+| Score entry completion | Table with progress bars per row (class × subject) | Grid of completion %, best as inline bars in a table |
+| Report card readiness | Checklist/progress table per class (4 required pieces, checkmarks) | Binary readiness per item — checklist reads faster than %s |
+| Pending schedule approvals/edits | Card grid, same pattern as Super-Admin's (view-only distinction noted) | Consistency with Super-Admin view |
+| Attendance anomalies | List, sorted worst-first (class, % today, delta) | Exception-based, ranked list is the point |
+| Invitation pipeline | Table (name, role, sent date, status, expires) | Needs per-row action (resend/revoke) |
+| Bounced parent emails | List with "flagged" tag | Small, action-oriented |
+
+**FR9.6 — Staff, teaching (base, all `assignmentType`s)**
+
+| Stat | Format | Why |
+|---|---|---|
+| My classes/subjects this term | List or small card grid | Small, fixed set per teacher |
+| Assessment components open | List with countdown badges | Time-sensitive, few items |
+| Score entry progress | Table (student rows) or progress bar per class+subject if summarized | Detail table if entering scores here; summary bar if just a status check |
+| Upcoming timetable | Weekly grid (day × period) | Inherently a grid — matches the by-class view used elsewhere in the product |
+| Attendance to mark today | List (class roster with present/absent toggle) | Needs per-student input, not just display |
+
+*`CLASS_TEACHER` additions:*
+
+| Stat | Format | Why |
+|---|---|---|
+| Class roster (headcount, gender split) | Stat card + small donut for gender split | Quick composition view |
+| Skill/report window progress | Progress bar (students rated / total) | Single completion metric |
+| Comments outstanding | List of student names missing a comment | Actionable, low volume |
+| Class attendance summary | Line chart (daily % over the term) | Trend over time |
+
+*`PRINCIPAL`/`HEADTEACHER` additions:*
+
+| Stat | Format | Why |
+|---|---|---|
+| Broadsheet snapshot (cached, last-viewed) | Compact table (top 5 / bottom 5 students, subject avg columns) with "last updated" timestamp + "View full broadsheet" link | Shows cached data plainly rather than implying it's live (FR9.3) |
+| Schedule generation/approval queue (scoped per §5 footnote 5) | Card grid, same as Admin's | Consistency |
+| Duty roster upcoming | List (week, date range) | Simple chronological list |
+
+*`REGISTRAR` additions:*
+
+| Stat | Format | Why |
+|---|---|---|
+| Whole-school attendance analytics | Bar chart by class + trend line over term | Comparison + trend together |
+| Timetable overview | Grid (by-day or by-class toggle, §5 footnote 6) | Matches product's existing overview pattern |
+| Schedule generation triggers | Button row / action cards | Action, not data display |
+
+**FR9.7 — Staff, non-teaching (`BURSAR`)**
+
+| Stat | Format | Why |
+|---|---|---|
+| Outstanding balance (school-wide/by class) | Stat card + bar chart by class | Headline number + where the gap concentrates |
+| Invoices generated vs. paid | Donut or stacked bar (paid/partial/unpaid) | Composition of one whole |
+| Pending manual payments submitted | Table (student, amount, submitted date, status) | Needs status tracking per row |
+| Discount requests raised | Table (student, amount, status, date) | Status-tracked list |
+| Gateway reconciliation health | Stat card (count stuck > threshold), alert color if > 0 | Exception monitoring, quiet when healthy |
+| Recent receipts issued | List (most recent 5–10, scrollable) | Chronological feed |
+
+**FR9.8 — Parent/Guardian**
+
+| Stat | Format | Why |
+|---|---|---|
+| Outstanding balance per ward | Stat card per child, with "Pay now" CTA | One number, one action |
+| Next invoice due date | Inline text/badge on the balance card | Doesn't need its own widget |
+| Latest report card summary | Card (grade, average, "View full report" link) | Snapshot, not the full document |
+| Attendance summary | Small ring/gauge (% this term) + recent absence list | % is the headline, list gives context |
+| Upcoming timetable | Simple daily list (today) rather than full weekly grid | Parents care about "today," not the full week |
+| Notifications | List, unread bolded/badged | Standard notification feed pattern |
+| Payment history | Table (date, amount, method, receipt link) | Transactional records belong in a table |
+
+**FR9.9 — Student**
+
+| Stat | Format | Why |
+|---|---|---|
+| Today's timetable | List (chronological periods) | Simple, linear — no need for a full grid on a personal dashboard |
+| Latest scores per subject | Table or small bar chart per subject | Table if precise scores matter; bar chart if visual comparison across subjects is the goal |
+| Attendance record | Ring/gauge (% this term) | Quick self-check metric |
+| Latest report card | Card with "View" link | Summary, not full document |
+| Subject enrollment | List, grouped by compulsory/general/department | Categorized but flat — list with section headers |
+| Special status (prefect/rep) | Badge, inline near name | Not data-heavy, just a flag |
+| Notifications | List | Same feed pattern as Parent |
+
 ---
 
 ## 7. Non-Functional Requirements
@@ -524,6 +632,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 | Phase 5 — Operations | Attendance, fees/billing, receipts, pluggable payment gateway integration (`PaymentGatewayConfig` per provider, Monnify default + Paystack, hosted checkout, webhook reconciliation + polling fallback), manual bank-transfer payment + Super-Admin approval workflow, termly discount requests |
 | Phase 6 — Notifications & Polish | WebSocket in-app notifications, Resend email integration for all events, notification preferences, audit log, performance hardening |
 | Phase 7 — AI Scheduling | AI-assisted class & exam timetable generation (constraint-based: calculation-subject morning placement, spread rules; mid-term exam runs additionally take generation-time max-subjects-per-day and calculation/non-calculation subject duration parameters), AI-assisted invigilation assignment (excluding Bursar/Principal/VP, hard-excluding a subject's own teacher for JSS/SSS), AI-assisted weekly duty roster generation (admin-specified teacher count per week, JSS/SSS and Creche/Nursery/Primary generated as separate groups), `SchedulingConstraint` admin configuration UI, review & approval workflow for all AI-generated schedules (class timetables: Admin/Super-Admin; exam timetables, invigilation & weekly duty: Admin only) |
+| Phase 8 — Dashboards | Real per-role dashboards (§6.9) replacing the Phase 1 shell — stat cards, tables, charts, and grids per FR9.4–FR9.9, built against data every prior phase already produces (fees/Phase 5, assessment/Phase 4, attendance/Phase 5, scheduling/Phase 7, notifications/Phase 6) |
 
 ---
 

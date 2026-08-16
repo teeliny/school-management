@@ -6,6 +6,7 @@ import {
   Injectable,
   Param,
   Patch,
+  Query,
   UseGuards,
 } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -21,8 +22,11 @@ import { UpdateParentProfileDto } from "./dto/parent-profile.dto";
 export class ParentProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.parentProfile.findMany({ include: { user: true } });
+  findAll(filters: { emailBounced?: boolean } = {}) {
+    return this.prisma.parentProfile.findMany({
+      where: { emailBounced: filters.emailBounced },
+      include: { user: true },
+    });
   }
 
   findOne(id: string) {
@@ -51,8 +55,8 @@ export class ParentProfileController {
 
   @Get()
   @CheckPolicies((ability) => ability.can("manage", "ParentProfile"))
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query("emailBounced") emailBounced?: string) {
+    return this.service.findAll({ emailBounced: emailBounced === undefined ? undefined : emailBounced === "true" });
   }
 
   @Get(":id")

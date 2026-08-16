@@ -6,6 +6,7 @@ import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
 import { MySchedule } from "../../components/organisms/my-schedule";
+import { SuperAdminDashboard } from "../../components/organisms/super-admin-dashboard";
 
 export default function DashboardPage() {
   const { user, loading, logout } = useCurrentUser();
@@ -42,11 +43,9 @@ export default function DashboardPage() {
             </>
           )}
         </nav>
-        <p className="mt-4 text-[11.5px] text-muted">
-          Phase 2 (People, BUILD_PLAN.md §4) is live — Subjects, Assessment, and everything else
-          arrive in later phases.
-        </p>
       </Card>
+
+      <SuperAdminDashboard user={user} />
 
       <MySchedule user={user} />
     </AppShell>
