@@ -1,7 +1,11 @@
+// Sentry's own Nest integration requirement: must be imported before any
+// other module (see instrument.ts's own comment for why).
+import "./instrument";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { ValidationPipe } from "@nestjs/common";
+import { Logger } from "nestjs-pino";
 import { AppModule } from "./app.module";
 import { parseCorsOrigins } from "./common/cors";
 import { RedisIoAdapter } from "./notifications/redis-io.adapter";
@@ -14,7 +18,10 @@ async function bootstrap() {
   // object (a re-serialized body can have different whitespace/key
   // ordering, which silently breaks signature verification). Doesn't affect
   // any other route.
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create(AppModule, { rawBody: true, bufferLogs: true });
+  // Routes Nest's own bootstrap/internal logs (and every existing
+  // `new Logger(SomeClass.name)` call site) through pino, transparently.
+  app.useLogger(app.get(Logger));
   const config = app.get(ConfigService);
 
   app.enableCors({
@@ -22,7 +29,7 @@ async function bootstrap() {
     credentials: true,
   });
 
-  app.setGlobalPrefix("api/v1", { exclude: ["health"] });
+  app.setGlobalPrefix("api/v1", { exclude: ["health", "metrics"] });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

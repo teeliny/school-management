@@ -1,15 +1,15 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, HttpException, HttpStatus } from "@nestjs/common";
 import type { HealthResponse } from "@school/types";
+import { HealthService } from "./health.service";
 
-/**
- * Phase 0: no BullMQ queues exist yet, so there's nothing to report on beyond
- * "the process is up." Once docs/ARCHITECTURE.md §8's queues exist, this should
- * report queue connectivity too.
- */
 @Controller("health")
 export class HealthController {
+  constructor(private readonly health: HealthService) {}
+
   @Get()
-  check(): HealthResponse {
-    return { status: "ok", service: "worker" };
+  async check(): Promise<HealthResponse> {
+    const result = await this.health.check();
+    if (result.status !== "ok") throw new HttpException(result, HttpStatus.SERVICE_UNAVAILABLE);
+    return result;
   }
 }

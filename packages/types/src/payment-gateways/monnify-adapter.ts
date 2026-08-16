@@ -12,6 +12,8 @@ const SANDBOX_BASE_URL = "https://sandbox.monnify.com";
 const LIVE_BASE_URL = "https://api.monnify.com";
 const SIGNATURE_HEADER = "monnify-signature";
 
+export const MONNIFY_BASE_URLS = { SANDBOX: SANDBOX_BASE_URL, LIVE: LIVE_BASE_URL } as const;
+
 interface MonnifyEnvelope<T> {
   requestSuccessful: boolean;
   responseMessage: string;

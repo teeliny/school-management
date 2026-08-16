@@ -11,6 +11,8 @@ import {
 const BASE_URL = "https://api.paystack.co";
 const SIGNATURE_HEADER = "x-paystack-signature";
 
+export const PAYSTACK_BASE_URL = BASE_URL;
+
 interface PaystackEnvelope<T> {
   status: boolean;
   message: string;
