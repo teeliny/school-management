@@ -9,7 +9,7 @@ function buildPrismaMock() {
     classArm: { findUniqueOrThrow: jest.fn() },
     assessmentComponent: { findUniqueOrThrow: jest.fn() },
     subject: { findUniqueOrThrow: jest.fn() },
-    scoreEntry: { upsert: jest.fn() },
+    scoreEntry: { upsert: jest.fn(), findUnique: jest.fn() },
   };
 }
 
@@ -57,6 +57,9 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
       status: AssessmentComponentStatus.OPEN,
     });
     prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: false });
+    // Default: no existing row, i.e. this write is a first entry — tests
+    // that want to exercise the "correction" path override this.
+    prisma.scoreEntry.findUnique.mockResolvedValue(null);
   });
 
   it("allows the assigned subject teacher to score while the component is OPEN", async () => {
@@ -182,5 +185,35 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     await service.enter(buildDto({ score: 20 }), USER, false);
 
     expect(prisma.scoreEntry.upsert).toHaveBeenCalled();
+  });
+
+  it("returns before: null for a first-time entry, so the controller can log it as a CREATE", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.scoreEntry.findUnique.mockResolvedValue(null);
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1", score: 15 });
+
+    const result = await service.enter(buildDto(), USER, false);
+
+    expect(prisma.scoreEntry.findUnique).toHaveBeenCalledWith({
+      where: {
+        studentId_subjectId_assessmentComponentId: {
+          studentId: "student-1",
+          subjectId: "subj-1",
+          assessmentComponentId: "comp-1",
+        },
+      },
+    });
+    expect(result).toEqual({ scoreEntry: { id: "score-1", score: 15 }, before: null });
+  });
+
+  it("returns the prior row as before: when a score is corrected, so the controller can log it as an UPDATE with a real snapshot", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    const existing = { id: "score-1", score: 10 };
+    prisma.scoreEntry.findUnique.mockResolvedValue(existing);
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1", score: 15 });
+
+    const result = await service.enter(buildDto({ score: 15 }), USER, false);
+
+    expect(result).toEqual({ scoreEntry: { id: "score-1", score: 15 }, before: existing });
   });
 });

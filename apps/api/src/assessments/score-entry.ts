@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Post, Query, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AssessmentComponentStatus, AssignmentType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -9,6 +9,7 @@ import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
 import { Audited } from "../audit/audited.decorator";
+import type { AuditRequestOverrides } from "../audit/audit.interceptor";
 import { CreateScoreEntryDto } from "./dto/score-entry.dto";
 
 @Injectable()
@@ -83,17 +84,27 @@ export class ScoreEntryService {
       }
     }
 
-    return this.prisma.scoreEntry.upsert({
-      where: {
-        studentId_subjectId_assessmentComponentId: {
-          studentId: dto.studentId,
-          subjectId: dto.subjectId,
-          assessmentComponentId: dto.assessmentComponentId,
-        },
+    const where = {
+      studentId_subjectId_assessmentComponentId: {
+        studentId: dto.studentId,
+        subjectId: dto.subjectId,
+        assessmentComponentId: dto.assessmentComponentId,
       },
+    };
+    // Read-only, purely so the controller can tell AuditInterceptor whether
+    // this write is a first entry or a correction — this route has no :id,
+    // only a composite natural key, so the interceptor's generic
+    // :id-param before-fetch can't run here (see AuditRequestOverrides).
+    // The actual write below stays a single atomic upsert either way.
+    const before = await this.prisma.scoreEntry.findUnique({ where });
+
+    const scoreEntry = await this.prisma.scoreEntry.upsert({
+      where,
       create: { ...dto, enteredByStaffId },
       update: { score: dto.score, classArmId: dto.classArmId, enteredByStaffId },
     });
+
+    return { scoreEntry, before };
   }
 
   findAll(filters: { subjectId?: string; assessmentComponentId?: string; classArmId?: string; studentId?: string }) {
@@ -125,16 +136,21 @@ export class ScoreEntryController {
   ) {}
 
   // No :id route param (upsert keyed by studentId+subjectId+
-  // assessmentComponentId), so AuditInterceptor's before-fetch never fires
-  // here — every submission (first entry or correction) is still logged
-  // via `after`, giving a full who/what/when trail per submission even
-  // without a captured prior value.
+  // assessmentComponentId), so AuditInterceptor's generic before-fetch
+  // can't run here — instead the service tells us whether this was a first
+  // entry or a correction, and we stash that on the request for the
+  // interceptor to prefer over its own derivation (AuditRequestOverrides),
+  // so a correction is logged as UPDATE with a real before-snapshot rather
+  // than every submission looking like a CREATE.
   @Post()
   @Audited("ScoreEntry", "scoreEntry")
-  enter(@Body() dto: CreateScoreEntryDto, @CurrentUser() user: RequestUser) {
+  async enter(@Body() dto: CreateScoreEntryDto, @CurrentUser() user: RequestUser, @Req() request: AuditRequestOverrides) {
     const ability = this.abilityFactory.createForUser(user);
     const isOverride = ability.can("manage", "ScoreEntry");
-    return this.service.enter(dto, user, isOverride);
+    const { scoreEntry, before } = await this.service.enter(dto, user, isOverride);
+    request.auditAction = before ? "UPDATE" : "CREATE";
+    request.auditBefore = before;
+    return scoreEntry;
   }
 
   @Get()

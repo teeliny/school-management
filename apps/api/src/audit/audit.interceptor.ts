@@ -6,7 +6,21 @@ import { switchMap, tap } from "rxjs/operators";
 import { PrismaService } from "../prisma/prisma.service";
 import { AUDIT_KEY, AuditOptions } from "./audited.decorator";
 
-const KNOWN_VERBS = ["approve", "reject", "revoke", "resend", "sync", "accept", "transfer"];
+const KNOWN_VERBS = ["approve", "reject", "revoke", "resend", "sync", "accept", "transfer", "swap", "reset-password"];
+
+/**
+ * Escape hatch for a route the generic `:id`-param before-fetch can't
+ * handle — a composite-natural-key upsert like ScoreEntry.enter(), where
+ * "was this a create or a correction" isn't derivable from the HTTP method
+ * alone. The handler itself (which already knows, having looked the row up
+ * before writing) stashes the answer on the request; the interceptor
+ * prefers it over its own derivation when present. See
+ * assessments/score-entry.ts's enter() for the one current use.
+ */
+export interface AuditRequestOverrides {
+  auditAction?: string;
+  auditBefore?: unknown;
+}
 
 /**
  * ARCHITECTURE §5: the single place "who changed what" actually gets
@@ -56,7 +70,9 @@ export class AuditInterceptor implements NestInterceptor {
       switchMap((before) =>
         next.handle().pipe(
           tap((response) => {
-            const action = this.deriveAction(method, routePath);
+            const overrides = request as AuditRequestOverrides;
+            const action = overrides.auditAction ?? this.deriveAction(method, routePath);
+            const resolvedBefore = "auditBefore" in overrides ? overrides.auditBefore : before;
             this.prisma.auditLog
               .create({
                 data: {
@@ -64,7 +80,7 @@ export class AuditInterceptor implements NestInterceptor {
                   action,
                   entityType: options.entityType,
                   entityId: id ?? (response as { id?: string } | undefined)?.id ?? null,
-                  before: (before ?? undefined) as Prisma.InputJsonValue | undefined,
+                  before: (resolvedBefore ?? undefined) as Prisma.InputJsonValue | undefined,
                   after: (response ?? undefined) as Prisma.InputJsonValue | undefined,
                   route: `${method} ${routePath}`,
                 },

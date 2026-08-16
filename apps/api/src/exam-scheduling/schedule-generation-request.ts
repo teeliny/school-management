@@ -364,6 +364,7 @@ export class ScheduleGenerationRequestController {
   constructor(private readonly service: ScheduleGenerationRequestService) {}
 
   @Post()
+  @Audited("ScheduleGenerationRequest", "scheduleGenerationRequest")
   create(@Body() dto: CreateScheduleGenerationRequestDto, @CurrentUser() user: RequestUser) {
     return this.service.create(dto, user);
   }
