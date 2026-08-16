@@ -168,8 +168,8 @@ export class StaffAssignmentService {
     return this.prisma.staffAssignment.findMany({
       where: { staffId: staffProfile.id },
       include: {
-        subject: { select: { name: true } },
-        classArm: { select: { name: true, classLevel: { select: { name: true } } } },
+        subject: { select: { id: true, name: true } },
+        classArm: { select: { id: true, name: true, classLevel: { select: { name: true, category: true } } } },
       },
       orderBy: { createdAt: "desc" },
     });

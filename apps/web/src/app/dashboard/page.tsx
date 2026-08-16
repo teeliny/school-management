@@ -7,6 +7,14 @@ import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
 import { MySchedule } from "../../components/organisms/my-schedule";
 import { SuperAdminDashboard } from "../../components/organisms/super-admin-dashboard";
+import { AdminDashboard } from "../../components/organisms/admin-dashboard";
+import { TeachingStaffDashboard } from "../../components/organisms/teaching-staff-dashboard";
+import { ClassTeacherAdditions } from "../../components/organisms/class-teacher-additions";
+import { PrincipalHeadteacherAdditions } from "../../components/organisms/principal-headteacher-additions";
+import { RegistrarAdditions } from "../../components/organisms/registrar-additions";
+import { BursarDashboard } from "../../components/organisms/bursar-dashboard";
+import { ParentDashboard } from "../../components/organisms/parent-dashboard";
+import { StudentDashboard } from "../../components/organisms/student-dashboard";
 
 export default function DashboardPage() {
   const { user, loading, logout } = useCurrentUser();
@@ -46,6 +54,14 @@ export default function DashboardPage() {
       </Card>
 
       <SuperAdminDashboard user={user} />
+      <AdminDashboard user={user} />
+      <TeachingStaffDashboard user={user} />
+      <ClassTeacherAdditions user={user} />
+      <PrincipalHeadteacherAdditions user={user} />
+      <RegistrarAdditions user={user} />
+      <BursarDashboard user={user} />
+      <ParentDashboard user={user} />
+      <StudentDashboard user={user} />
 
       <MySchedule user={user} />
     </AppShell>
