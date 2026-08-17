@@ -319,7 +319,7 @@ export class StudentService {
    */
   async findAllForUser(
     user: RequestUser,
-    filters: { classArmId?: string; search?: string; skip?: number; take?: number } = {},
+    filters: { classArmId?: string; classLevelCategory?: ClassLevelCategory; search?: string; skip?: number; take?: number } = {},
   ) {
     const scopeWhere = await this.scopeWhereForUser(user);
     if (scopeWhere === null) return filters.take !== undefined ? { data: [], total: 0 } : [];
@@ -327,6 +327,7 @@ export class StudentService {
     const mergedWhere: Prisma.StudentProfileWhereInput = {
       ...scopeWhere,
       ...(filters.classArmId ? { currentClassId: filters.classArmId } : {}),
+      ...(filters.classLevelCategory ? { currentClass: { classLevel: { category: filters.classLevelCategory } } } : {}),
       ...(filters.search
         ? {
             OR: [
@@ -469,12 +470,14 @@ export class StudentController {
   findAll(
     @CurrentUser() user: RequestUser,
     @Query("classArmId") classArmId?: string,
+    @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory,
     @Query("search") search?: string,
     @Query("skip") skip?: string,
     @Query("take") take?: string,
   ) {
     return this.service.findAllForUser(user, {
       classArmId,
+      classLevelCategory,
       search,
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),

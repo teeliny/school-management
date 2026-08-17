@@ -30,7 +30,6 @@ class SolveRequest(BaseModel):
 
     # CLASS_TIMETABLE-specific shape (BUILD_PLAN.md §9 Step 2).
     calculationSubjectsMorning: bool = True
-    spreadCalculationSubjects: bool = True
     groups: list[GroupPayload] = []
 
     # EXAM_TIMETABLE-specific shape (BUILD_PLAN.md §9 Step 3).
@@ -39,6 +38,7 @@ class SolveRequest(BaseModel):
     maxSubjectsPerDay: int = 2
     calculationSubjectDurationMinutes: int = 90
     nonCalculationSubjectDurationMinutes: int = 60
+    spreadCalculationSubjects: bool = True
     minGapBetweenCalculationExamsDays: int = 1
     classArms: list[ExamClassArmPayload] = []
 
@@ -99,7 +99,6 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             request_id=payload.requestId,
             callback_token=payload.callbackToken,
             calculation_subjects_morning=payload.calculationSubjectsMorning,
-            spread_calculation_subjects=payload.spreadCalculationSubjects,
             groups=payload.groups,
         )
     elif payload.scope == "EXAM_TIMETABLE":
@@ -139,12 +138,19 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            await client.post(payload.callbackUrl, json=body)
+            response = await client.post(payload.callbackUrl, json=body)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # A non-2xx response (e.g. the callback handler threw while
+            # persisting) was previously swallowed silently here — nothing
+            # called raise_for_status(), so the request just sat at SOLVING
+            # until the timeout sweep (ARCHITECTURE.md §9) flagged it with no
+            # errorMessage. Logging the body at least surfaces why.
+            print(f"Callback POST to {payload.callbackUrl} returned {exc.response.status_code}: {exc.response.text}")
         except httpx.HTTPError as exc:
-            # The dispatching side's timeout sweep (ARCHITECTURE.md §9)
-            # catches a request that never got a callback — nothing to
-            # retry here, this service is stateless and holds no queue of
-            # its own to redeliver from.
+            # Connection-level failure (unreachable, timeout, etc). Same
+            # "let the timeout sweep catch it" reasoning — this service is
+            # stateless and holds no queue of its own to redeliver from.
             print(f"Callback POST to {payload.callbackUrl} failed: {exc}")
 
 

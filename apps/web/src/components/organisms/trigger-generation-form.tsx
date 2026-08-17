@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { categoryToGroup, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -13,6 +14,7 @@ interface ClassArmOption {
   id: string;
   name: string;
   displayName: string;
+  classLevel: { category: ClassLevelCategory };
 }
 interface TermOption {
   id: string;
@@ -85,6 +87,22 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
 
   const componentsForTerm = termId ? components.filter((c) => c.termId === termId) : components;
 
+  // Once a class level group is picked for CLASS_TIMETABLE, the class arm
+  // list below it narrows to that group's arms only — picking a group and
+  // then an arm outside it made no sense (the arm select showed every arm
+  // regardless of the group filter above it).
+  const classArmsForGroup =
+    scope === "CLASS_TIMETABLE" && classLevelCategoryGroup
+      ? classArms.filter((arm) => categoryToGroup(arm.classLevel.category) === classLevelCategoryGroup)
+      : classArms;
+
+  // Clear a class arm selection that's no longer in the narrowed list when
+  // the group filter changes — otherwise a stale, now-hidden arm could
+  // still be submitted.
+  useEffect(() => {
+    setClassArmId((current) => (current && !classArmsForGroup.some((arm) => arm.id === current) ? "" : current));
+  }, [classLevelCategoryGroup]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -107,7 +125,9 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
       if (scope === "CLASS_TIMETABLE" || scope === "WEEKLY_DUTY") body.termId = termId || undefined;
       if (scope === "EXAM_TIMETABLE" || scope === "INVIGILATION") body.assessmentComponentId = assessmentComponentId || undefined;
       if (scope !== "WEEKLY_DUTY") body.classArmId = classArmId || undefined;
-      if (scope === "WEEKLY_DUTY" && classLevelCategoryGroup) body.classLevelCategoryGroup = classLevelCategoryGroup;
+      if ((scope === "WEEKLY_DUTY" || scope === "CLASS_TIMETABLE") && classLevelCategoryGroup) {
+        body.classLevelCategoryGroup = classLevelCategoryGroup;
+      }
       if (Object.keys(parameters).length > 0) body.parameters = parameters;
 
       const result = await apiFetch<{ id: string; status: string }>("/schedule-generation-requests", {
@@ -178,24 +198,6 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
         </div>
       )}
 
-      {scope !== "WEEKLY_DUTY" && (
-        <div>
-          <Label htmlFor="trigger-class-arm">Class arm (optional — single-arm regeneration)</Label>
-          <Select value={classArmId} onValueChange={setClassArmId}>
-            <SelectTrigger id="trigger-class-arm" className="mt-1">
-              <SelectValue placeholder="Whole scope (default)" />
-            </SelectTrigger>
-            <SelectContent>
-              {classArms.map((arm) => (
-                <SelectItem key={arm.id} value={arm.id}>
-                  {arm.displayName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
       {scope === "WEEKLY_DUTY" && (
         <div>
           <Label htmlFor="trigger-group">Class level group (optional — omit for a combined run)</Label>
@@ -206,6 +208,41 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
             <SelectContent>
               <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>
               <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {scope === "CLASS_TIMETABLE" && (
+        <div>
+          <Label htmlFor="trigger-timetable-group">
+            Class level group (optional — narrows a whole-scope run to one group, and the class arm list below to that group)
+          </Label>
+          <Select value={classLevelCategoryGroup} onValueChange={setClassLevelCategoryGroup}>
+            <SelectTrigger id="trigger-timetable-group" className="mt-1">
+              <SelectValue placeholder="Whole scope (default)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>
+              <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {scope !== "WEEKLY_DUTY" && (
+        <div>
+          <Label htmlFor="trigger-class-arm">Class arm (optional — single-arm regeneration)</Label>
+          <Select value={classArmId} onValueChange={setClassArmId}>
+            <SelectTrigger id="trigger-class-arm" className="mt-1">
+              <SelectValue placeholder="Whole scope (default)" />
+            </SelectTrigger>
+            <SelectContent>
+              {classArmsForGroup.map((arm) => (
+                <SelectItem key={arm.id} value={arm.id}>
+                  {arm.displayName}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>

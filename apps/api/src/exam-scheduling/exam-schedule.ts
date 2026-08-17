@@ -48,7 +48,14 @@ export class ExamScheduleService {
     client: PrismaService | Prisma.TransactionClient = this.prisma,
   ) {
     const sameDaySlots = await client.examSchedule.findMany({
-      where: { classArmId: input.classArmId, date: input.date, id: excludeId ? { not: excludeId } : undefined },
+      where: {
+        classArmId: input.classArmId,
+        date: input.date,
+        id: excludeId ? { not: excludeId } : undefined,
+        // Same reasoning as TimetableSlotService.assertNoConflicts — a
+        // REJECTED row must not permanently block its slot from reuse.
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
     });
     for (const slot of sameDaySlots) {
       if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {

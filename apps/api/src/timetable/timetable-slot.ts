@@ -57,6 +57,12 @@ export class TimetableSlotService {
       academicSessionId: input.academicSessionId,
       termId: input.termId,
       id: excludeId ? { not: excludeId } : undefined,
+      // A REJECTED slot isn't real/active — the whole point of rejecting a
+      // generated draft is to free its teacher/venue back up for a retry.
+      // Without this, a rejected row permanently "blocks" that same
+      // staff/time forever, so regenerating after any rejection reliably
+      // fails on the very slots the rejection was meant to clear.
+      approvalStatus: { not: TimetableApprovalStatus.REJECTED },
     } as const;
 
     const staffSlots = await client.timetableSlot.findMany({

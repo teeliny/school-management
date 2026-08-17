@@ -44,7 +44,13 @@ export class InvigilationAssignmentService {
     const target = await client.examSchedule.findUniqueOrThrow({ where: { id: examScheduleId } });
 
     const otherAssignments = await client.invigilationAssignment.findMany({
-      where: { staffId, examScheduleId: { not: examScheduleId } },
+      where: {
+        staffId,
+        examScheduleId: { not: examScheduleId },
+        // Same reasoning as TimetableSlotService.assertNoConflicts — a
+        // REJECTED row must not permanently block its slot from reuse.
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
       include: { examSchedule: true },
     });
 

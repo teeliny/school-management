@@ -167,7 +167,14 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   private async buildClassTimetablePayload(
-    request: { id: string; termId: string | null; classArmId: string | null; requestedByUserId: string; callbackToken: string },
+    request: {
+      id: string;
+      termId: string | null;
+      classArmId: string | null;
+      classLevelCategoryGroup: ClassLevelCategoryGroup | null;
+      requestedByUserId: string;
+      callbackToken: string;
+    },
     callbackUrl: string,
   ) {
     // Validated required at trigger time (ScheduleGenerationRequestService.create) —
@@ -177,7 +184,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
 
     const classArmIds = request.classArmId
       ? [request.classArmId]
-      : await this.resolveWholeScopeClassArmIds(request.requestedByUserId, term.academicSessionId);
+      : await this.resolveWholeScopeClassArmIds(
+          request.requestedByUserId,
+          term.academicSessionId,
+          request.classLevelCategoryGroup,
+        );
 
     const classArms = await this.prisma.classArm.findMany({
       where: { id: { in: classArmIds } },
@@ -205,8 +216,6 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       }),
     ]);
     const calculationSubjectsMorning = globalConstraints.find((c) => c.key === "CALCULATION_SUBJECTS_MORNING")
-      ?.value as boolean | undefined;
-    const spreadCalculationSubjects = globalConstraints.find((c) => c.key === "SPREAD_CALCULATION_SUBJECTS")
       ?.value as boolean | undefined;
 
     const groups: GroupPayload[] = [];
@@ -238,7 +247,6 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       requestId: request.id,
       scope: ScheduleScope.CLASS_TIMETABLE,
       calculationSubjectsMorning: calculationSubjectsMorning ?? true,
-      spreadCalculationSubjects: spreadCalculationSubjects ?? true,
       groups,
       callbackUrl,
       callbackToken: request.callbackToken,
@@ -715,8 +723,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * scoping logic without duplicating its CASL/ForbiddenException shape —
    * this runs after the API has already authorized the trigger.
    */
-  private async resolveWholeScopeClassArmIds(userId: string, academicSessionId: string): Promise<string[]> {
-    const categories = await this.resolveAllowedCategories(userId);
+  /**
+   * `targetGroup`, when set, narrows a whole-scope run to just that group
+   * (e.g. a Super-Admin retrying only JSS_SSS after CRECHE_NURSERY_PRIMARY
+   * already solved) — intersected against the user's own allowed categories
+   * so a Principal/Headteacher can't reach outside their assignment via this
+   * param (already re-enforced as a no-op: `assertCanTrigger` rejects a
+   * mismatched classLevelCategoryGroup for them before this job is ever
+   * dispatched).
+   */
+  private async resolveWholeScopeClassArmIds(
+    userId: string,
+    academicSessionId: string,
+    targetGroup?: ClassLevelCategoryGroup | null,
+  ): Promise<string[]> {
+    const allowedCategories = await this.resolveAllowedCategories(userId);
+    const categories = targetGroup
+      ? allowedCategories.filter((c) => categoryToGroup(c) === targetGroup)
+      : allowedCategories;
     const arms = await this.prisma.classArm.findMany({
       where: { academicSessionId, classLevel: { category: { in: categories } } },
       select: { id: true },

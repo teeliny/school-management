@@ -14,31 +14,45 @@ import { usePaginatedStudents } from "../../lib/use-paginated-students";
  * `SearchableSelect`, which filters an already-fetched list client-side,
  * this is for the school-wide student list, which can be large. Search and
  * "scroll to load more" both happen inside the open popover.
+ *
+ * Scope with exactly one of `classArmId` (single arm — the gradebook/
+ * report-card/comment-panel shape) or `classLevelCategory` (a whole
+ * category, e.g. "SSS" for department assignment); the latter also shows
+ * each student's class arm inline, since the list can span many arms.
+ * `extraLabelsByStudentId`, if supplied, appends a caller-defined note per
+ * student (e.g. an existing department assignment) without this shared
+ * component needing to know what that note means.
  */
 export function StudentCombobox({
   id,
   classArmId,
+  classLevelCategory,
   value,
   onValueChange,
   placeholder = "Select student…",
+  extraLabelsByStudentId,
   className,
 }: {
   id?: string;
-  classArmId: string;
+  classArmId?: string;
+  classLevelCategory?: string;
   value: string;
   onValueChange: (studentId: string, label: string) => void;
   placeholder?: string;
+  extraLabelsByStudentId?: Record<string, string>;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState("");
   const { students, total, loading, error, hasMore, search, setSearch, loadMore } = usePaginatedStudents({
     classArmId,
+    classLevelCategory,
   });
   const sentinelRef = useInfiniteScroll({ onLoadMore: loadMore, hasMore, loading, root: null });
+  const scoped = Boolean(classArmId || classLevelCategory);
 
   // Clears the picked label whenever the caller resets `value` (e.g. the
-  // class arm changed and the previous selection no longer applies).
+  // scope changed and the previous selection no longer applies).
   useEffect(() => {
     if (!value) setSelectedLabel("");
   }, [value]);
@@ -55,7 +69,7 @@ export function StudentCombobox({
         <button
           type="button"
           id={id}
-          disabled={!classArmId}
+          disabled={!scoped}
           className={cn(
             "flex w-full items-center justify-between rounded-lg border border-border bg-card-inset px-3 py-2.5 text-left text-[13px] text-foreground",
             "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-muted",
@@ -64,7 +78,7 @@ export function StudentCombobox({
           )}
         >
           <span className={cn("truncate", !selectedLabel && "text-muted")}>
-            {selectedLabel || (classArmId ? placeholder : "Select a class arm first")}
+            {selectedLabel || (scoped ? placeholder : "Select a class arm first")}
           </span>
           <ChevronDown className="h-4 w-4 flex-none text-muted" />
         </button>
@@ -93,7 +107,12 @@ export function StudentCombobox({
               <p className="px-2 py-1.5 text-[12px] text-muted">No students found</p>
             )}
             {students.map((student) => {
-              const label = `${student.user.firstName} ${student.user.lastName} (${student.admissionNumber})`;
+              let label = `${student.user.firstName} ${student.user.lastName} (${student.admissionNumber})`;
+              if (!classArmId && student.currentClass) {
+                label += ` — ${student.currentClass.classLevel.name} ${student.currentClass.name}`;
+              }
+              const extra = extraLabelsByStudentId?.[student.id];
+              if (extra) label += ` — ${extra}`;
               const checked = student.id === value;
               return (
                 <DropdownMenuPrimitive.Item

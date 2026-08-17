@@ -49,12 +49,11 @@ def solve_class_timetable(
     request_id: str,
     callback_token: str,
     calculation_subjects_morning: bool,
-    spread_calculation_subjects: bool,
     groups: list[GroupPayload],
 ) -> dict[str, Any]:
     generated_rows: list[dict[str, Any]] = []
     for group in groups:
-        rows = _solve_group(group, calculation_subjects_morning, spread_calculation_subjects)
+        rows = _solve_group(group, calculation_subjects_morning)
         if rows is None:
             return {
                 "callbackToken": callback_token,
@@ -68,7 +67,6 @@ def solve_class_timetable(
 def _solve_group(
     group: GroupPayload,
     calculation_subjects_morning: bool,
-    spread_calculation_subjects: bool,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
     periods = range(1, group.periodsPerDay + 1)
@@ -146,21 +144,13 @@ def _solve_group(
                 if len(vars_here) > 1:
                     model.add(sum(vars_here) <= 1)
 
-    # SPREAD_CALCULATION_SUBJECTS: at most one calculation-subject period per
-    # class arm per day, across all calculation subjects combined.
-    if spread_calculation_subjects:
-        for arm in group.classArms:
-            calc_subject_ids = {s.subjectId for s in arm.subjects if s.requiresCalculation}
-            if not calc_subject_ids:
-                continue
-            for day in group.days:
-                vars_here = [
-                    v
-                    for (arm_id, subject_id, d, _p), v in variables.items()
-                    if arm_id == arm.classArmId and subject_id in calc_subject_ids and d == day
-                ]
-                if vars_here:
-                    model.add(sum(vars_here) <= 1)
+    # Each (arm, subject) is already capped at one occurrence/day above,
+    # which is what actually spreads a calculation subject's periods across
+    # the week — deliberately no additional cross-subject cap here: with
+    # several calculation subjects on one arm (e.g. SSS's Math/Further
+    # Maths/Physics/Chemistry/Accounting, each 3 periods/week), a "one calc
+    # period per day total" cap needs more distinct calc-subject days than a
+    # 5-day week has, making the model infeasible regardless of staffing.
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS

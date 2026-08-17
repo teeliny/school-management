@@ -40,11 +40,22 @@ export interface DefaultSchedulingConstraint {
  * (apps/api/src/setup-school.ts) — Admin can tune any of these afterward via
  * `PATCH /scheduling-constraints/:id` without a code change (PRD §3.8).
  *
- * CALCULATION_SUBJECTS_MORNING/SPREAD_CALCULATION_SUBJECTS are seeded for
- * both CLASS_TIMETABLE (FR6.2) and EXAM_TIMETABLE (FR6.3) — the same rule
- * applies to routine class periods and exam slots, independently tunable per
- * scope. Both stay global (no classLevelCategoryGroup) — unlike the period/
- * break keys below, nothing suggested these should vary by group.
+ * CALCULATION_SUBJECTS_MORNING is seeded for both CLASS_TIMETABLE (FR6.2)
+ * and EXAM_TIMETABLE (FR6.3) — the same rule applies to routine class
+ * periods and exam slots, independently tunable per scope. Stays global (no
+ * classLevelCategoryGroup) — unlike the period/break keys below, nothing
+ * suggested this should vary by group.
+ *
+ * SPREAD_CALCULATION_SUBJECTS is seeded for EXAM_TIMETABLE only (spacing
+ * calculation-subject exams across the exam period, alongside
+ * MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS) — CLASS_TIMETABLE's solver already
+ * caps each subject to one period/day unconditionally (that's what actually
+ * spreads a subject's periods across the week), so a scope-level "one
+ * calculation-subject period per day, combined across every calculation
+ * subject" rule isn't meaningful there: a class arm with several
+ * calculation-heavy subjects (SSS commonly has five) can easily need more
+ * combined weekly periods than a 5-day week has days, making that reading of
+ * the constraint permanently infeasible regardless of staffing.
  *
  * The CLASS_TIMETABLE period/break keys are seeded per group — BUILD_PLAN.md
  * §9 Step 2: there is no existing concept of teaching periods anywhere in
@@ -55,7 +66,6 @@ export interface DefaultSchedulingConstraint {
  */
 export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   { scope: "CLASS_TIMETABLE", key: "CALCULATION_SUBJECTS_MORNING", value: true },
-  { scope: "CLASS_TIMETABLE", key: "SPREAD_CALCULATION_SUBJECTS", value: true },
 
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIODS_PER_DAY", value: 8 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIOD_DURATION_MINUTES", value: 40 },

@@ -1,22 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DAYS_OF_WEEK, type DayOfWeek } from "@school/types";
+import { categoryToGroup, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
+import { buildPeriodColumns, resolvePeriodIndex } from "../../lib/period-columns";
+import { usePeriodStructure } from "../../lib/use-period-structure";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
+import { ClickReveal } from "../molecules/click-reveal";
 
 interface TimetableSlotItem {
   id: string;
   classArmId: string;
-  classArm: { displayName: string };
-  subject: { name: string };
+  subject: { name: string; code: string };
   staff: { user: { firstName: string; lastName: string } };
   dayOfWeek: DayOfWeek;
   startTime: string;
-  endTime: string;
   venue: string | null;
   approvalStatus: "DRAFT" | "PENDING_REVIEW" | "APPROVED" | "REJECTED";
+}
+interface ClassArmOption {
+  id: string;
+  displayName: string;
+  classLevel: { category: "CRECHE" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
 }
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
@@ -26,15 +32,21 @@ const DAY_LABELS: Record<DayOfWeek, string> = {
   THURSDAY: "Thursday",
   FRIDAY: "Friday",
 };
+const GROUP_LABEL: Record<ClassLevelCategoryGroup, string> = {
+  JSS_SSS: "JSS / SSS",
+  CRECHE_NURSERY_PRIMARY: "Creche / Nursery / Primary",
+};
 
 /**
  * BUILD_PLAN.md §9 Step 7's "whole-school timetable overview" (PRD FR6.10,
- * §5 footnote 6) — scoped by the caller's academic session/term only (no
- * classArmId), which TimetableSlotService.findAll now supports directly,
- * including its own server-side Principal→JSS/SSS / Headteacher→Creche/
- * Nursery/Primary scoping. Read-only: this view is for oversight across
- * every class at once — editing stays in the single-class TimetableGrid
- * (drag-and-drop), reached here via "Edit this class".
+ * §5 footnote 6) — a real DAY/Class-by-period grid (one group's period
+ * structure at a time, since JSS/SSS and Creche/Nursery/Primary run
+ * different period counts/times), matching the hand-drawn timetable grid
+ * this UI is modeled on. Read-only: this view is for oversight across every
+ * class at once — editing stays in the single-class TimetableGrid, reached
+ * here via each row's "Edit" link. A cell shows just the subject; the
+ * teacher's name is revealed on click (ClickReveal) rather than always
+ * shown, so the grid stays scannable.
  */
 export function AllClassesTimetableView({
   academicSessionId,
@@ -46,8 +58,10 @@ export function AllClassesTimetableView({
   onViewClass: (classArmId: string) => void;
 }) {
   const [rows, setRows] = useState<TimetableSlotItem[] | null>(null);
+  const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [groupBy, setGroupBy] = useState<"day" | "class">("day");
+  const [group, setGroup] = useState<ClassLevelCategoryGroup>("JSS_SSS");
+  const structure = usePeriodStructure(group);
 
   const load = useCallback(() => {
     if (!academicSessionId || !termId) {
@@ -74,137 +88,138 @@ export function AllClassesTimetableView({
     load();
   }, [load]);
 
-  const byDay = useMemo(() => {
-    if (!rows) return [];
-    return DAYS_OF_WEEK.map((day) => ({
-      day,
-      items: rows
-        .filter((r) => r.dayOfWeek === day)
-        .sort((a, b) => a.startTime.localeCompare(b.startTime) || a.classArm.displayName.localeCompare(b.classArm.displayName)),
-    })).filter((g) => g.items.length > 0);
-  }, [rows]);
+  useEffect(() => {
+    if (!academicSessionId) {
+      setClassArms([]);
+      return;
+    }
+    apiFetch<ClassArmOption[]>(`/class-arms?academicSessionId=${academicSessionId}`, { auth: true })
+      .then(setClassArms)
+      .catch(() => setClassArms([]));
+  }, [academicSessionId]);
 
-  const byClass = useMemo(() => {
-    if (!rows) return [];
-    const byId = new Map<string, { classArmId: string; displayName: string; items: TimetableSlotItem[] }>();
+  const classArmsForGroup = useMemo(
+    () =>
+      classArms
+        .filter((arm) => categoryToGroup(arm.classLevel.category) === group)
+        .sort((a, b) => a.displayName.localeCompare(b.displayName)),
+    [classArms, group],
+  );
+
+  // O(1) cell lookup: (classArmId, day, periodIndex) -> the slot in it. A
+  // slot's period index is resolved against *its own* dayOfWeek (Friday's
+  // shorter break shifts which period a given startTime falls in) rather
+  // than the Monday-derived column headers.
+  const slotByCell = useMemo(() => {
+    const map = new Map<string, TimetableSlotItem>();
+    if (!rows || !structure) return map;
     for (const row of rows) {
-      const entry = byId.get(row.classArmId) ?? { classArmId: row.classArmId, displayName: row.classArm.displayName, items: [] };
-      entry.items.push(row);
-      byId.set(row.classArmId, entry);
+      const periodIndex = resolvePeriodIndex(structure, row.dayOfWeek, row.startTime);
+      if (periodIndex === null) continue;
+      map.set(`${row.classArmId}|${row.dayOfWeek}|${periodIndex}`, row);
     }
-    for (const entry of byId.values()) {
-      entry.items.sort((a, b) => DAYS_OF_WEEK.indexOf(a.dayOfWeek) - DAYS_OF_WEEK.indexOf(b.dayOfWeek) || a.startTime.localeCompare(b.startTime));
-    }
-    return [...byId.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [rows]);
+    return map;
+  }, [rows, structure]);
+
+  const columns = useMemo(() => (structure ? buildPeriodColumns(structure) : []), [structure]);
 
   if (!academicSessionId || !termId) {
     return <p className="text-sm text-muted">Select a session and term to view the whole-school timetable.</p>;
   }
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!rows) return <p className="text-sm text-muted">Loading…</p>;
-  if (rows.length === 0) return <p className="text-sm text-muted">No timetable published yet for this term.</p>;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex gap-1.5">
-        <Button type="button" size="sm" variant={groupBy === "day" ? "primary" : "outline"} onClick={() => setGroupBy("day")}>
-          By day
-        </Button>
-        <Button type="button" size="sm" variant={groupBy === "class" ? "primary" : "outline"} onClick={() => setGroupBy("class")}>
-          By class
-        </Button>
+        {(Object.keys(GROUP_LABEL) as ClassLevelCategoryGroup[]).map((g) => (
+          <Button key={g} type="button" size="sm" variant={group === g ? "primary" : "outline"} onClick={() => setGroup(g)}>
+            {GROUP_LABEL[g]}
+          </Button>
+        ))}
       </div>
 
-      {groupBy === "day"
-        ? byDay.map(({ day, items }) => (
-            <div key={day}>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">{DAY_LABELS[day]}</div>
-              <ScheduleTable
-                headers={["Time", "Class", "Subject", "Teacher", "Venue"]}
-                rows={items.map((i) => ({
-                  id: i.id,
-                  pending: i.approvalStatus === "PENDING_REVIEW",
-                  cells: [
-                    `${i.startTime}–${i.endTime}`,
-                    i.classArm.displayName,
-                    i.subject.name,
-                    `${i.staff.user.firstName} ${i.staff.user.lastName}`,
-                    i.venue ?? "—",
-                  ],
-                  onClick: () => onViewClass(i.classArmId),
-                }))}
-              />
-            </div>
-          ))
-        : byClass.map(({ classArmId, displayName, items }) => (
-            <div key={classArmId}>
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{displayName}</span>
-                <button type="button" onClick={() => onViewClass(classArmId)} className="text-[11px] text-primary underline">
-                  Edit this class
-                </button>
-              </div>
-              <ScheduleTable
-                headers={["Day", "Time", "Subject", "Teacher", "Venue"]}
-                rows={items.map((i) => ({
-                  id: i.id,
-                  pending: i.approvalStatus === "PENDING_REVIEW",
-                  cells: [DAY_LABELS[i.dayOfWeek], `${i.startTime}–${i.endTime}`, i.subject.name, `${i.staff.user.firstName} ${i.staff.user.lastName}`, i.venue ?? "—"],
-                }))}
-              />
-            </div>
-          ))}
-    </div>
-  );
-}
-
-function ScheduleTable({
-  headers,
-  rows,
-}: {
-  headers: string[];
-  rows: { id: string; pending: boolean; cells: string[]; onClick?: () => void }[];
-}) {
-  return (
-    <div className="mb-3 overflow-x-auto">
-      <table className="w-full text-left text-[12.5px]">
-        <thead>
-          <tr className="border-b border-border text-[10.5px] uppercase tracking-wide text-muted">
-            {headers.map((h) => (
-              <th key={h} className="py-1.5 pr-3 font-medium">
-                {h}
-              </th>
-            ))}
-            <th className="py-1.5 pr-0" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-b border-border">
-              {row.cells.map((cell, i) => (
-                <td key={i} className="py-1.5 pr-3">
-                  {cell}
-                </td>
-              ))}
-              <td className="py-1.5 pr-0 text-right">
-                <div className="flex items-center justify-end gap-2">
-                  {row.pending && (
-                    <Badge variant="warning" className="text-[9px]">
-                      Pending
-                    </Badge>
-                  )}
-                  {row.onClick && (
-                    <button type="button" onClick={row.onClick} className="text-[11px] text-primary underline">
-                      Edit class
-                    </button>
-                  )}
+      {classArmsForGroup.length === 0 ? (
+        <p className="text-sm text-muted">No class arms in this group for the selected session.</p>
+      ) : !structure ? (
+        <p className="text-sm text-muted">
+          This group's period structure isn't fully configured yet — set it under Constraints (PERIODS_PER_DAY,
+          PERIOD_DURATION_MINUTES, SCHOOL_DAY_START_TIME, BREAK_AFTER_PERIOD, BREAK_DURATION_MINUTES,
+          FRIDAY_BREAK_DURATION_MINUTES).
+        </p>
+      ) : (
+        DAYS_OF_WEEK.map((day) => (
+          <div key={day}>
+            <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">{DAY_LABELS[day]}</div>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <div
+                className="grid"
+                style={{ gridTemplateColumns: `160px repeat(${columns.length}, minmax(78px, 1fr))` }}
+              >
+                <div className="border-b border-border bg-card-inset px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                  Class
                 </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+                {columns.map((col, i) => (
+                  <div
+                    key={i}
+                    className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
+                  >
+                    {col.kind === "break" ? "Break" : `${col.startTime}–${col.endTime}`}
+                  </div>
+                ))}
+
+                {classArmsForGroup.map((arm) => (
+                  <div key={arm.id} className="contents">
+                    <div className="flex items-center justify-between gap-1.5 border-b border-border px-2 py-2 text-[12px]">
+                      <span className="truncate">{arm.displayName}</span>
+                      <button
+                        type="button"
+                        onClick={() => onViewClass(arm.id)}
+                        className="flex-none text-[10.5px] text-primary underline"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                    {columns.map((col, i) => {
+                      if (col.kind === "break") {
+                        return <div key={i} className="border-b border-border bg-muted/10" />;
+                      }
+                      const slot = slotByCell.get(`${arm.id}|${day}|${col.index}`);
+                      return (
+                        <div key={i} className="border-b border-border px-1 py-1.5">
+                          {slot && (
+                            <ClickReveal
+                              className={
+                                slot.approvalStatus === "PENDING_REVIEW"
+                                  ? "rounded border border-dashed border-warning px-1 py-0.5"
+                                  : undefined
+                              }
+                              trigger={
+                                <span className="truncate text-[11px] font-medium">{slot.subject.code || slot.subject.name}</span>
+                              }
+                            >
+                              <div className="font-medium">{slot.subject.name}</div>
+                              <div className="text-muted">
+                                {slot.staff.user.firstName} {slot.staff.user.lastName}
+                              </div>
+                              {slot.venue && <div className="text-muted">{slot.venue}</div>}
+                              {slot.approvalStatus === "PENDING_REVIEW" && (
+                                <Badge variant="warning" className="mt-1 text-[9px]">
+                                  Pending
+                                </Badge>
+                              )}
+                            </ClickReveal>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }

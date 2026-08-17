@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
+import { StudentCombobox } from "../molecules/student-combobox";
 import {
   Select,
   SelectContent,
@@ -12,11 +13,6 @@ import {
   SelectValue,
 } from "../molecules/select";
 
-interface StudentOption {
-  id: string;
-  admissionNumber: string;
-  user: { firstName: string; lastName: string };
-}
 interface DepartmentOption {
   id: string;
   name: string;
@@ -24,17 +20,22 @@ interface DepartmentOption {
 interface AcademicSessionOption {
   id: string;
   name: string;
+  isCurrent: boolean;
+}
+interface StudentDepartmentRow {
+  studentId: string;
+  department: { name: string };
 }
 
 // PRD §3.2/§3.3: assigns a student to a department for a session — the API
-// rejects this unless the student's current class level is SSS, surfaced
-// here as a plain error banner rather than pre-filtering the student list
-// (keeps this form simple; the backend is the single source of truth for
-// the rule).
+// rejects this unless the student's current class level is SSS. The student
+// picker is scoped to SSS up front (StudentCombobox's classLevelCategory),
+// but the backend check stays the real authority — same "narrow the UI, but
+// don't trust it alone" precedent as everywhere else in this app.
 export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void }) {
-  const [students, setStudents] = useState<StudentOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
+  const [existingAssignments, setExistingAssignments] = useState<StudentDepartmentRow[]>([]);
   const [studentId, setStudentId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [academicSessionId, setAcademicSessionId] = useState("");
@@ -43,10 +44,33 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    apiFetch<StudentOption[]>("/students", { auth: true }).then(setStudents).catch(() => setStudents([]));
     apiFetch<DepartmentOption[]>("/departments", { auth: true }).then(setDepartments).catch(() => setDepartments([]));
-    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }).then(setSessions).catch(() => setSessions([]));
+    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true })
+      .then((all) => {
+        setSessions(all);
+        const current = all.find((s) => s.isCurrent);
+        if (current) setAcademicSessionId(current.id);
+      })
+      .catch(() => setSessions([]));
   }, []);
+
+  // Existing assignments for the selected session — surfaced per-student in
+  // the picker below (via extraLabelsByStudentId) so re-picking an
+  // already-assigned student shows their current department instead of
+  // looking unassigned.
+  useEffect(() => {
+    if (!academicSessionId) {
+      setExistingAssignments([]);
+      return;
+    }
+    apiFetch<StudentDepartmentRow[]>(`/student-departments?academicSessionId=${academicSessionId}`, { auth: true })
+      .then(setExistingAssignments)
+      .catch(() => setExistingAssignments([]));
+  }, [academicSessionId]);
+
+  const currentDepartmentByStudentId = Object.fromEntries(
+    existingAssignments.map((row) => [row.studentId, `currently: ${row.department.name}`]),
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,6 +84,9 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
         body: { studentId, departmentId, academicSessionId },
       });
       setSuccess("Department assigned.");
+      apiFetch<StudentDepartmentRow[]>(`/student-departments?academicSessionId=${academicSessionId}`, { auth: true })
+        .then(setExistingAssignments)
+        .catch(() => {});
       onAssigned?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -74,19 +101,32 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
       {success && <p className="text-sm text-success">{success}</p>}
 
       <div>
-        <Label htmlFor="sd-student">Student</Label>
-        <Select value={studentId} onValueChange={setStudentId}>
-          <SelectTrigger id="sd-student" className="mt-1">
-            <SelectValue placeholder="Select student" />
+        <Label htmlFor="sd-session">Academic session</Label>
+        <Select value={academicSessionId} onValueChange={setAcademicSessionId}>
+          <SelectTrigger id="sd-session" className="mt-1">
+            <SelectValue placeholder="Select session" />
           </SelectTrigger>
           <SelectContent>
-            {students.map((student) => (
-              <SelectItem key={student.id} value={student.id}>
-                {student.user.firstName} {student.user.lastName} ({student.admissionNumber})
+            {sessions.map((session) => (
+              <SelectItem key={session.id} value={session.id}>
+                {session.name}
+                {session.isCurrent && " (current)"}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div>
+        <Label htmlFor="sd-student">Student (SSS only)</Label>
+        <StudentCombobox
+          id="sd-student"
+          classLevelCategory="SSS"
+          value={studentId}
+          onValueChange={(id) => setStudentId(id)}
+          extraLabelsByStudentId={currentDepartmentByStudentId}
+          className="mt-1"
+        />
       </div>
 
       <div>
@@ -99,22 +139,6 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
             {departments.map((dept) => (
               <SelectItem key={dept.id} value={dept.id}>
                 {dept.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div>
-        <Label htmlFor="sd-session">Academic session</Label>
-        <Select value={academicSessionId} onValueChange={setAcademicSessionId}>
-          <SelectTrigger id="sd-session" className="mt-1">
-            <SelectValue placeholder="Select session" />
-          </SelectTrigger>
-          <SelectContent>
-            {sessions.map((session) => (
-              <SelectItem key={session.id} value={session.id}>
-                {session.name}
               </SelectItem>
             ))}
           </SelectContent>
