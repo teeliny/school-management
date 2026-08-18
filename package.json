@@ -16,7 +16,7 @@
     "dev:worker": "pnpm --filter=@school/worker dev",
     "dev:web": "pnpm --filter=@school/web dev",
     "dev:scheduling-engine": "apps/scheduling-engine/.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/scheduling-engine",
-    "dev:scheduling-engine-py": "python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/scheduling-engine",
+    "dev:scheduling-engine-py": "py -3 -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/scheduling-engine",
     "setup:scheduling-engine": "python3 -m venv apps/scheduling-engine/.venv && apps/scheduling-engine/.venv/bin/pip install -r apps/scheduling-engine/requirements.txt",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
