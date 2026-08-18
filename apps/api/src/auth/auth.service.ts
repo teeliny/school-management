@@ -1,0 +1,184 @@
+import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { JwtService } from "@nestjs/jwt";
+import { UserStatus } from "@prisma/client";
+import * as argon2 from "argon2";
+import type Redis from "ioredis";
+import { REDIS_CLIENT } from "../redis/redis.module";
+import { generateRawToken, hashToken } from "../common/crypto/token";
+import { PrismaService } from "../prisma/prisma.service";
+import { UserService } from "../identity/users/user.service";
+import { NotificationService } from "../notifications/notification";
+
+const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const REFRESH_KEY_PREFIX = "refresh:";
+const REUSE_KEY_PREFIX = "refresh:used:";
+// PRD FR1.8: "expires in 1 hour" — shorter than Invitation's 7 days either
+// way, since a password-reset link is a short-lived, security-sensitive
+// credential, not an onboarding artifact.
+const PASSWORD_RESET_TTL_SECONDS = 60 * 60;
+const PASSWORD_RESET_KEY_PREFIX = "password-reset:";
+// The web app fires several parallel requests per page (useCurrentUser + a
+// list fetch); when the access token expires, more than one can 401 and
+// redeem the same refresh token within milliseconds of each other. Without
+// this, the loser of that race sees "already redeemed" and gets logged out
+// even though the winner succeeded. Grace window lets it replay the winner's
+// result instead of failing.
+const REUSE_GRACE_TTL_SECONDS = 10;
+
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+/**
+ * PRD FR1.6/FR1.7, ARCHITECTURE.md §7 — no tenant/school-selection step:
+ * this deployment has exactly one User table to check credentials against.
+ * Access tokens are short-lived JWTs (`sub`, `roles`); refresh tokens are
+ * opaque, hashed the same way as Invitation tokens (§token.ts), stored in
+ * Redis so logout/password-change can revoke them immediately.
+ */
+@Injectable()
+export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
+  constructor(
+    private readonly userService: UserService,
+    private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    private readonly notifications: NotificationService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
+
+  async validateCredentials(email: string, password: string) {
+    const user = await this.userService.findByEmail(email);
+    if (!user || user.status !== UserStatus.active || !user.passwordHash) {
+      return null;
+    }
+
+    const valid = await argon2.verify(user.passwordHash, password);
+    return valid ? user : null;
+  }
+
+  async issueTokens(userId: string, roles: string[]): Promise<AuthTokens> {
+    const assignmentTypes = await this.activeAssignmentTypes(userId);
+    const accessToken = await this.jwtService.signAsync({ sub: userId, roles, assignmentTypes });
+    const refreshToken = await this.storeNewRefreshToken(userId);
+    return { accessToken, refreshToken };
+  }
+
+  /**
+   * PRD §5: some permissions (e.g. Registrar-managed timetable) key off an
+   * active StaffAssignment.assignmentType, not a Role. Embedded in the JWT
+   * alongside `roles` — same staleness profile roles already has, no new
+   * async surface for CASL's AbilityFactory.createForUser (called
+   * synchronously in ~10 places).
+   */
+  async activeAssignmentTypes(userId: string): Promise<string[]> {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    if (!staffProfile) return [];
+
+    const assignments = await this.prisma.staffAssignment.findMany({
+      where: { staffId: staffProfile.id, isActive: true },
+      select: { assignmentType: true },
+      distinct: ["assignmentType"],
+    });
+    return assignments.map((a) => a.assignmentType);
+  }
+
+  /**
+   * Rotates the refresh token: the presented one is invalidated whether or
+   * not this call succeeds past that point. If it was already redeemed in
+   * the last REUSE_GRACE_TTL_SECONDS (a losing concurrent request racing the
+   * one that redeemed it first), replays that redemption's result instead of
+   * failing — see REUSE_GRACE_TTL_SECONDS comment above.
+   */
+  async refresh(presentedRefreshToken: string): Promise<AuthTokens> {
+    const hash = hashToken(presentedRefreshToken);
+    const key = REFRESH_KEY_PREFIX + hash;
+    const userId = await this.redis.get(key);
+
+    if (!userId) {
+      const reused = await this.redis.get(REUSE_KEY_PREFIX + hash);
+      if (reused) return JSON.parse(reused) as AuthTokens;
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+
+    await this.redis.del(key);
+
+    const user = await this.userService.findById(userId);
+    if (!user || user.status !== UserStatus.active) {
+      throw new UnauthorizedException("Account is no longer active");
+    }
+
+    const roles = user.roles.filter((r) => r.isActive).map((r) => r.role);
+    const tokens = await this.issueTokens(user.id, roles);
+    await this.redis.set(REUSE_KEY_PREFIX + hash, JSON.stringify(tokens), "EX", REUSE_GRACE_TTL_SECONDS);
+    return tokens;
+  }
+
+  async logout(presentedRefreshToken: string): Promise<void> {
+    const key = REFRESH_KEY_PREFIX + hashToken(presentedRefreshToken);
+    await this.redis.del(key);
+  }
+
+  /** PRD FR1.7: revocable on password change — every outstanding refresh token for this user is blacklisted. */
+  async revokeAllRefreshTokens(userId: string): Promise<void> {
+    let cursor = "0";
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, "MATCH", `${REFRESH_KEY_PREFIX}*`);
+      cursor = nextCursor;
+      for (const key of keys) {
+        const value = await this.redis.get(key);
+        if (value === userId) await this.redis.del(key);
+      }
+    } while (cursor !== "0");
+  }
+
+  /**
+   * Opaque, hashed, single-use, short-lived — same shape as refresh tokens
+   * (Redis, not a DB table; Invitation's DB-table approach fits a longer-
+   * lived, staff-visible workflow, not this one). Always resolves the same
+   * way regardless of whether the email is registered — no response-based
+   * account enumeration.
+   */
+  async forgotPassword(email: string): Promise<void> {
+    const user = await this.userService.findByEmail(email);
+    if (!user || user.status !== UserStatus.active) return;
+
+    const rawToken = generateRawToken();
+    await this.redis.set(PASSWORD_RESET_KEY_PREFIX + hashToken(rawToken), user.id, "EX", PASSWORD_RESET_TTL_SECONDS);
+
+    const webBaseUrl = this.config.get<string>("WEB_BASE_URL") ?? "http://localhost:3000";
+    const resetUrl = `${webBaseUrl}/reset-password?token=${rawToken}`;
+    try {
+      await this.notifications.notify(user.id, "PASSWORD_RESET", { resetUrl });
+    } catch (error) {
+      // Must not leak "this email exists" via a 500, and must not block the
+      // generic response every caller gets regardless of outcome.
+      this.logger.warn(`Failed to notify ${user.id} of PASSWORD_RESET: ${String(error)}`);
+    }
+  }
+
+  /** Single-use: the Redis key is deleted immediately on success. Every outstanding session is revoked (PRD FR1.7). */
+  async resetPassword(rawToken: string, newPassword: string): Promise<{ id: string }> {
+    const key = PASSWORD_RESET_KEY_PREFIX + hashToken(rawToken);
+    const userId = await this.redis.get(key);
+    if (!userId) throw new BadRequestException("Invalid or expired reset token");
+
+    await this.redis.del(key);
+    const passwordHash = await argon2.hash(newPassword);
+    await this.prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+    await this.revokeAllRefreshTokens(userId);
+
+    return { id: userId };
+  }
+
+  private async storeNewRefreshToken(userId: string): Promise<string> {
+    const rawToken = generateRawToken();
+    const key = REFRESH_KEY_PREFIX + hashToken(rawToken);
+    await this.redis.set(key, userId, "EX", REFRESH_TOKEN_TTL_SECONDS);
+    return rawToken;
+  }
+}

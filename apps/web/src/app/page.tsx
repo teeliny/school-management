@@ -1,7 +1,5 @@
+import { redirect } from "next/navigation";
+
 export default function HomePage() {
-  return (
-    <main className="flex min-h-screen items-center justify-center">
-      <p className="text-sm text-gray-500">School Management — Phase 0 scaffold.</p>
-    </main>
-  );
+  redirect("/login");
 }

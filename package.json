@@ -16,16 +16,23 @@
     "dev:worker": "pnpm --filter=@school/worker dev",
     "dev:web": "pnpm --filter=@school/web dev",
     "dev:scheduling-engine": "apps/scheduling-engine/.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/scheduling-engine",
+    "dev:scheduling-engine-py": "py -3 -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir apps/scheduling-engine",
     "setup:scheduling-engine": "python3 -m venv apps/scheduling-engine/.venv && apps/scheduling-engine/.venv/bin/pip install -r apps/scheduling-engine/requirements.txt",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
+    "setup:school": "pnpm --filter=@school/api run setup:school --",
+    "seed:demo": "pnpm --filter=@school/api run seed:demo && pnpm --filter=@school/worker run aggregate:demo-scores",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
   },
+  "dependencies": {
+    "@prisma/client": "^7.9.1"
+  },
   "devDependencies": {
+    "dotenv": "^17.4.2",
+    "prisma": "^7.9.1",
     "turbo": "^2.3.0",
-    "typescript": "^5.7.0",
-    "prisma": "^5.22.0"
+    "typescript": "^5.7.0"
   }
 }

@@ -3,6 +3,5 @@ uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
 httpx>=0.27.0
 
-# NOTE: ortools is added in Phase 7 (ARCHITECTURE.md §9) once the actual
-# CP-SAT solver logic is being built — Phase 0 only needs this service to
-# boot and answer /health.
+# BUILD_PLAN.md §9 Step 2: the CP-SAT model for CLASS_TIMETABLE generation.
+ortools>=9.11

@@ -1,6 +1,6 @@
 // One schema, one database, one school (PRD §2.2, ARCHITECTURE.md §4).
-// Phase 0: intentionally empty of models — real tables arrive per-phase,
-// starting with Identity in Phase 1 (BUILD_PLAN.md §3).
+// Phase 1: Identity & Access + School/Academic Structure (BUILD_PLAN.md §3).
+// Everything else (profiles, subjects, assessment, fees, ...) arrives per-phase.
 
 generator client {
   provider = "prisma-client-js"
@@ -8,5 +8,1786 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 3.1 Core Identity Tables (PRD §3.1)
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  invited
+  active
+  suspended
+  archived
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  STAFF
+  PARENT
+  STUDENT
+}
+
+// NOTE: PRD specifies `email citext, unique` for case-insensitive login.
+// Rather than enabling the Postgres citext extension (an extra migration
+// dependency for one column), email is normalized to lowercase at the
+// application layer on every write and lookup (UserService) — functionally
+// equivalent for the actual use case, with no extension to manage.
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  phone        String?
+  passwordHash String?
+  firstName    String
+  lastName     String
+  middleName   String?
+  gender       Gender?
+  dateOfBirth  DateTime?  @db.Date
+  avatarUrl    String?
+  status       UserStatus @default(invited)
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  roles           UserRole[]
+  sentInvitations Invitation[]    @relation("InvitationSender")
+  adminProfile    AdminProfile?
+  staffProfile    StaffProfile?
+  parentProfile   ParentProfile?
+  studentProfile  StudentProfile?
+
+  approvedTimetableSlots             TimetableSlot[]
+  createdAssessmentComponents        AssessmentComponent[]
+  generatedReportCards               TermReportCard[]
+  createdReportWindows               ReportWindow[]
+  disabledClassSubjectTermStatuses   ClassSubjectTermStatus[]
+  paymentsMade                       Payment[]
+  notifications                      Notification[]
+  notificationPreferences            NotificationPreference[]
+  auditLogs                          AuditLog[]
+  scheduleGenerationRequests         ScheduleGenerationRequest[] @relation("ScheduleGenerationRequestRequester")
+  reviewedScheduleGenerationRequests ScheduleGenerationRequest[] @relation("ScheduleGenerationRequestReviewer")
+  approvedExamSchedules              ExamSchedule[]
+  approvedInvigilationAssignments    InvigilationAssignment[]
+  approvedDutyAssignments            DutyAssignment[]
+
+  @@map("users")
+}
+
+// Singleton SUPER_ADMIN enforced via a partial unique index added by hand in
+// the generated migration (Prisma has no `@@unique(where:)` syntax) — see
+// prisma/migrations/*/migration.sql.
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("user_roles")
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+// Prefill for STAFF invites (PRD §3.1). Lives here (not just on StaffProfile,
+// which doesn't exist until Phase 2) because Invitation needs it now.
+enum StaffCategory {
+  TEACHING
+  NON_TEACHING
+}
+
+model Invitation {
+  id              String           @id @default(uuid())
+  email           String
+  invitedRole     Role
+  staffCategory   StaffCategory?
+  invitedByUserId String?
+  invitedBy       User?            @relation("InvitationSender", fields: [invitedByUserId], references: [id])
+  tokenHash       String           @unique
+  status          InvitationStatus @default(PENDING)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@map("invitations")
+}
+
+// ---------------------------------------------------------------------------
+// 3.2 School & Academic Structure (PRD §3.2)
+// ---------------------------------------------------------------------------
+
+// Singleton — exactly one row, created once by `pnpm setup:school`
+// (ARCHITECTURE.md §6.1). Enforced at the application layer (SchoolProfileService
+// checks for an existing row before creating).
+model SchoolProfile {
+  id           String   @id @default(uuid())
+  name         String
+  address      String?
+  logoUrl      String?
+  contactEmail String?
+  contactPhone String?
+  currency     String   @default("NGN")
+  timezone     String   @default("Africa/Lagos")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // PRD §3.7/FR5.2: how many days back a non-Admin can record attendance
+  // without triggering the Admin-override requirement.
+  attendanceBackdateWindowDays Int                   @default(3)
+  // PRD §3.7: DAILY = one "school day opened" count per weekday;
+  // MORNING_AND_AFTERNOON = two, doubling both the denominator and however
+  // "present" is recorded per session. Feeds the school-days-opened calc
+  // (packages/types' computeSchoolDaysOpened) used by attendance analytics
+  // and, later, the FULL_TERM report card's attendance line.
+  attendanceGranularity        AttendanceGranularity @default(DAILY)
+
+  @@map("school_profiles")
+}
+
+model AcademicSession {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isCurrent Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  terms                     Term[]
+  classArms                 ClassArm[]
+  staffAssignments          StaffAssignment[]
+  studentPositions          StudentPosition[]
+  studentDepartments        StudentDepartment[]
+  studentSubjectEnrollments StudentSubjectEnrollment[]
+  timetableSlots            TimetableSlot[]
+  skillAssessmentItems      SkillAssessmentItem[]
+  schoolHolidays            SchoolHoliday[]
+  feeStructures             FeeStructure[]
+
+  @@map("academic_sessions")
+}
+
+model Term {
+  id                String          @id @default(uuid())
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  name              String
+  startDate         DateTime        @db.Date
+  endDate           DateTime        @db.Date
+  isCurrent         Boolean         @default(false)
+  createdAt         DateTime        @default(now())
+
+  subjectEnrollments         StudentSubjectEnrollment[]
+  timetableSlots             TimetableSlot[]
+  assessmentComponents       AssessmentComponent[]
+  subjectTermResults         SubjectTermResult[]
+  termReportCards            TermReportCard[]
+  skillRatings               SkillRating[]
+  reportWindows              ReportWindow[]
+  reportComments             ReportComment[]
+  classSubjectTermStatuses   ClassSubjectTermStatus[]
+  schoolHolidays             SchoolHoliday[]
+  feeStructures              FeeStructure[]
+  scheduleGenerationRequests ScheduleGenerationRequest[]
+  invoices                   Invoice[]
+
+  @@unique([academicSessionId, name])
+  @@map("terms")
+}
+
+enum ClassLevelCategory {
+  CRECHE
+  NURSERY
+  PRIMARY
+  JSS
+  SSS
+}
+
+model ClassLevel {
+  id        String             @id @default(uuid())
+  name      String             @unique
+  order     Int
+  category  ClassLevelCategory
+  createdAt DateTime           @default(now())
+
+  classArms     ClassArm[]
+  feeStructures FeeStructure[]
+
+  @@map("class_levels")
+}
+
+model ClassArm {
+  id                String          @id @default(uuid())
+  classLevelId      String
+  classLevel        ClassLevel      @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+  name              String
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  capacity          Int?
+  createdAt         DateTime        @default(now())
+
+  students                   StudentProfile[]
+  staffAssignments           StaffAssignment[]
+  studentPositions           StudentPosition[]
+  subjectEnrollments         StudentSubjectEnrollment[]
+  timetableSlots             TimetableSlot[]
+  scoreEntries               ScoreEntry[]
+  subjectTermResults         SubjectTermResult[]
+  attendanceSessions         AttendanceSession[]
+  scheduleGenerationRequests ScheduleGenerationRequest[]
+  examSchedules              ExamSchedule[]
+
+  @@unique([classLevelId, academicSessionId, name])
+  @@map("class_arms")
+}
+
+enum DepartmentName {
+  SCIENCE
+  COMMERCIAL
+  ART
+}
+
+model Department {
+  id          String         @id @default(uuid())
+  name        DepartmentName @unique
+  description String?
+  createdAt   DateTime       @default(now())
+
+  studentDepartments StudentDepartment[]
+  classSubjects      ClassSubject[]
+
+  @@map("departments")
+}
+
+// BUILD_PLAN.md §9 Step 2 follow-up: subjects a student takes instead of one
+// another at the same class group (e.g. SSS's Physics/Financial Accounting/
+// Literature in English "options column", or Government/Geography) — unlike
+// Department, membership isn't tied to which department a student belongs
+// to (GENERAL-type subjects can be grouped this way too), it just means "the
+// class-timetable/exam-timetable solvers should schedule these in parallel
+// (same period slot / same exam day) instead of reserving separate weekly
+// capacity for each, since no student ever needs both at once." Scoped to
+// classLevelCategory like ClassSubject itself, not a concrete ClassLevel/
+// ClassArm — same "JSS1-3 share one assignment" reasoning as ClassSubject.
+model ClassSubjectConcurrencyGroup {
+  id                 String             @id @default(uuid())
+  name               String
+  classLevelCategory ClassLevelCategory
+  createdAt          DateTime           @default(now())
+
+  classSubjects ClassSubject[]
+
+  @@map("class_subject_concurrency_groups")
+}
+
+// PRD §3.2/§3.3: assigns a student to a department for a session — only
+// valid when the student's current ClassLevel.category = SSS. Gating is a
+// service-layer check (same "not a DB constraint" precedent as the
+// class-teacher-duplicate rule in staff-assignment.ts), not enforced here.
+model StudentDepartment {
+  id                String          @id @default(uuid())
+  studentId         String
+  student           StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  departmentId      String
+  department        Department      @relation(fields: [departmentId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  createdAt         DateTime        @default(now())
+
+  @@unique([studentId, academicSessionId])
+  @@map("student_departments")
+}
+
+// ---------------------------------------------------------------------------
+// 3.1 / 3.4 / 3.5 People: role-specific profiles, guardianship, staff
+// assignments, student positions (PRD §3.1, §3.4, §3.5; BUILD_PLAN.md §4).
+// ---------------------------------------------------------------------------
+
+// AdminProfile backs both the SUPER_ADMIN (Proprietor) and ADMIN roles —
+// there's no separate SuperAdminProfile table (PRD §4 entity summary: one
+// profile type per UserRole).
+model AdminProfile {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String?
+  employeeId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("admin_profiles")
+}
+
+enum StaffStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+model StaffProfile {
+  id             String         @id @default(uuid())
+  userId         String         @unique
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employeeId     String?
+  staffCategory  StaffCategory?
+  department     String?
+  employmentDate DateTime?      @db.Date
+  qualification  String?
+  // Denormalized from active StaffAssignment(CLASS_TEACHER) rows — PRD §3.1.
+  isClassTeacher Boolean        @default(false)
+  status         StaffStatus    @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  assignments             StaffAssignment[]
+  timetableSlots          TimetableSlot[]
+  scoreEntriesEntered     ScoreEntry[]
+  skillRatingsGiven       SkillRating[]
+  reportCommentsGiven     ReportComment[]
+  attendanceSessionsTaken AttendanceSession[]
+  paymentsRecorded        Payment[]
+  discountRequestsRaised  DiscountRequest[]
+  invigilationAssignments InvigilationAssignment[]
+  dutyAssignments         DutyAssignment[]
+
+  @@map("staff_profiles")
+}
+
+model ParentProfile {
+  id                           String                @id @default(uuid())
+  userId                       String                @unique
+  user                         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  occupation                   String?
+  address                      String?
+  relationshipToStudentDefault GuardianRelationship?
+  // FR8.4: set by the Resend delivery webhook on a hard bounce or spam
+  // complaint — surfaced to Admin via the existing GET /parent-profiles
+  // list (no new endpoint needed, the field is just part of the row).
+  emailBounced                 Boolean               @default(false)
+  emailBouncedAt               DateTime?
+  createdAt                    DateTime              @default(now())
+  updatedAt                    DateTime              @updatedAt
+
+  wards StudentGuardian[]
+
+  @@map("parent_profiles")
+}
+
+enum StudentStatus {
+  ACTIVE
+  GRADUATED
+  WITHDRAWN
+  SUSPENDED
+}
+
+model StudentProfile {
+  id              String        @id @default(uuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admissionNumber String        @unique
+  admissionDate   DateTime      @db.Date
+  currentClassId  String?
+  currentClass    ClassArm?     @relation(fields: [currentClassId], references: [id])
+  studentTitle    String?
+  bloodGroup      String?
+  medicalNotes    String?
+  status          StudentStatus @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  guardians          StudentGuardian[]
+  positions          StudentPosition[]
+  departmentHistory  StudentDepartment[]
+  subjectEnrollments StudentSubjectEnrollment[]
+  scoreEntries       ScoreEntry[]
+  subjectTermResults SubjectTermResult[]
+  skillRatings       SkillRating[]
+  reportComments     ReportComment[]
+  termReportCards    TermReportCard[]
+  invoices           Invoice[]
+
+  @@map("student_profiles")
+}
+
+enum GuardianRelationship {
+  FATHER
+  MOTHER
+  GUARDIAN
+  OTHER
+}
+
+// PRD §3.1: a StudentProfile can never exist without >=1 StudentGuardian —
+// enforced here at the app layer (transactional create) and, as
+// defense-in-depth, by a deferred constraint trigger hand-added to the
+// migration SQL (Prisma's DSL can't express cross-table existence checks).
+model StudentGuardian {
+  id                 String               @id @default(uuid())
+  studentId          String
+  student            StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId           String
+  parent             ParentProfile        @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  relationship       GuardianRelationship
+  isPrimaryContact   Boolean              @default(false)
+  isEmergencyContact Boolean              @default(false)
+  createdAt          DateTime             @default(now())
+
+  @@unique([studentId, parentId])
+  @@map("student_guardians")
+}
+
+enum AssignmentType {
+  SUBJECT_TEACHER
+  CLASS_TEACHER
+  BURSAR
+  REGISTRAR
+  PRINCIPAL
+  VICE_PRINCIPAL
+  HEADTEACHER
+  OTHER
+}
+
+// No DB-level uniqueness for "one active class teacher per class arm" — FR3.3
+// (PRD §6.3) is explicit this is a service-layer validation, not a hard
+// constraint, so Admin can deliberately override for co-teaching.
+// A plain @@unique can't stop duplicate active SUBJECT_TEACHER rows for the
+// same staff+subject+classArm+session since a revoked (isActive:false) row
+// with that exact key can legitimately already exist — the generated
+// migration hand-adds a partial unique index (WHERE "isActive" = true) on
+// (staffId, subjectId, classArmId, academicSessionId, assignmentType),
+// same precedent as the SUPER_ADMIN/AcademicSession.isCurrent/ReportComment
+// singleton indexes. See StaffAssignmentService.syncSubjectTeacherAssignments
+// for the app-layer reconcile that pairs with it.
+model StaffAssignment {
+  id                String          @id @default(uuid())
+  staffId           String
+  staff             StaffProfile    @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  assignmentType    AssignmentType
+  classArmId        String?
+  classArm          ClassArm?       @relation(fields: [classArmId], references: [id])
+  subjectId         String?
+  subject           Subject?        @relation(fields: [subjectId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  startDate         DateTime?       @db.Date
+  endDate           DateTime?       @db.Date
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  @@map("staff_assignments")
+}
+
+enum PositionScope {
+  SCHOOL
+  CLASS
+}
+
+// PRD §3.5: recommended over a single studentTitle enum column, so a student
+// can hold multiple concurrent titles (e.g. Head Boy + Prefect).
+model StudentPosition {
+  id                String          @id @default(uuid())
+  studentId         String
+  student           StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  positionName      String
+  scope             PositionScope
+  classArmId        String?
+  classArm          ClassArm?       @relation(fields: [classArmId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  createdAt         DateTime        @default(now())
+
+  @@map("student_positions")
+}
+
+// ---------------------------------------------------------------------------
+// 3.3 Subject Management (PRD §3.3; BUILD_PLAN.md §5)
+// ---------------------------------------------------------------------------
+
+enum SubjectType {
+  COMPULSORY
+  GENERAL
+  DEPARTMENT
+}
+
+model Subject {
+  id                  String    @id @default(uuid())
+  name                String
+  code                String    @unique
+  isGroup             Boolean   @default(false)
+  parentSubjectId     String?
+  parentSubject       Subject?  @relation("SubjectGroup", fields: [parentSubjectId], references: [id])
+  childSubjects       Subject[] @relation("SubjectGroup")
+  // Phase 7 data flag only (PRD §3.3/§3.8) — no scheduling behavior yet.
+  requiresCalculation Boolean   @default(false)
+  // Catalogue-wide disable (independent of ClassSubjectTermStatus's
+  // per-class-per-term disable) — hides the subject/child from new class
+  // assignments and blocks new ScoreEntry/StudentSubjectEnrollment writes
+  // for it everywhere, until re-enabled. Existing historical records are
+  // untouched.
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  classSubjects            ClassSubject[]
+  enrollments              StudentSubjectEnrollment[]
+  groupWeightsAsGroup      SubjectGroupWeight[]       @relation("GroupWeightGroup")
+  groupWeightAsChild       SubjectGroupWeight[]       @relation("GroupWeightChild")
+  staffAssignments         StaffAssignment[]
+  timetableSlots           TimetableSlot[]
+  scoreEntries             ScoreEntry[]
+  subjectTermResults       SubjectTermResult[]
+  reportComments           ReportComment[]
+  classSubjectTermStatuses ClassSubjectTermStatus[]
+  attendanceSessions       AttendanceSession[]
+  examSchedules            ExamSchedule[]
+  childPeriodOverrides     ClassSubjectChildPeriods[]
+
+  @@map("subjects")
+}
+
+// Source of truth for "which subjects exist for which class group this
+// group, and how it applies" (PRD §3.3). Scoped to ClassLevelCategory (class
+// group: CRECHE/NURSERY/PRIMARY/JSS/SSS) rather than a concrete ClassLevel,
+// so e.g. JSS1-3 share one assignment instead of being configured three
+// times over. type/departmentId live here rather than on Subject because
+// the same subject can be GENERAL for one class group and DEPARTMENT-
+// restricted for another (e.g. CRS: GENERAL for JSS, DEPARTMENT for SSS) —
+// Subject is just the catalogue entry. Deliberately NOT scoped to an
+// AcademicSession — curriculum structure (which subjects a class group has,
+// and how) doesn't reset every session the way AssessmentComponent's CA/exam
+// structure does; it persists until an Admin explicitly changes it. @@unique
+// below is what prevents assigning the same subject to the same class group
+// twice — no service-layer re-check needed.
+model ClassSubject {
+  id                 String                        @id @default(uuid())
+  classLevelCategory ClassLevelCategory
+  subjectId          String
+  subject            Subject                       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  type               SubjectType
+  // Required iff type = DEPARTMENT, rejected otherwise — validated in
+  // ClassSubjectService, not here (depends on another field's value).
+  departmentId       String?
+  department         Department?                   @relation(fields: [departmentId], references: [id])
+  // BUILD_PLAN.md §9 Step 2: how many periods/week this subject is taught
+  // for this classLevelCategory — the class-timetable solver's per-subject
+  // frequency target. Defaulted rather than left required so the migration
+  // doesn't break existing rows; Admin sets real values via the existing
+  // CRUD afterward.
+  periodsPerWeek     Int                           @default(3)
+  // Nullable — most subjects aren't part of an "options column". Required to
+  // share this group's classLevelCategory and every other member's
+  // periodsPerWeek, validated in ClassSubjectService (not here, same
+  // depends-on-another-field/row reasoning as departmentId above) since the
+  // class-timetable/exam-timetable solvers assume bundle members occupy the
+  // exact same weekly slots / exam day.
+  concurrencyGroupId String?
+  concurrencyGroup   ClassSubjectConcurrencyGroup? @relation(fields: [concurrencyGroupId], references: [id])
+  createdAt          DateTime                      @default(now())
+
+  termStatuses         ClassSubjectTermStatus[]
+  childPeriodOverrides ClassSubjectChildPeriods[]
+
+  @@unique([classLevelCategory, subjectId])
+  @@map("class_subjects")
+}
+
+// Per-term override of a ClassSubject's availability (this admin feature:
+// disable a subject — or one child of a grouped subject — for one class in
+// one term without touching the session-wide ClassSubject assignment or any
+// other term). subjectId is either classSubject.subjectId itself (disabling
+// the whole class-subject) or one of that subject's childSubjects (disabling
+// just a sub-subject) — only children get their own ClassSubject row for the
+// group parent, not for each child, so the child needs to be named
+// explicitly here. Absence of a row means active; a row only exists once a
+// subject has been explicitly toggled off for that term (and optionally
+// back on).
+model ClassSubjectTermStatus {
+  id               String       @id @default(uuid())
+  classSubjectId   String
+  classSubject     ClassSubject @relation(fields: [classSubjectId], references: [id], onDelete: Cascade)
+  subjectId        String
+  subject          Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  termId           String
+  term             Term         @relation(fields: [termId], references: [id], onDelete: Cascade)
+  isActive         Boolean      @default(true)
+  disabledAt       DateTime?
+  disabledByUserId String?
+  disabledByUser   User?        @relation(fields: [disabledByUserId], references: [id])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([classSubjectId, subjectId, termId])
+  @@map("class_subject_term_statuses")
+}
+
+// Per-child override of a group ClassSubject's periodsPerWeek — a group
+// subject's children (e.g. Basic Science and Technology's Basic Science/
+// Basic Technology/Information Technology/Physical and Health Education)
+// often need different weekly loads rather than uniformly inheriting the
+// parent ClassSubject row's single value. Same sparse-override shape as
+// ClassSubjectTermStatus just above: absence of a row means "inherit
+// classSubject.periodsPerWeek" (today's behavior), a row only exists once a
+// child's periods/week has been explicitly customized. childSubjectId is
+// scoped to actual scheduling — no concurrencyGroupId override here (PRD
+// §3.3: a group subject is never itself scheduled, so bundling stays a
+// classSubject-level concept; if a specific child ever needs its own
+// elective-block membership independent of its siblings, that's a separate
+// follow-up, not modeled yet).
+model ClassSubjectChildPeriods {
+  id             String       @id @default(uuid())
+  classSubjectId String
+  classSubject   ClassSubject @relation(fields: [classSubjectId], references: [id], onDelete: Cascade)
+  childSubjectId String
+  childSubject   Subject      @relation(fields: [childSubjectId], references: [id], onDelete: Cascade)
+  periodsPerWeek Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([classSubjectId, childSubjectId])
+  @@map("class_subject_child_periods")
+}
+
+// Defines how a grouped subject's independently-scored children aggregate
+// into the parent's reported grade (PRD §3.3 — the "Basic Science and
+// Technology" example). Aggregation logic itself arrives in Phase 4.
+model SubjectGroupWeight {
+  id             String   @id @default(uuid())
+  groupSubjectId String
+  groupSubject   Subject  @relation("GroupWeightGroup", fields: [groupSubjectId], references: [id], onDelete: Cascade)
+  childSubjectId String
+  childSubject   Subject  @relation("GroupWeightChild", fields: [childSubjectId], references: [id], onDelete: Cascade)
+  weight         Decimal  @db.Decimal(5, 2)
+  createdAt      DateTime @default(now())
+
+  @@unique([groupSubjectId, childSubjectId])
+  @@map("subject_group_weights")
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  DROPPED
+}
+
+// Auto-created for COMPULSORY subjects on class assignment; explicit for
+// GENERAL/DEPARTMENT opt-in (PRD §3.3 applicability rules).
+model StudentSubjectEnrollment {
+  id                String           @id @default(uuid())
+  studentId         String
+  student           StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId         String
+  subject           Subject          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classArmId        String
+  classArm          ClassArm         @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  academicSessionId String
+  academicSession   AcademicSession  @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  termId            String
+  term              Term             @relation(fields: [termId], references: [id], onDelete: Cascade)
+  status            EnrollmentStatus @default(ACTIVE)
+  createdAt         DateTime         @default(now())
+
+  @@unique([studentId, subjectId, academicSessionId, termId])
+  @@map("student_subject_enrollments")
+}
+
+// ---------------------------------------------------------------------------
+// 3.8 Timetable — manual-only slice (PRD §3.8; BUILD_PLAN.md §5). AI
+// generation, approval workflow, and ExamSchedule/InvigilationAssignment
+// arrive in Phase 7 — generatedBy/approvalStatus columns exist now so that
+// phase doesn't need a migration to add them later.
+// ---------------------------------------------------------------------------
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
+
+enum TimetableGeneratedBy {
+  MANUAL
+  AI
+}
+
+enum TimetableApprovalStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+// No unique constraint for conflicts — overlap is a range comparison, not an
+// equality match, so it's a service-layer check (PRD §3.8: "regardless of
+// origin"), same precedent as the class-teacher-duplicate rule. The indexes
+// below just make that check's WHERE clauses efficient.
+model TimetableSlot {
+  id                          String                     @id @default(uuid())
+  classArmId                  String
+  classArm                    ClassArm                   @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId                   String
+  subject                     Subject                    @relation(fields: [subjectId], references: [id])
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  academicSessionId           String
+  academicSession             AcademicSession            @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  termId                      String
+  term                        Term                       @relation(fields: [termId], references: [id], onDelete: Cascade)
+  dayOfWeek                   DayOfWeek
+  // "HH:mm" 24-hour strings, not @db.Time/DateTime — pairs directly with
+  // <input type="time">, sidesteps the @db.Date/@IsDateString trap
+  // (CLAUDE.md backend conventions). Compared as minutes-since-midnight in
+  // the conflict-detection service, not lexicographically.
+  startTime                   String
+  endTime                     String
+  venue                       String?
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  // BUILD_PLAN.md §9 Step 6: set only when approvalStatus=REJECTED, matching
+  // the Payment/DiscountRequest reject-reason precedent.
+  rejectionReason             String?
+  // Set only on AI-generated rows (never on MANUAL, which are auto-approved
+  // at create time) — links this row back to the run that produced it, so a
+  // whole roster can be approved/rejected in one atomic transaction instead
+  // of per-row.
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+
+  @@index([staffId, dayOfWeek, academicSessionId, termId])
+  @@index([venue, dayOfWeek, academicSessionId, termId])
+  @@index([classArmId, dayOfWeek, academicSessionId, termId])
+  @@index([scheduleGenerationRequestId])
+  @@map("timetable_slots")
+}
+
+// ---------------------------------------------------------------------------
+// 3.8 AI Scheduling — async plumbing slice (PRD §3.8; BUILD_PLAN.md §9 Step
+// 1; ARCHITECTURE.md §9). ScheduleGenerationRequest is the tracking record
+// for an in-flight solver run — it exists before any TimetableSlot/
+// ExamSchedule/InvigilationAssignment/DutyAssignment rows are written, and is
+// what the timeout sweep (apps/worker) checks for a run that never got a
+// callback. Only CLASS_TIMETABLE/EXAM_TIMETABLE/INVIGILATION/WEEKLY_DUTY
+// scope values and SchedulingConstraint exist as of this slice; the
+// ExamSchedule/InvigilationAssignment/DutyAssignment models themselves arrive
+// per-scope in later BUILD_PLAN.md §9 steps.
+// ---------------------------------------------------------------------------
+
+enum ScheduleScope {
+  CLASS_TIMETABLE
+  EXAM_TIMETABLE
+  INVIGILATION
+  WEEKLY_DUTY
+}
+
+enum ScheduleGenerationStatus {
+  QUEUED
+  SOLVING
+  COMPLETED
+  FAILED
+  TIMED_OUT
+}
+
+// Same JSS/SSS vs. Creche/Nursery/Primary Principal/Headteacher scoping split
+// used throughout §6.6, formalized as its own enum since a weekly-duty run
+// has no class/subject/exam row of its own to derive the group from (PRD
+// §3.8's DutyAssignment bullet).
+enum ClassLevelCategoryGroup {
+  JSS_SSS
+  CRECHE_NURSERY_PRIMARY
+}
+
+// Lets Admin tune the AI generator's rules without a code change; seeded with
+// defaults at `pnpm setup:school` (see setup-school.ts) — PRD §3.8.
+model SchedulingConstraint {
+  id                      String                   @id @default(uuid())
+  scope                   ScheduleScope
+  // null = applies to the whole scope (e.g. CALCULATION_SUBJECTS_MORNING);
+  // set = overrides/defines this key for that group only (e.g. per-group
+  // period/break structure, Step 2). A hand-added partial unique index
+  // (prisma/migrations) additionally guarantees at most one null-group row
+  // per (scope, key) — Postgres does not treat two NULLs as equal, so the
+  // composite @@unique below can't enforce that on its own, same precedent
+  // as the SUPER_ADMIN/AcademicSession.isCurrent singleton indexes.
+  classLevelCategoryGroup ClassLevelCategoryGroup?
+  key                     String
+  value                   Json
+  isActive                Boolean                  @default(true)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+
+  @@unique([scope, classLevelCategoryGroup, key])
+  @@map("scheduling_constraints")
+}
+
+model ScheduleGenerationRequest {
+  id    String        @id @default(uuid())
+  scope ScheduleScope
+
+  // null = whole triggering-user scope (FR6.2 — a run always covers every
+  // in-scope class arm at once); set only for a single-arm regeneration
+  // (FR6.5's "regenerated individually without discarding the rest").
+  classArmId String?
+  classArm   ClassArm? @relation(fields: [classArmId], references: [id])
+
+  // FR6.3/FR6.4: the EXAM- or MID_TERM-type AssessmentComponent being
+  // scheduled/invigilated. PRD §3.8 calls this "assessmentWindowId" in
+  // prose; named for the actual FK target here instead.
+  assessmentComponentId String?
+  assessmentComponent   AssessmentComponent? @relation(fields: [assessmentComponentId], references: [id])
+
+  // FR6.11: a weekly-duty run generates a whole term's rotation in one solve.
+  termId String?
+  term   Term?   @relation(fields: [termId], references: [id])
+
+  // Set for WEEKLY_DUTY scope; derived from the triggering user's own scope
+  // the same way CLASS_TIMETABLE/EXAM_TIMETABLE/INVIGILATION derive theirs
+  // from classArmId/assessmentComponentId.
+  classLevelCategoryGroup ClassLevelCategoryGroup?
+
+  // Run-specific overrides layered on top of the stored SchedulingConstraint
+  // defaults for this run only — e.g. MID_TERM's maxSubjectsPerDay/duration
+  // params (FR6.3a) or a WEEKLY_DUTY run's teachersPerWeek (FR6.11).
+  parameters Json?
+
+  status ScheduleGenerationStatus @default(QUEUED)
+
+  // Roster-level human review, separate from `status` above (which tracks
+  // solver progress only). Set to PENDING_REVIEW by the callback controller
+  // once AI rows are persisted; a single approve/reject action here cascades
+  // to every PENDING_REVIEW row this request produced (see
+  // ScheduleGenerationRequestService.approve/reject) — the "one approval per
+  // roster, not per row" requirement. Reuses TimetableApprovalStatus, the
+  // same enum every generated row already carries.
+  reviewStatus     TimetableApprovalStatus @default(DRAFT)
+  reviewedByUserId String?
+  reviewedByUser   User?                   @relation("ScheduleGenerationRequestReviewer", fields: [reviewedByUserId], references: [id])
+  reviewedAt       DateTime?
+  rejectionReason  String?
+
+  // ARCHITECTURE.md §9: single-use, per-request secret generated at
+  // dispatch time, verified via timingSafeEqual on callback — not a shared
+  // static key, so a stray/replayed callback can't be mistaken for real.
+  callbackToken String @unique
+
+  requestedByUserId String
+  requestedByUser   User      @relation("ScheduleGenerationRequestRequester", fields: [requestedByUserId], references: [id])
+  requestedAt       DateTime  @default(now())
+  completedAt       DateTime?
+  errorMessage      String?
+
+  // Every row this run persisted (AI-generated only — MANUAL rows never set
+  // this FK). Lets batch approve/reject operate on the run's real row set
+  // instead of a client-side natural-key group-by.
+  timetableSlots          TimetableSlot[]
+  examSchedules           ExamSchedule[]
+  invigilationAssignments InvigilationAssignment[]
+  dutyAssignments         DutyAssignment[]
+
+  @@index([status])
+  @@map("schedule_generation_requests")
+}
+
+// BUILD_PLAN.md §9 Step 3: one row per (assessmentComponent, classArm,
+// subject) — when that class arm sits that subject's exam. Reuses
+// TimetableGeneratedBy/TimetableApprovalStatus (identical MANUAL|AI /
+// DRAFT|PENDING_REVIEW|APPROVED|REJECTED shape as TimetableSlot) rather than
+// duplicating them. Deliberately no staffId: a subject's own teacher isn't
+// tied to when their students sit the exam — that's invigilation (Step 4), a
+// separate staff pool entirely.
+model ExamSchedule {
+  id                          String                     @id @default(uuid())
+  assessmentComponentId       String
+  assessmentComponent         AssessmentComponent        @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
+  classArmId                  String
+  classArm                    ClassArm                   @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId                   String
+  subject                     Subject                    @relation(fields: [subjectId], references: [id])
+  date                        DateTime                   @db.Date
+  startTime                   String
+  endTime                     String
+  venue                       String?
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+
+  invigilationAssignments InvigilationAssignment[]
+
+  @@index([classArmId, date])
+  @@index([scheduleGenerationRequestId])
+  @@map("exam_schedules")
+}
+
+enum InvigilationRole {
+  LEAD
+  ASSISTANT
+}
+
+// BUILD_PLAN.md §9 Step 4: one row per (examSchedule, staff) pairing — who
+// invigilates a given exam sitting. Fixed at exactly one LEAD + one
+// ASSISTANT per ExamSchedule (the @@unique below enforces it) — the only
+// signal in PRD is the two-value role enum itself; no hall-capacity field
+// exists anywhere in this codebase to scale an ASSISTANT count by.
+model InvigilationAssignment {
+  id                          String                     @id @default(uuid())
+  examScheduleId              String
+  examSchedule                ExamSchedule               @relation(fields: [examScheduleId], references: [id], onDelete: Cascade)
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  role                        InvigilationRole
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+
+  @@unique([examScheduleId, role])
+  @@index([staffId])
+  @@index([scheduleGenerationRequestId])
+  @@map("invigilation_assignments")
+}
+
+// BUILD_PLAN.md §9 Step 5: one row per (staff, week) pairing — general
+// weekly supervision duty (gate/assembly/break duty), a rotation distinct
+// from exam invigilation (PRD §3.8/FR6.11). No duty-type/role field and no
+// direct Term FK, matching PRD's field list exactly — term association is
+// derived by weekStartDate falling within a Term's date range, not stored
+// directly. @@unique is a plain composite index (all three columns always
+// non-null) — no hand-added partial-index SQL needed, unlike
+// SchedulingConstraint's null-group case.
+model DutyAssignment {
+  id                          String                     @id @default(uuid())
+  weekStartDate               DateTime                   @db.Date
+  classLevelCategoryGroup     ClassLevelCategoryGroup
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+
+  @@unique([weekStartDate, classLevelCategoryGroup, staffId])
+  @@index([staffId])
+  @@index([scheduleGenerationRequestId])
+  @@map("duty_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6 Assessment & Reporting — components + scoring slice (PRD §3.6;
+// BUILD_PLAN.md §6). Status transitions off the three date fields via a
+// scheduled BullMQ sweep (apps/worker), with Admin override always available
+// — same "scheduled by default, override always on top" shape as the old
+// AssessmentWindow design. Structure-completeness (this term+class level's
+// components sum to 100) is validated before any component can open — a
+// service-layer check (assertStructureComplete), since Prisma can't express
+// "these sibling rows must sum to X" as a constraint.
+// ---------------------------------------------------------------------------
+
+enum AssessmentComponentType {
+  CA
+  MID_TERM
+  EXAM
+}
+
+enum AssessmentComponentStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  PUBLISHED
+}
+
+model AssessmentComponent {
+  id                 String                    @id @default(uuid())
+  termId             String
+  term               Term                      @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelCategory ClassLevelCategory
+  type               AssessmentComponentType
+  name               String
+  sequence           Int
+  maxScore           Decimal                   @db.Decimal(5, 2)
+  // Nullable so a carried-forward component (TermService.create) can exist
+  // in DRAFT with no dates until Admin sets them for the new term — never
+  // auto-copied from the prior term's dates (assessment-sweep.util.ts treats
+  // a null date as "not yet configured," never eligible for auto-transition).
+  inputOpensAt       DateTime?
+  inputClosesAt      DateTime?
+  publishAt          DateTime?
+  status             AssessmentComponentStatus @default(DRAFT)
+  createdByUserId    String
+  createdByUser      User                      @relation(fields: [createdByUserId], references: [id])
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  scoreEntries               ScoreEntry[]
+  scheduleGenerationRequests ScheduleGenerationRequest[]
+  examSchedules              ExamSchedule[]
+
+  @@unique([termId, classLevelCategory, type, sequence])
+  @@map("assessment_components")
+}
+
+// Write permission (PRD §3.6/FR4.2): only the SUBJECT_TEACHER whose active
+// StaffAssignment matches (subjectId, classArmId), and only while the parent
+// AssessmentComponent.status = OPEN — or Admin/Super-Admin, any time, as
+// override. A manual service-layer check (StaffAssignmentService.
+// findActiveAssignment), not a CASL condition — see ability.factory.ts's
+// comment on why request-body-dependent checks aren't CASL-expressible here.
+model ScoreEntry {
+  id                    String              @id @default(uuid())
+  studentId             String
+  student               StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId             String
+  subject               Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  assessmentComponentId String
+  assessmentComponent   AssessmentComponent @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
+  classArmId            String
+  classArm              ClassArm            @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  score                 Decimal             @db.Decimal(5, 2)
+  // Nullable: an Admin/Super-Admin override may not hold a StaffProfile at
+  // all (PRD §5 — Admin isn't necessarily also Staff), so there's no
+  // StaffAssignment identity to record for that write.
+  enteredByStaffId      String?
+  enteredByStaff        StaffProfile?       @relation(fields: [enteredByStaffId], references: [id])
+  enteredAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@unique([studentId, subjectId, assessmentComponentId])
+  @@map("score_entries")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6 Assessment & Reporting — aggregation, grading, and report cards
+// (PRD §3.6; BUILD_PLAN.md §6). Computed/materialized once a term+class
+// level's components are all CLOSED/PUBLISHED (FR4.4) — triggered from the
+// worker's assessment-schedule-sweep, not a user-facing write path.
+// ---------------------------------------------------------------------------
+
+model GradeScale {
+  id         String   @id @default(uuid())
+  minScore   Decimal  @db.Decimal(5, 2)
+  maxScore   Decimal  @db.Decimal(5, 2)
+  grade      String
+  remark     String?
+  gradePoint Decimal? @db.Decimal(3, 2)
+  createdAt  DateTime @default(now())
+
+  @@map("grade_scales")
+}
+
+// Full-term only (FR4.4) — a mid-term's partial total isn't meaningful
+// against a scale built for "out of 100", so the mid-term report computes
+// its own interim snapshot at generation time instead (TermReportCard.
+// scoresSnapshot) rather than writing a row here.
+model SubjectTermResult {
+  id         String         @id @default(uuid())
+  studentId  String
+  student    StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId  String
+  subject    Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classArmId String
+  classArm   ClassArm       @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  termId     String
+  term       Term           @relation(fields: [termId], references: [id], onDelete: Cascade)
+  totalScore Decimal        @db.Decimal(5, 2)
+  grade      String?
+  // The matched GradeScale row's own remark — never entered separately.
+  remark     String?
+  position   Int?
+  computedAt DateTime       @default(now())
+
+  @@unique([studentId, subjectId, termId])
+  @@map("subject_term_results")
+}
+
+enum TermReportCardType {
+  MID_TERM
+  FULL_TERM
+}
+
+enum TermReportCardStatus {
+  GENERATING
+  READY
+  PUBLISHED
+  FAILED
+}
+
+// A mid-term report (scores-only, no comments/skills gate, generated as soon
+// as the relevant components close) and the end-of-term report (full publish
+// gate, added in Phase 4 M4) are the same shape, distinguished by
+// reportType — see the design note in BUILD_PLAN.md's Phase 4 plan for why
+// this isn't two separate models. `scoresSnapshot` captures what a MID_TERM
+// report showed at generation time (raw per-component scores + subtotal, no
+// GradeScale letter) for auditability, since ScoreEntry rows could
+// theoretically change later.
+model TermReportCard {
+  id                    String               @id @default(uuid())
+  studentId             String
+  student               StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId                String
+  term                  Term                 @relation(fields: [termId], references: [id], onDelete: Cascade)
+  reportType            TermReportCardType
+  status                TermReportCardStatus @default(GENERATING)
+  pdfUrl                String?
+  scoresSnapshot        Json?
+  // Report-level summary (added post-Phase-4, PRD §3.6). overallScore is an
+  // average out of 100 for FULL_TERM, a normalized percentage for MID_TERM
+  // (the PDF labels it "Average" vs "Percentage" accordingly — same field,
+  // same GradeScale lookup, different meaning of the number going in).
+  // overallRemark is FULL_TERM-only; MID_TERM never sets it.
+  overallScore          Decimal?             @db.Decimal(5, 2)
+  overallGrade          String?
+  overallRemark         String?
+  generatedAt           DateTime?
+  generatedByUserId     String?
+  generatedByUser       User?                @relation(fields: [generatedByUserId], references: [id])
+  publishedAt           DateTime?
+  // Set when a StudentSubjectEnrollment change (opt-in) is detected for this
+  // student+term after this card was generated — see
+  // SubjectTermResultService.recomputeForStudentSubjectTerm. Cleared on the
+  // next successful (re)generation. Admin-surfaced only; nothing regenerates
+  // automatically.
+  needsRegeneration     Boolean              @default(false)
+  staleReason           String?
+  staleSince            DateTime?
+  // Hash of the opaque token embedded in the PDF's verification QR code
+  // (same generateRawToken/hashToken pattern as Invitation.tokenHash) —
+  // re-generated on every (re)generation, so an old printed QR code stops
+  // resolving once the report is regenerated. Null until first generated.
+  verificationTokenHash String?              @unique
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@unique([studentId, termId, reportType])
+  @@map("term_report_cards")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6 Assessment & Reporting — skills, report windows, comments
+// (PRD §3.6; BUILD_PLAN.md §6 M3). Psychomotor/Affective-Cognitive skills
+// and class/subject/principal comments, gated by ReportWindow the same
+// scheduled-sweep-with-override shape as AssessmentComponent.
+// ---------------------------------------------------------------------------
+
+enum SkillCategory {
+  PSYCHOMOTOR
+  AFFECTIVE_COGNITIVE
+}
+
+// Admin/Super-Admin configures this list once per academic session; on
+// first access for a session with none yet, the service copies (not
+// references) the most recent prior session's list — see
+// SkillAssessmentItemService.findAllForSession.
+model SkillAssessmentItem {
+  id                String          @id @default(uuid())
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  category          SkillCategory
+  name              String
+  order             Int
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  ratings SkillRating[]
+
+  @@unique([academicSessionId, category, name])
+  @@map("skill_assessment_items")
+}
+
+enum SkillRatingValue {
+  EXCELLENT
+  VERY_GOOD
+  GOOD
+  FAIR
+  POOR
+}
+
+// Write permission: the CLASS_TEACHER of the student's class only (or Admin
+// override), and only while the relevant ReportWindow is OPEN.
+// ratedByStaffId is nullable for the same reason ScoreEntry.enteredByStaffId
+// is — an Admin override author may hold no StaffProfile at all.
+model SkillRating {
+  id                    String              @id @default(uuid())
+  studentId             String
+  student               StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId                String
+  term                  Term                @relation(fields: [termId], references: [id], onDelete: Cascade)
+  skillAssessmentItemId String
+  skillAssessmentItem   SkillAssessmentItem @relation(fields: [skillAssessmentItemId], references: [id], onDelete: Cascade)
+  rating                SkillRatingValue
+  ratedByStaffId        String?
+  ratedByStaff          StaffProfile?       @relation(fields: [ratedByStaffId], references: [id])
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@unique([studentId, termId, skillAssessmentItemId])
+  @@map("skill_ratings")
+}
+
+enum ReportWindowStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+// Governs both SkillRating entry and the CLASS_TEACHER ReportComment for a
+// term+class level — both are end-of-term class-teacher tasks sharing one
+// schedule. Same auto-transition-with-override shape as AssessmentComponent
+// (see the worker's assessment-sweep, extended to also sweep this table).
+model ReportWindow {
+  id                 String             @id @default(uuid())
+  termId             String
+  term               Term               @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelCategory ClassLevelCategory
+  inputOpensAt       DateTime
+  inputClosesAt      DateTime
+  status             ReportWindowStatus @default(DRAFT)
+  createdByUserId    String
+  createdByUser      User               @relation(fields: [createdByUserId], references: [id])
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([termId, classLevelCategory])
+  @@map("report_windows")
+}
+
+enum ReportCommentType {
+  SUBJECT
+  CLASS_TEACHER
+  // Covers both the PRINCIPAL and HEADTEACHER StaffAssignment types —
+  // PRD §3.6 lists this as one comment type ("PRINCIPAL/HEADTEACHER"),
+  // authored by whoever holds either assignment, not two separate types.
+  PRINCIPAL
+}
+
+// Only the assigned staff for the relevant scope may write (PRD §3.6):
+// SUBJECT — the subject teacher, gated on that (term, classLevel)'s
+// AssessmentComponents all being CLOSED/PUBLISHED (not window-gated);
+// CLASS_TEACHER — the class teacher, gated on this ReportWindow being OPEN;
+// PRINCIPAL — role-scoped only, no date gate. subjectId is required (and
+// only valid) when commentType = SUBJECT. authorStaffId is nullable for the
+// same Admin-override-with-no-StaffProfile reason as ScoreEntry/SkillRating.
+//
+// A plain @@unique can't stop duplicate CLASS_TEACHER/PRINCIPAL rows since
+// Postgres treats NULL subjectId as distinct on every insert — the
+// generated migration hand-adds a partial unique index (WHERE "subjectId"
+// IS NULL) for those two types, same precedent as the SUPER_ADMIN/
+// AcademicSession.isCurrent singleton indexes.
+model ReportComment {
+  id            String            @id @default(uuid())
+  studentId     String
+  student       StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId        String
+  term          Term              @relation(fields: [termId], references: [id], onDelete: Cascade)
+  commentType   ReportCommentType
+  subjectId     String?
+  subject       Subject?          @relation(fields: [subjectId], references: [id])
+  authorStaffId String?
+  authorStaff   StaffProfile?     @relation(fields: [authorStaffId], references: [id])
+  comment       String
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([studentId, termId, commentType, subjectId])
+  @@map("report_comments")
+}
+
+// PRD §3.7/§6.5, Phase 5: daily/per-period attendance. STAFF-type sessions
+// are school-wide (no classArmId) and taken by Admin/Registrar; STUDENT-type
+// sessions are scoped to one ClassArm and taken by that class's CLASS_TEACHER
+// (kind=DAILY) or a SUBJECT_TEACHER for their own period (kind=PERIOD).
+// `period` holds "MORNING"/"AFTERNOON" for a DAILY session when
+// SchoolProfile.attendanceGranularity = MORNING_AND_AFTERNOON, or a free-text
+// period label for a PERIOD session — null for the plain single-daily-count
+// case. No composite @@unique for duplicate-session prevention: the dedup
+// key spans several nullable columns (classArmId/period/subjectId) where
+// Postgres treats NULLs as distinct, so it's a service-layer findFirst
+// check instead (not the partial-unique-index pattern, which is for the
+// "one *active* row" shape — nothing here gets soft-revoked).
+model AttendanceSession {
+  id             String                @id @default(uuid())
+  type           AttendanceSessionType
+  kind           AttendanceSessionKind
+  classArmId     String?
+  classArm       ClassArm?             @relation(fields: [classArmId], references: [id])
+  date           DateTime              @db.Date
+  period         String?
+  subjectId      String?
+  subject        Subject?              @relation(fields: [subjectId], references: [id])
+  // Nullable for the same Admin-override-with-no-StaffProfile reason as
+  // ScoreEntry.enteredByStaffId/ReportComment.authorStaffId — an Admin/
+  // Super-Admin recording attendance as override may hold no StaffProfile
+  // at all (AdminProfile is a separate table).
+  takenByStaffId String?
+  takenByStaff   StaffProfile?         @relation(fields: [takenByStaffId], references: [id])
+  createdAt      DateTime              @default(now())
+
+  records AttendanceRecord[]
+
+  @@map("attendance_sessions")
+}
+
+// personId is polymorphic (studentId or staffId per personType) — no FK,
+// same reasoning PRD §3.7 gives for this shape: one table serves both
+// STUDENT- and STAFF-type sessions rather than two near-identical models.
+model AttendanceRecord {
+  id                  String               @id @default(uuid())
+  attendanceSessionId String
+  attendanceSession   AttendanceSession    @relation(fields: [attendanceSessionId], references: [id], onDelete: Cascade)
+  personId            String
+  personType          AttendancePersonType
+  status              AttendanceStatus
+  remark              String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([attendanceSessionId, personId])
+  @@map("attendance_records")
+}
+
+// A school closure date (PRD §3.7) subtracted from the raw weekday count
+// before it's used as a report card's attendance denominator. A calendar
+// date is either a closure or not, school-wide — @@unique(date) rather than
+// scoping uniqueness per academicSession/term.
+model SchoolHoliday {
+  id                String           @id @default(uuid())
+  name              String
+  date              DateTime         @unique @db.Date
+  academicSessionId String?
+  academicSession   AcademicSession? @relation(fields: [academicSessionId], references: [id])
+  termId            String?
+  term              Term?            @relation(fields: [termId], references: [id])
+  createdAt         DateTime         @default(now())
+
+  @@map("school_holidays")
+}
+
+enum AttendanceSessionType {
+  STUDENT
+  STAFF
+}
+
+enum AttendanceSessionKind {
+  DAILY
+  PERIOD
+}
+
+enum AttendancePersonType {
+  STUDENT
+  STAFF
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum AttendanceGranularity {
+  DAILY
+  MORNING_AND_AFTERNOON
+}
+
+// PRD §3.9/§6.7, Phase 5 Slice 2a: fee structures, invoices, and payments.
+// Admin has zero visibility into this domain (PRD §5) — only Super-Admin
+// and a StaffAssignment(BURSAR) staff member get write access; parents get
+// read access scoped to their own wards' invoices/receipts only. See
+// ability.factory.ts: no grant is ever added to the ADMIN branch for any
+// model below.
+model FeeStructure {
+  id                String          @id @default(uuid())
+  // null = school-wide; set = applies only to that class level.
+  classLevelId      String?
+  classLevel        ClassLevel?     @relation(fields: [classLevelId], references: [id])
+  academicSessionId String
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
+  termId            String
+  term              Term            @relation(fields: [termId], references: [id])
+  name              String
+  amount            Decimal         @db.Decimal(12, 2)
+  isMandatory       Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  invoiceLineItems InvoiceLineItem[]
+
+  @@map("fee_structures")
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+// Outstanding balance is deliberately NOT a column here (same "avoid a
+// second source of truth" reasoning as the Academic Calendar, PRD §3.11) —
+// it's always computed live from totalAmount, lineItems, and successful
+// Payments (packages/types' computeOutstandingBalance). `status` IS a
+// stored, indexed column (list-filtering performance), but it's always
+// recomputed in the same transaction as whatever wrote a Payment or
+// DiscountRequest against this invoice — never hand-set independently.
+model Invoice {
+  id                      String         @id @default(uuid())
+  studentId               String
+  student                 StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId                  String
+  term                    Term           @relation(fields: [termId], references: [id])
+  // Snapshot of the sum of FEE-type line items at generation time — never
+  // mutated afterward, even once a DISCOUNT line item is later added
+  // (Slice 2d); the discount reduces outstandingBalance, not totalAmount.
+  totalAmount             Decimal        @db.Decimal(12, 2)
+  status                  InvoiceStatus  @default(UNPAID)
+  dueDate                 DateTime       @db.Date
+  generatedAt             DateTime       @default(now())
+  // Phase 5 Slice 2b: the merchant reference sent to the active gateway at
+  // checkout time — provider-agnostic field name per PRD §3.9, so a school
+  // moving between gateways later needs no schema change. @unique because
+  // the webhook handler resolves an Invoice directly by this value (the
+  // gateway echoes it back in every webhook/verify call).
+  gatewayPaymentReference String?        @unique
+
+  lineItems        InvoiceLineItem[]
+  payments         Payment[]
+  discountRequests DiscountRequest[]
+
+  @@unique([studentId, termId])
+  @@index([status])
+  @@map("invoices")
+}
+
+enum InvoiceLineItemType {
+  FEE
+  DISCOUNT
+}
+
+enum DiscountRequestType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum DiscountRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// PRD FR7.8/ARCHITECTURE §10.3, Phase 5 Slice 2d: Bursar raises against a
+// specific Invoice (termly by construction — a new term means a new
+// Invoice, so a discount is inherently scoped to it); only Super-Admin may
+// approve/reject (reviewedByUserId is a plain scalar, no relation — same
+// as Payment.reviewedByUserId). Approval adds a negative DISCOUNT
+// InvoiceLineItem and recomputes the invoice's outstanding balance/status
+// in the same transaction; rejection leaves the invoice untouched.
+model DiscountRequest {
+  id                 String                @id @default(uuid())
+  invoiceId          String
+  invoice            Invoice               @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  // The Bursar; null for an override-raised entry by someone with no
+  // StaffProfile (same reasoning as Payment.recordedByStaffId).
+  requestedByStaffId String?
+  requestedByStaff   StaffProfile?         @relation(fields: [requestedByStaffId], references: [id])
+  type               DiscountRequestType
+  // The raw requested number (a 0-100 percentage, or a currency amount) —
+  // the applied discount is computed at approval time against the
+  // invoice's live totalAmount, not snapshotted here.
+  value              Decimal               @db.Decimal(12, 2)
+  reason             String
+  status             DiscountRequestStatus @default(PENDING)
+  reviewedByUserId   String?
+  reviewedAt         DateTime?
+  rejectionReason    String?
+  createdAt          DateTime              @default(now())
+
+  @@map("discount_requests")
+}
+
+model InvoiceLineItem {
+  id             String              @id @default(uuid())
+  invoiceId      String
+  invoice        Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  // null for a DISCOUNT line (Slice 2d) — every FEE line traces back to the
+  // FeeStructure row that produced it.
+  feeStructureId String?
+  feeStructure   FeeStructure?       @relation(fields: [feeStructureId], references: [id])
+  type           InvoiceLineItemType
+  // Negative for DISCOUNT.
+  amount         Decimal             @db.Decimal(12, 2)
+  description    String
+
+  @@map("invoice_line_items")
+}
+
+enum PaymentMethod {
+  GATEWAY_CARD
+  GATEWAY_TRANSFER
+  GATEWAY_USSD
+  GATEWAY_RESERVED_ACCOUNT
+  BANK_TRANSFER_MANUAL
+  CASH
+}
+
+enum PaymentGatewayProvider {
+  MONNIFY
+  PAYSTACK
+}
+
+enum PaymentStatus {
+  PENDING
+  PENDING_APPROVAL
+  SUCCESSFUL
+  FAILED
+  REVERSED
+  REJECTED
+}
+
+// Full PRD §3.9 shape built now so later slices (2b gateway, 2c manual
+// bank-transfer) extend behavior, not schema — this slice's PaymentService
+// only ever writes method=CASH/status=SUCCESSFUL, rejecting any other
+// method outright as a backstop (same shape as ScoreEntryService's
+// group-subject backstop). gatewayProvider/gatewayTransactionReference
+// (Slice 2b) and proofOfPaymentUrl/reviewedByUserId/reviewedAt/
+// rejectionReason (Slice 2c) are unused until their respective slices.
+model Payment {
+  id                          String                  @id @default(uuid())
+  invoiceId                   String
+  invoice                     Invoice                 @relation(fields: [invoiceId], references: [id])
+  amount                      Decimal                 @db.Decimal(12, 2)
+  // The paying parent; null for a staff-recorded entry (CASH today).
+  paidByUserId                String?
+  paidByUser                  User?                   @relation(fields: [paidByUserId], references: [id])
+  method                      PaymentMethod
+  gatewayProvider             PaymentGatewayProvider?
+  gatewayTransactionReference String?
+  status                      PaymentStatus
+  paidAt                      DateTime?
+  // The Bursar; null for an override-recorded entry by someone with no
+  // StaffProfile (same Admin-override-with-no-StaffProfile reason as
+  // ScoreEntry.enteredByStaffId).
+  recordedByStaffId           String?
+  recordedByStaff             StaffProfile?           @relation(fields: [recordedByStaffId], references: [id])
+  proofOfPaymentUrl           String?
+  reviewedByUserId            String?
+  reviewedAt                  DateTime?
+  rejectionReason             String?
+  createdAt                   DateTime                @default(now())
+
+  receipt Receipt?
+
+  @@map("payments")
+}
+
+// Generated uniformly the moment a Payment reaches SUCCESSFUL, regardless of
+// path (PRD §3.9/ARCHITECTURE §10.4) — this slice is the CASH path; gateway/
+// manual-transfer paths (later slices) create a Receipt the same way.
+model Receipt {
+  id            String   @id @default(uuid())
+  paymentId     String   @unique
+  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  // Derived from the Payment's own UUID (`RCT-{payment.id.slice(0,8)}`,
+  // uppercased) — globally unique with no counting/sequence query and no
+  // race window, unlike a running count would have.
+  receiptNumber String   @unique
+  // Null until the async render job (apps/worker) completes.
+  pdfUrl        String?
+  issuedAt      DateTime @default(now())
+
+  @@map("receipts")
+}
+
+enum PaymentGatewayEnvironment {
+  SANDBOX
+  LIVE
+}
+
+// PRD §3.9 FR7.7, Phase 5 Slice 2b: one row per provider — both Monnify and
+// Paystack can be configured at once; PAYMENT_GATEWAY_PROVIDER (env var,
+// read once at boot) decides which is actually used for NEW checkouts
+// (ARCHITECTURE §5/§10). apiKey/secretKey are envelope-encrypted at rest
+// (EnvelopeEncryptionService) and never returned by the read endpoints.
+model PaymentGatewayConfig {
+  id                     String                    @id @default(uuid())
+  provider               PaymentGatewayProvider    @unique
+  apiKey                 String
+  secretKey              String
+  // Monnify-specific.
+  contractCode           String?
+  // Monnify-specific.
+  reservedAccountEnabled Boolean                   @default(false)
+  environment            PaymentGatewayEnvironment @default(SANDBOX)
+  // "This row's credentials are configured and usable," not "this is the
+  // chosen default" — that's PAYMENT_GATEWAY_PROVIDER's job.
+  isActive               Boolean                   @default(false)
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+
+  @@map("payment_gateway_configs")
+}
+
+enum NotificationType {
+  REPORT_CARD_PUBLISHED
+  INVOICE_OVERDUE
+  PASSWORD_RESET
+  INVITATION_RECEIVED
+  PAYMENT_RECEIVED
+  DISCOUNT_REQUEST_APPROVED
+  DISCOUNT_REQUEST_REJECTED
+  MANUAL_PAYMENT_APPROVED
+  MANUAL_PAYMENT_REJECTED
+  SCHEDULE_GENERATION_COMPLETED
+  SCHEDULE_GENERATION_TIMED_OUT
+  SCHEDULE_GENERATION_FAILED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  BOTH
+}
+
+// PRD §3.10, FR8.3: one row per NotificationType — guarantees "every
+// notification type has a template" by construction (key is the enum, not
+// free text). Seeded from packages/types' DEFAULT_NOTIFICATION_TEMPLATES at
+// pnpm setup:school (see setup-school.ts); Admin can edit subject/body after
+// (isCustomized flips true on first edit, same shape as other "shipped
+// default, later customized" fields in this codebase).
+model NotificationTemplate {
+  id           String              @id @default(uuid())
+  key          NotificationType    @unique
+  channel      NotificationChannel
+  subject      String
+  bodyTemplate String
+  // FR8.6: REPORT_CARD_PUBLISHED/INVOICE_OVERDUE/PASSWORD_RESET — cannot be
+  // disabled via NotificationPreference regardless of what's stored there.
+  isCritical   Boolean             @default(false)
+  isCustomized Boolean             @default(false)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@map("notification_templates")
+}
+
+// PRD §3.10: rendered output (title/body), not the template — recipient
+// reads exactly what was sent even if the template is edited later.
+model Notification {
+  id              String           @id @default(uuid())
+  recipientUserId String
+  recipient       User             @relation(fields: [recipientUserId], references: [id])
+  type            NotificationType
+  title           String
+  body            String
+  // Deep-link payload, e.g. { invoiceId, studentId } — frontend-interpreted.
+  data            Json?
+  isRead          Boolean          @default(false)
+  readAt          DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@index([recipientUserId, isRead, createdAt])
+  @@map("notifications")
+}
+
+// PRD §3.10, FR8.5/FR8.6: absence of a row = default (both channels
+// enabled). Only created when a user actually opts out of a non-critical
+// type — same "sparse row, default assumed" shape NotificationService reads
+// through, not written for every user×type combination up front.
+model NotificationPreference {
+  id               String           @id @default(uuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id])
+  notificationType NotificationType
+  inAppEnabled     Boolean          @default(true)
+  emailEnabled     Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([userId, notificationType])
+  @@map("notification_preferences")
+}
+
+enum EmailLogStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  FAILED
+}
+
+// PRD §3.10, FR8.3/FR8.4. templateKey is NotificationType (not free text) —
+// every EmailLog traces back to the NotificationService.notify() call that
+// created it, same "one type, one meaning" guarantee as
+// NotificationTemplate.key. Created before its email-dispatch BullMQ job is
+// enqueued (ARCHITECTURE §9's "tracking row first" shape), so a BullMQ
+// retry re-processing the same job updates one row rather than duplicating.
+model EmailLog {
+  id              String           @id @default(uuid())
+  recipientEmail  String
+  templateKey     NotificationType
+  resendMessageId String?          @unique
+  status          EmailLogStatus   @default(QUEUED)
+  error           String?
+  sentAt          DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@map("email_logs")
+}
+
+// PRD §7 Auditability NFR: who changed what, with before/after snapshots,
+// for score entries / fee records / role-assignment changes. Written by a
+// single global interceptor (AuditInterceptor), never called directly by
+// any service — ARCHITECTURE §5's "not something other modules import and
+// call."
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actor       User?    @relation(fields: [actorUserId], references: [id])
+  // Derived from HTTP method, or the route's trailing verb when it names
+  // one (approve/reject/revoke/resend/sync/accept/transfer) — see
+  // AuditInterceptor.deriveAction.
+  action      String
+  entityType  String
+  // Route :id when present; null for a create-by-body or a bulk/composite-
+  // key write (e.g. ScoreEntry's upsert, Invoice.generate).
+  entityId    String?
+  before      Json?
+  after       Json?
+  route       String
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
 }
