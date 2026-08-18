@@ -4,18 +4,15 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import type { CurrentUser } from "../../lib/use-current-user";
+import type { ParentChild } from "../../lib/use-parent-children";
 import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
 import { Gauge } from "../molecules/progress-bar";
+import { Tabs, TabsList, TabsTrigger } from "../molecules/tabs";
 import { StatCard } from "../atoms/stat-card";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
 
-interface StudentRecord {
-  id: string;
-  currentClassId: string | null;
-  user: { firstName: string; lastName: string };
-}
 interface InvoiceItem {
   id: string;
   dueDate: string;
@@ -58,18 +55,28 @@ interface PaymentItem {
 
 const TODAY_DAY_OF_WEEK = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"][new Date().getDay()];
 
-/** PRD FR9.8 Parent dashboard — one section per ward. */
-export function ParentDashboard({ user }: { user: CurrentUser }) {
+/**
+ * PRD FR9.8 Parent dashboard — a parent may have up to ~6 wards, so their
+ * data is shown one child at a time (tabs) rather than all stacked
+ * vertically, which got unwieldy fast at that count. The child list and
+ * current selection live in DashboardPage (useParentChildren), not here, so
+ * MySchedule's parent-schedule section stays in sync with the same tab
+ * instead of running its own independent (and previously unfiltered)
+ * per-child loop.
+ */
+export function ParentDashboard({
+  user,
+  children,
+  selectedChildId,
+  onSelectChild,
+}: {
+  user: CurrentUser;
+  children: ParentChild[] | null;
+  selectedChildId: string | null;
+  onSelectChild: (id: string) => void;
+}) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [children, setChildren] = useState<StudentRecord[] | null>(null);
   const [notifications, setNotifications] = useState<NotificationItem[] | null>(null);
-
-  useEffect(() => {
-    if (!user.parentProfileId) return;
-    apiFetch<StudentRecord[]>("/students", { auth: true })
-      .then(setChildren)
-      .catch(() => setChildren([]));
-  }, [user.parentProfileId]);
 
   useEffect(() => {
     if (!user.parentProfileId) return;
@@ -81,16 +88,23 @@ export function ParentDashboard({ user }: { user: CurrentUser }) {
   if (!user.parentProfileId) return null;
   if (!children || children.length === 0) return null;
 
+  const firstChild = children[0]!;
+  const selectedChild = children.find((c) => c.id === selectedChildId) ?? firstChild;
+
   return (
     <div className="mt-4 space-y-4">
-      {children.map((child) => (
-        <WardSection
-          key={child.id}
-          child={child}
-          academicSessionId={academicSessionId}
-          termId={termId}
-        />
-      ))}
+      {children.length > 1 && (
+        <Tabs value={selectedChild.id} onValueChange={onSelectChild}>
+          <TabsList>
+            {children.map((child) => (
+              <TabsTrigger key={child.id} value={child.id}>
+                {child.user.firstName} {child.user.lastName}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      )}
+      <WardSection child={selectedChild} academicSessionId={academicSessionId} termId={termId} />
 
       <Card>
         <CardHeader title="Notifications" />
@@ -123,7 +137,7 @@ function WardSection({
   academicSessionId,
   termId,
 }: {
-  child: StudentRecord;
+  child: ParentChild;
   academicSessionId: string;
   termId: string;
 }) {

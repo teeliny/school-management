@@ -22,7 +22,14 @@ import {
   ScheduleScope,
   TimetableApprovalStatus,
 } from "@prisma/client";
-import { CLASS_LEVEL_CATEGORIES, categoryToGroup, DAYS_OF_WEEK, QUEUE_NAMES, type SchedulingSolveDispatchJob } from "@school/types";
+import {
+  CLASS_LEVEL_CATEGORIES,
+  categoryToGroup,
+  DAYS_OF_WEEK,
+  parseSpecialPeriods,
+  QUEUE_NAMES,
+  type SchedulingSolveDispatchJob,
+} from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -298,6 +305,41 @@ export class ScheduleGenerationRequestService {
   }
 
   /**
+   * Total subject-schedulable periods/week for a group — day-aware (Friday
+   * may run a shorter FRIDAY_PERIODS_PER_DAY than the rest of the week) and
+   * reduced by any SPECIAL_PERIODS fixed non-subject blocks (e.g. Wednesday
+   * Sports/Extra-Curricular), same arithmetic apps/worker's
+   * resolvePeriodStructure/resolveSpecialPeriodBlocks apply when building
+   * the solver payload — re-derived here rather than shared, same
+   * synchronous-before-any-queue-involvement reasoning as
+   * resolveFlattenedRequiredSubjects above. `null` when PERIODS_PER_DAY
+   * isn't configured yet (nothing to check against).
+   */
+  private async resolveWeeklyCapacity(group: ClassLevelCategoryGroup): Promise<number | null> {
+    const rows = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
+    });
+    const get = (key: string): unknown => rows.find((r) => r.key === key)?.value;
+
+    const periodsPerDayRaw = get("PERIODS_PER_DAY");
+    if (periodsPerDayRaw === undefined) return null;
+    const periodsPerDay = Number(periodsPerDayRaw);
+    const fridayPeriodsPerDayRaw = get("FRIDAY_PERIODS_PER_DAY");
+    const fridayPeriodsPerDay = fridayPeriodsPerDayRaw === undefined ? periodsPerDay : Number(fridayPeriodsPerDayRaw);
+    const specialPeriods = parseSpecialPeriods(get("SPECIAL_PERIODS"));
+
+    let capacity = 0;
+    for (const day of DAYS_OF_WEEK) {
+      const dayTotal = day === "FRIDAY" ? fridayPeriodsPerDay : periodsPerDay;
+      const blockedForDay = specialPeriods
+        .filter((s) => s.day === day)
+        .reduce((sum, s) => sum + (s.endPeriod - s.startPeriod + 1), 0);
+      capacity += Math.max(0, dayTotal - blockedForDay);
+    }
+    return capacity;
+  }
+
+  /**
    * Necessary-condition check only (mirrors the Python solver's own
    * per-subject fast-fail at class_timetable.py's `_solve_group`, just at
    * the aggregate weekly-capacity level) — it can't catch every possible
@@ -324,10 +366,7 @@ export class ScheduleGenerationRequestService {
     for (const arm of classArms) {
       const group = categoryToGroup(arm.classLevel.category);
       if (!capacityByGroup.has(group)) {
-        const periodsPerDay = await this.prisma.schedulingConstraint.findFirst({
-          where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, isActive: true, key: "PERIODS_PER_DAY" },
-        });
-        capacityByGroup.set(group, periodsPerDay ? Number(periodsPerDay.value) * DAYS_OF_WEEK.length : null);
+        capacityByGroup.set(group, await this.resolveWeeklyCapacity(group));
       }
       const capacity = capacityByGroup.get(group) ?? null;
       if (capacity === null) continue; // period structure not configured yet — nothing to check against

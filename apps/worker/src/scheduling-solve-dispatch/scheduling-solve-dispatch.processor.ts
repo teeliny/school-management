@@ -17,6 +17,7 @@ import {
   categoryToGroup,
   computePeriodTime,
   DAYS_OF_WEEK,
+  parseSpecialPeriods,
   QUEUE_NAMES,
   timeRangesOverlap,
   type ClassLevelCategoryGroup,
@@ -228,6 +229,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const groups: GroupPayload[] = [];
     for (const [group, arms] of armsByGroup) {
       const structure = await this.resolvePeriodStructure(group);
+      // School-wide fixed blocks (e.g. Wednesday Sports/Extra-Curricular) —
+      // same for every class arm in the group, unlike the per-arm/per-staff
+      // TimetableSlot-based blocks below, so resolved once per group.
+      const specialPeriodBlocks = await this.resolveSpecialPeriodBlocks(group);
       const classArmPayloads: ClassArmPayload[] = [];
       const staffBlockedPeriods: Record<string, Record<string, number[]>> = {};
 
@@ -237,7 +242,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         classArmPayloads.push({
           classArmId: arm.id,
           subjects,
-          blockedPeriods: this.computeBlockedPeriods(structure, armSlots),
+          blockedPeriods: this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
         });
 
         for (const subject of subjects) {
@@ -866,14 +871,52 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
     });
     const get = (key: string): unknown => rows.find((r) => r.key === key)?.value;
+    const periodsPerDay = Number(get("PERIODS_PER_DAY"));
+    const periodDurationMinutes = Number(get("PERIOD_DURATION_MINUTES"));
+    // The four keys below are optional (BUILD_PLAN.md §9 Step 2 follow-up) —
+    // absent means "no short break" / "Friday is the same as every other
+    // day," i.e. today's exact behavior before this pair of features existed.
+    const shortBreakAfterPeriod = get("SHORT_BREAK_AFTER_PERIOD");
+    const fridayPeriodsPerDay = get("FRIDAY_PERIODS_PER_DAY");
     return {
-      periodsPerDay: Number(get("PERIODS_PER_DAY")),
-      periodDurationMinutes: Number(get("PERIOD_DURATION_MINUTES")),
+      periodsPerDay,
+      periodDurationMinutes,
       schoolDayStartTime: String(get("SCHOOL_DAY_START_TIME")),
       breakAfterPeriod: Number(get("BREAK_AFTER_PERIOD")),
       breakDurationMinutes: Number(get("BREAK_DURATION_MINUTES")),
       fridayBreakDurationMinutes: Number(get("FRIDAY_BREAK_DURATION_MINUTES")),
+      shortBreakAfterPeriod: shortBreakAfterPeriod === undefined ? periodsPerDay : Number(shortBreakAfterPeriod),
+      shortBreakDurationMinutes: Number(get("SHORT_BREAK_DURATION_MINUTES") ?? 0),
+      fridayPeriodDurationMinutes: Number(get("FRIDAY_PERIOD_DURATION_MINUTES") ?? periodDurationMinutes),
+      fridayPeriodsPerDay: fridayPeriodsPerDay === undefined ? periodsPerDay : Number(fridayPeriodsPerDay),
     };
+  }
+
+  /**
+   * School-wide fixed non-subject blocks (SPECIAL_PERIODS, e.g. Wednesday
+   * Sports/Extra-Curricular) — parsed once per group and applied to every
+   * class arm identically, unlike the per-arm TimetableSlot-based blocks
+   * computeBlockedPeriods produces.
+   */
+  private async resolveSpecialPeriodBlocks(group: ClassLevelCategoryGroup): Promise<Record<string, number[]>> {
+    const row = await this.prisma.schedulingConstraint.findFirst({
+      where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, key: "SPECIAL_PERIODS", isActive: true },
+    });
+    const blocked = new Map<DayOfWeek, Set<number>>(DAYS_OF_WEEK.map((day) => [day, new Set<number>()]));
+    for (const special of parseSpecialPeriods(row?.value)) {
+      const daySet = blocked.get(special.day);
+      if (!daySet) continue;
+      for (let period = special.startPeriod; period <= special.endPeriod; period++) daySet.add(period);
+    }
+    return Object.fromEntries([...blocked.entries()].map(([day, set]) => [day, [...set]]));
+  }
+
+  private mergeBlockedPeriods(a: Record<string, number[]>, b: Record<string, number[]>): Record<string, number[]> {
+    const merged: Record<string, number[]> = {};
+    for (const day of DAYS_OF_WEEK) {
+      merged[day] = [...new Set([...(a[day] ?? []), ...(b[day] ?? [])])];
+    }
+    return merged;
   }
 
   /**
@@ -881,7 +924,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * day" they occupy, via `computePeriodTime` + the shared overlap check
    * (packages/types) — same minutes-since-midnight math
    * `TimetableSlotService.assertNoConflicts` uses, so a manually-entered
-   * slot and a generated one are judged by identical logic.
+   * slot and a generated one are judged by identical logic. Bounded by each
+   * day's own period count (Friday's own, possibly shorter, day) rather than
+   * the flat periodsPerDay for every day.
    */
   private computeBlockedPeriods(
     structure: PeriodStructure,
@@ -892,7 +937,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     for (const slot of slots) {
       const daySlots = blocked.get(slot.dayOfWeek);
       if (!daySlots) continue;
-      for (let period = 1; period <= structure.periodsPerDay; period++) {
+      const maxPeriod = slot.dayOfWeek === "FRIDAY" ? structure.fridayPeriodsPerDay : structure.periodsPerDay;
+      for (let period = 1; period <= maxPeriod; period++) {
         const { startTime, endTime } = computePeriodTime(structure, slot.dayOfWeek, period);
         if (timeRangesOverlap(startTime, endTime, slot.startTime, slot.endTime)) {
           daySlots.add(period);

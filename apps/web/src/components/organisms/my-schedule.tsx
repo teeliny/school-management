@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
+import type { ParentChild } from "../../lib/use-parent-children";
 import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
 import { ReadOnlyScheduleTable } from "../molecules/read-only-schedule-table";
@@ -52,16 +53,21 @@ interface DutyAssignmentItem {
  * Renders nothing when there's nothing relevant to show (e.g. a pure Admin
  * with no staff profile) — no empty-state clutter on every dashboard.
  */
-export function MySchedule({ user }: { user: CurrentUser }) {
+export function MySchedule({ user, selectedChild }: { user: CurrentUser; selectedChild: ParentChild | null }) {
   const { academicSessionId, termId } = useCurrentTerm();
   const [children, setChildren] = useState<StudentRecord[] | null>(null);
 
   useEffect(() => {
-    if (!user.studentProfileId && !user.parentProfileId) return;
+    // Parent branch reads `selectedChild` (shared with ParentDashboard's tab
+    // selector, resolved in DashboardPage via useParentChildren) instead of
+    // fetching its own list — previously it looped over every ward here
+    // independently of that selector, so switching tabs never filtered this
+    // section.
+    if (!user.studentProfileId) return;
     apiFetch<StudentRecord[]>("/students", { auth: true })
       .then(setChildren)
       .catch(() => setChildren([]));
-  }, [user.studentProfileId, user.parentProfileId]);
+  }, [user.studentProfileId]);
 
   const hasAnyScope = Boolean(user.studentProfileId || user.parentProfileId || user.staffProfileId);
   if (!hasAnyScope) return null;
@@ -74,16 +80,14 @@ export function MySchedule({ user }: { user: CurrentUser }) {
         {user.studentProfileId && children && children[0] && (
           <StudentScheduleSection classArmId={children[0].currentClassId} academicSessionId={academicSessionId} termId={termId} />
         )}
-        {user.parentProfileId &&
-          children &&
-          children.map((child) => (
-            <div key={child.id}>
-              <div className="mb-1.5 text-[12.5px] font-medium">
-                {child.user.firstName} {child.user.lastName}
-              </div>
-              <StudentScheduleSection classArmId={child.currentClassId} academicSessionId={academicSessionId} termId={termId} />
+        {user.parentProfileId && selectedChild && (
+          <div>
+            <div className="mb-1.5 text-[12.5px] font-medium">
+              {selectedChild.user.firstName} {selectedChild.user.lastName}
             </div>
-          ))}
+            <StudentScheduleSection classArmId={selectedChild.currentClassId} academicSessionId={academicSessionId} termId={termId} />
+          </div>
+        )}
         {user.staffProfileId && (
           <StaffScheduleSection staffId={user.staffProfileId} academicSessionId={academicSessionId} termId={termId} />
         )}

@@ -905,7 +905,11 @@ async function main() {
     // NULLs as equal for that unique index, hence the hand-added partial
     // index and the manual find-then-create fallback, same precedent as
     // GradeScale above and StaffAssignment's reconciliation (CLAUDE.md). A
-    // second run is a no-op either way.
+    // second run now reconciles `value` on every existing row too (not just
+    // creating missing ones) — this script is also how period-structure
+    // tuning (BUILD_PLAN.md §9 Step 2 follow-up) gets applied to an
+    // already-seeded database, so a value bump in DEFAULT_SCHEDULING_
+    // CONSTRAINTS needs to actually take on a reseed, not silently no-op.
     // -------------------------------------------------------------------
     for (const constraint of DEFAULT_SCHEDULING_CONSTRAINTS) {
       if (constraint.classLevelCategoryGroup) {
@@ -917,7 +921,7 @@ async function main() {
               key: constraint.key,
             },
           },
-          update: {},
+          update: { value: constraint.value },
           create: constraint,
         });
         continue;
@@ -926,7 +930,9 @@ async function main() {
       const existing = await prisma.schedulingConstraint.findFirst({
         where: { scope: constraint.scope, classLevelCategoryGroup: null, key: constraint.key },
       });
-      if (!existing) {
+      if (existing) {
+        await prisma.schedulingConstraint.update({ where: { id: existing.id }, data: { value: constraint.value } });
+      } else {
         await prisma.schedulingConstraint.create({ data: constraint });
       }
     }

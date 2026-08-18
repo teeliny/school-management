@@ -67,12 +67,42 @@ export interface DefaultSchedulingConstraint {
 export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   { scope: "CLASS_TIMETABLE", key: "CALCULATION_SUBJECTS_MORNING", value: true },
 
-  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIODS_PER_DAY", value: 8 },
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIODS_PER_DAY", value: 10 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIOD_DURATION_MINUTES", value: 40 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "SCHOOL_DAY_START_TIME", value: "08:00" },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "BREAK_AFTER_PERIOD", value: 5 },
-  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "BREAK_DURATION_MINUTES", value: 30 },
-  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "FRIDAY_BREAK_DURATION_MINUTES", value: 20 },
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "BREAK_DURATION_MINUTES", value: 40 },
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "FRIDAY_BREAK_DURATION_MINUTES", value: 30 },
+  // A second, shorter break later in the day — optional (see PeriodStructure's
+  // defaulting below): a school that hasn't set these two keys just never
+  // gets a short break, same as before this pair existed.
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "SHORT_BREAK_AFTER_PERIOD", value: 8 },
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "SHORT_BREAK_DURATION_MINUTES", value: 10 },
+  // Friday runs its own (shorter) period length and stops after its own
+  // (smaller) period count — independent numbers, not derived from a
+  // day-end-time, matching this constraint system's existing "flat values,
+  // admin keeps them consistent" philosophy (no cross-field validation
+  // exists anywhere in SchedulingConstraint today).
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "FRIDAY_PERIOD_DURATION_MINUTES", value: 35 },
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "FRIDAY_PERIODS_PER_DAY", value: 7 },
+  // Purely cosmetic (grid-label) — the leftover time between Friday's last
+  // period and this end time isn't otherwise modeled or enforced; nothing
+  // can be scheduled there regardless, since FRIDAY_PERIODS_PER_DAY already
+  // stops the day at period 7. Optional: a school can configure
+  // FRIDAY_PERIODS_PER_DAY without ever naming what the leftover time is for.
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "FRIDAY_TRAILING_ACTIVITY_LABEL", value: "Religious activities" },
+  { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "FRIDAY_TRAILING_ACTIVITY_END_TIME", value: "13:00" },
+  // Fixed non-subject blocks, any day/period range, any count (0 = none) —
+  // "DAY:startPeriod-endPeriod:Label" per entry, parsed by parseSpecialPeriods
+  // below. Optional and school-specific (varies whether a school has these
+  // at all, and which day they land on) — not hardcoded to Wednesday in code,
+  // only in this school's own seeded value.
+  {
+    scope: "CLASS_TIMETABLE",
+    classLevelCategoryGroup: "JSS_SSS",
+    key: "SPECIAL_PERIODS",
+    value: ["WEDNESDAY:1-2:Sports", "WEDNESDAY:9-10:Extra-Curricular"],
+  },
 
   {
     scope: "CLASS_TIMETABLE",
@@ -224,6 +254,20 @@ export interface PeriodStructure {
   breakAfterPeriod: number;
   breakDurationMinutes: number;
   fridayBreakDurationMinutes: number;
+  // Second, shorter break later in the day — optional in SchedulingConstraint
+  // (resolvers default shortBreakAfterPeriod to periodsPerDay, so
+  // `periodIndex > shortBreakAfterPeriod` is never true, and
+  // shortBreakDurationMinutes to 0, when unset: a no-op, same as before this
+  // pair existed). Never applied on Friday regardless of these values — see
+  // computePeriodTime.
+  shortBreakAfterPeriod: number;
+  shortBreakDurationMinutes: number;
+  // Friday's own period length and day length — default to
+  // periodDurationMinutes/periodsPerDay respectively when unset, so Friday
+  // behaves exactly like every other day (today's behavior) until a school
+  // opts into a shorter Friday.
+  fridayPeriodDurationMinutes: number;
+  fridayPeriodsPerDay: number;
 }
 
 function minutesToTime(totalMinutes: number): string {
@@ -234,30 +278,76 @@ function minutesToTime(totalMinutes: number): string {
 
 /**
  * BUILD_PLAN.md §9 Step 2: `periodIndex` (1-based) -> actual clock time,
- * inserting the day's one break gap after `breakAfterPeriod` — using
- * `fridayBreakDurationMinutes` instead of `breakDurationMinutes` on Fridays,
- * per the break-modeling decision made for this step. Periods before the
- * break are unaffected; every period after it shifts later by the break's
- * duration.
+ * inserting the day's break gap(s) — the long break after `breakAfterPeriod`
+ * (using `fridayBreakDurationMinutes` instead of `breakDurationMinutes` on
+ * Fridays, per the break-modeling decision made for this step) and, for
+ * non-Friday days only, a second short break after `shortBreakAfterPeriod`
+ * (Friday never gets the short break, even if a school's Friday day were
+ * long enough to reach it — an explicit rule, not just a consequence of
+ * `fridayPeriodsPerDay` normally stopping before then). Friday also uses its
+ * own `fridayPeriodDurationMinutes` instead of `periodDurationMinutes`.
+ * Breaks stack additively: a period after both gets both durations added.
  */
 export function computePeriodTime(
   structure: PeriodStructure,
   dayOfWeek: DayOfWeek,
   periodIndex: number,
 ): { startTime: string; endTime: string } {
+  const isFriday = dayOfWeek === "FRIDAY";
   const [startHour, startMinute] = structure.schoolDayStartTime.split(":").map(Number) as [number, number];
   const dayStartMinutes = startHour * 60 + startMinute;
-  const breakMinutes = dayOfWeek === "FRIDAY" ? structure.fridayBreakDurationMinutes : structure.breakDurationMinutes;
+  const periodDuration = isFriday ? structure.fridayPeriodDurationMinutes : structure.periodDurationMinutes;
+  const breakMinutes = isFriday ? structure.fridayBreakDurationMinutes : structure.breakDurationMinutes;
 
-  let periodStartMinutes = dayStartMinutes + (periodIndex - 1) * structure.periodDurationMinutes;
+  let periodStartMinutes = dayStartMinutes + (periodIndex - 1) * periodDuration;
   if (periodIndex > structure.breakAfterPeriod) {
     periodStartMinutes += breakMinutes;
+  }
+  if (!isFriday && periodIndex > structure.shortBreakAfterPeriod) {
+    periodStartMinutes += structure.shortBreakDurationMinutes;
   }
 
   return {
     startTime: minutesToTime(periodStartMinutes),
-    endTime: minutesToTime(periodStartMinutes + structure.periodDurationMinutes),
+    endTime: minutesToTime(periodStartMinutes + periodDuration),
   };
+}
+
+/** A fixed, non-subject block on the weekly grid (e.g. Sports, Extra-Curricular) — see SPECIAL_PERIODS above. */
+export interface SpecialPeriod {
+  day: DayOfWeek;
+  startPeriod: number;
+  endPeriod: number;
+  label: string;
+}
+
+/**
+ * Parses SPECIAL_PERIODS's `"DAY:startPeriod-endPeriod:Label"` string-list
+ * format — admin-editable free text via the generic SchedulingConstraint
+ * CRUD (no per-key schema anywhere in that system), so malformed entries are
+ * skipped rather than thrown, same defensive-parsing posture as the rest of
+ * this loosely-typed constraint system. Shared by the worker (folds into
+ * blockedPeriods), the API's feasibility pre-check (capacity math), and the
+ * web grid (labeling) — the Python solver never sees this directly, since
+ * the worker already bakes it into each arm's blockedPeriods before dispatch.
+ */
+export function parseSpecialPeriods(raw: unknown): SpecialPeriod[] {
+  if (!Array.isArray(raw)) return [];
+  const result: SpecialPeriod[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const match = /^([A-Z]+):(\d+)-(\d+):(.+)$/.exec(entry);
+    if (!match) continue;
+    // Non-null: the regex has no optional groups, so a successful match
+    // guarantees all four captures are present.
+    const [, day, startStr, endStr, label] = match as unknown as [string, string, string, string, string];
+    if (!DAYS_OF_WEEK.includes(day as DayOfWeek)) continue;
+    const startPeriod = Number(startStr);
+    const endPeriod = Number(endStr);
+    if (!Number.isInteger(startPeriod) || !Number.isInteger(endPeriod) || startPeriod < 1 || endPeriod < startPeriod) continue;
+    result.push({ day: day as DayOfWeek, startPeriod, endPeriod, label });
+  }
+  return result;
 }
 
 /** "HH:mm" -> minutes since midnight. */

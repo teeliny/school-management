@@ -43,6 +43,17 @@ class GroupPayload(BaseModel):
     breakAfterPeriod: int
     breakDurationMinutes: int
     fridayBreakDurationMinutes: int
+    # Second, shorter break later in the day — never applied on Friday (see
+    # _compute_period_time). apps/worker's resolvePeriodStructure defaults
+    # shortBreakAfterPeriod to periodsPerDay (never triggers) and
+    # shortBreakDurationMinutes to 0 when a school hasn't configured these.
+    shortBreakAfterPeriod: int
+    shortBreakDurationMinutes: int
+    # Friday's own (possibly shorter) period length and day length — default
+    # to periodDurationMinutes/periodsPerDay respectively when unset, so
+    # Friday behaves like every other day until a school opts in.
+    fridayPeriodDurationMinutes: int
+    fridayPeriodsPerDay: int
     days: list[str]
     classArms: list[ClassArmPayload]
     staffBlockedPeriods: dict[str, dict[str, list[int]]]
@@ -75,7 +86,12 @@ def _solve_group(
     calculation_subjects_morning: bool,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
-    periods = range(1, group.periodsPerDay + 1)
+
+    def periods_for_day(day: str) -> range:
+        # Friday may run a shorter day (fewer periods) than the rest of the
+        # week — see GroupPayload.fridayPeriodsPerDay.
+        count = group.fridayPeriodsPerDay if day == "FRIDAY" else group.periodsPerDay
+        return range(1, count + 1)
 
     staff_by_arm_subject: dict[tuple[str, str], str] = {}
     subject_by_arm_id: dict[tuple[str, str], SubjectPayload] = {}
@@ -103,7 +119,7 @@ def _solve_group(
 
         for group_key, members in groups.items():
             for day in group.days:
-                for period in periods:
+                for period in periods_for_day(day):
                     # A bundle only gets a slot when it's open for EVERY
                     # member (arm-blocked ∪ that member's own staff-blocked ∪
                     # the calc-morning restriction, whichever member(s)
@@ -129,7 +145,7 @@ def _solve_group(
     # boolean v means v can't be 1 once N > 1), making every bundle unusable.
     for arm in group.classArms:
         for day in group.days:
-            for period in periods:
+            for period in periods_for_day(day):
                 seen_groups: set[str] = set()
                 vars_here = []
                 for (arm_id, subject_id, d, p), v in variables.items():
@@ -174,7 +190,7 @@ def _solve_group(
         if len(arm_subject_pairs) < 2:
             continue
         for day in group.days:
-            for period in periods:
+            for period in periods_for_day(day):
                 vars_here = [
                     variables[(arm_id, subject_id, day, period)]
                     for (arm_id, subject_id) in arm_subject_pairs
@@ -221,20 +237,27 @@ def _solve_group(
 def _compute_period_time(group: GroupPayload, day: str, period_index: int) -> tuple[str, str]:
     """
     Mirrors packages/types/src/scheduling.ts's `computePeriodTime` — same
-    arithmetic, computed independently here from the same seed values
-    (periodsPerDay/duration/start-time/break, all in this group's payload)
-    rather than shared across the language boundary. Only worker-side
-    blocked-period computation uses the TypeScript version; this is what
-    actually determines the persisted TimetableSlot.startTime/endTime.
+    arithmetic (including the two-break, Friday-specific-duration handling),
+    computed independently here from the same seed values rather than shared
+    across the language boundary. Only worker-side blocked-period computation
+    uses the TypeScript version; this is what actually determines the
+    persisted TimetableSlot.startTime/endTime.
     """
+    is_friday = day == "FRIDAY"
     start_hour, start_minute = (int(part) for part in group.schoolDayStartTime.split(":"))
     day_start_minutes = start_hour * 60 + start_minute
-    break_minutes = group.fridayBreakDurationMinutes if day == "FRIDAY" else group.breakDurationMinutes
+    period_duration = group.fridayPeriodDurationMinutes if is_friday else group.periodDurationMinutes
+    break_minutes = group.fridayBreakDurationMinutes if is_friday else group.breakDurationMinutes
 
-    period_start_minutes = day_start_minutes + (period_index - 1) * group.periodDurationMinutes
+    period_start_minutes = day_start_minutes + (period_index - 1) * period_duration
     if period_index > group.breakAfterPeriod:
         period_start_minutes += break_minutes
-    period_end_minutes = period_start_minutes + group.periodDurationMinutes
+    # Never applied on Friday, even if a school's Friday day were long enough
+    # to reach it — an explicit rule, not just a consequence of
+    # fridayPeriodsPerDay normally stopping before then.
+    if not is_friday and period_index > group.shortBreakAfterPeriod:
+        period_start_minutes += group.shortBreakDurationMinutes
+    period_end_minutes = period_start_minutes + period_duration
 
     return _minutes_to_time(period_start_minutes), _minutes_to_time(period_end_minutes)
 

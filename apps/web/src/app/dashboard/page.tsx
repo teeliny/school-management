@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useCurrentUser } from "../../lib/use-current-user";
+import { useParentChildren } from "../../lib/use-parent-children";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
@@ -18,6 +20,22 @@ import { StudentDashboard } from "../../components/organisms/student-dashboard";
 
 export default function DashboardPage() {
   const { user, loading, logout } = useCurrentUser();
+  // Lifted up here (rather than fetched independently by ParentDashboard and
+  // MySchedule) so both sections agree on which one child a multi-ward
+  // parent is currently viewing.
+  const children = useParentChildren(user?.parentProfileId ?? null);
+  const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+  const hasAutoSelected = useRef(false);
+
+  // Same "prefer the active ward" default report-card-filters.tsx's
+  // auto-select already uses, so a parent with one inactive (e.g.
+  // graduated/withdrawn) and one active child lands on the relevant one.
+  useEffect(() => {
+    const firstChild = children?.[0];
+    if (hasAutoSelected.current || !firstChild) return;
+    hasAutoSelected.current = true;
+    setSelectedChildId((children?.find((c) => c.status === "ACTIVE") ?? firstChild).id);
+  }, [children]);
 
   if (loading) {
     return (
@@ -60,10 +78,10 @@ export default function DashboardPage() {
       <PrincipalHeadteacherAdditions user={user} />
       <RegistrarAdditions user={user} />
       <BursarDashboard user={user} />
-      <ParentDashboard user={user} />
+      <ParentDashboard user={user} children={children} selectedChildId={selectedChildId} onSelectChild={setSelectedChildId} />
       <StudentDashboard user={user} />
 
-      <MySchedule user={user} />
+      <MySchedule user={user} selectedChild={children?.find((c) => c.id === selectedChildId) ?? children?.[0] ?? null} />
     </AppShell>
   );
 }
