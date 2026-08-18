@@ -272,6 +272,27 @@ model Department {
   @@map("departments")
 }
 
+// BUILD_PLAN.md §9 Step 2 follow-up: subjects a student takes instead of one
+// another at the same class group (e.g. SSS's Physics/Financial Accounting/
+// Literature in English "options column", or Government/Geography) — unlike
+// Department, membership isn't tied to which department a student belongs
+// to (GENERAL-type subjects can be grouped this way too), it just means "the
+// class-timetable/exam-timetable solvers should schedule these in parallel
+// (same period slot / same exam day) instead of reserving separate weekly
+// capacity for each, since no student ever needs both at once." Scoped to
+// classLevelCategory like ClassSubject itself, not a concrete ClassLevel/
+// ClassArm — same "JSS1-3 share one assignment" reasoning as ClassSubject.
+model ClassSubjectConcurrencyGroup {
+  id                 String             @id @default(uuid())
+  name               String
+  classLevelCategory ClassLevelCategory
+  createdAt          DateTime           @default(now())
+
+  classSubjects ClassSubject[]
+
+  @@map("class_subject_concurrency_groups")
+}
+
 // PRD §3.2/§3.3: assigns a student to a department for a session — only
 // valid when the student's current ClassLevel.category = SSS. Gating is a
 // service-layer check (same "not a DB constraint" precedent as the
@@ -531,6 +552,7 @@ model Subject {
   classSubjectTermStatuses ClassSubjectTermStatus[]
   attendanceSessions       AttendanceSession[]
   examSchedules            ExamSchedule[]
+  childPeriodOverrides     ClassSubjectChildPeriods[]
 
   @@map("subjects")
 }
@@ -549,24 +571,33 @@ model Subject {
 // below is what prevents assigning the same subject to the same class group
 // twice — no service-layer re-check needed.
 model ClassSubject {
-  id                 String             @id @default(uuid())
+  id                 String                        @id @default(uuid())
   classLevelCategory ClassLevelCategory
   subjectId          String
-  subject            Subject            @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subject            Subject                       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   type               SubjectType
   // Required iff type = DEPARTMENT, rejected otherwise — validated in
   // ClassSubjectService, not here (depends on another field's value).
   departmentId       String?
-  department         Department?        @relation(fields: [departmentId], references: [id])
+  department         Department?                   @relation(fields: [departmentId], references: [id])
   // BUILD_PLAN.md §9 Step 2: how many periods/week this subject is taught
   // for this classLevelCategory — the class-timetable solver's per-subject
   // frequency target. Defaulted rather than left required so the migration
   // doesn't break existing rows; Admin sets real values via the existing
   // CRUD afterward.
-  periodsPerWeek     Int                @default(3)
-  createdAt          DateTime           @default(now())
+  periodsPerWeek     Int                           @default(3)
+  // Nullable — most subjects aren't part of an "options column". Required to
+  // share this group's classLevelCategory and every other member's
+  // periodsPerWeek, validated in ClassSubjectService (not here, same
+  // depends-on-another-field/row reasoning as departmentId above) since the
+  // class-timetable/exam-timetable solvers assume bundle members occupy the
+  // exact same weekly slots / exam day.
+  concurrencyGroupId String?
+  concurrencyGroup   ClassSubjectConcurrencyGroup? @relation(fields: [concurrencyGroupId], references: [id])
+  createdAt          DateTime                      @default(now())
 
-  termStatuses ClassSubjectTermStatus[]
+  termStatuses         ClassSubjectTermStatus[]
+  childPeriodOverrides ClassSubjectChildPeriods[]
 
   @@unique([classLevelCategory, subjectId])
   @@map("class_subjects")
@@ -599,6 +630,33 @@ model ClassSubjectTermStatus {
 
   @@unique([classSubjectId, subjectId, termId])
   @@map("class_subject_term_statuses")
+}
+
+// Per-child override of a group ClassSubject's periodsPerWeek — a group
+// subject's children (e.g. Basic Science and Technology's Basic Science/
+// Basic Technology/Information Technology/Physical and Health Education)
+// often need different weekly loads rather than uniformly inheriting the
+// parent ClassSubject row's single value. Same sparse-override shape as
+// ClassSubjectTermStatus just above: absence of a row means "inherit
+// classSubject.periodsPerWeek" (today's behavior), a row only exists once a
+// child's periods/week has been explicitly customized. childSubjectId is
+// scoped to actual scheduling — no concurrencyGroupId override here (PRD
+// §3.3: a group subject is never itself scheduled, so bundling stays a
+// classSubject-level concept; if a specific child ever needs its own
+// elective-block membership independent of its siblings, that's a separate
+// follow-up, not modeled yet).
+model ClassSubjectChildPeriods {
+  id             String       @id @default(uuid())
+  classSubjectId String
+  classSubject   ClassSubject @relation(fields: [classSubjectId], references: [id], onDelete: Cascade)
+  childSubjectId String
+  childSubject   Subject      @relation(fields: [childSubjectId], references: [id], onDelete: Cascade)
+  periodsPerWeek Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([classSubjectId, childSubjectId])
+  @@map("class_subject_child_periods")
 }
 
 // Defines how a grouped subject's independently-scored children aggregate
@@ -1095,42 +1153,42 @@ enum TermReportCardStatus {
 // GradeScale letter) for auditability, since ScoreEntry rows could
 // theoretically change later.
 model TermReportCard {
-  id                String               @id @default(uuid())
-  studentId         String
-  student           StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  termId            String
-  term              Term                 @relation(fields: [termId], references: [id], onDelete: Cascade)
-  reportType        TermReportCardType
-  status            TermReportCardStatus @default(GENERATING)
-  pdfUrl            String?
-  scoresSnapshot    Json?
+  id                    String               @id @default(uuid())
+  studentId             String
+  student               StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  termId                String
+  term                  Term                 @relation(fields: [termId], references: [id], onDelete: Cascade)
+  reportType            TermReportCardType
+  status                TermReportCardStatus @default(GENERATING)
+  pdfUrl                String?
+  scoresSnapshot        Json?
   // Report-level summary (added post-Phase-4, PRD §3.6). overallScore is an
   // average out of 100 for FULL_TERM, a normalized percentage for MID_TERM
   // (the PDF labels it "Average" vs "Percentage" accordingly — same field,
   // same GradeScale lookup, different meaning of the number going in).
   // overallRemark is FULL_TERM-only; MID_TERM never sets it.
-  overallScore      Decimal?             @db.Decimal(5, 2)
-  overallGrade      String?
-  overallRemark     String?
-  generatedAt       DateTime?
-  generatedByUserId String?
-  generatedByUser   User?                @relation(fields: [generatedByUserId], references: [id])
-  publishedAt       DateTime?
+  overallScore          Decimal?             @db.Decimal(5, 2)
+  overallGrade          String?
+  overallRemark         String?
+  generatedAt           DateTime?
+  generatedByUserId     String?
+  generatedByUser       User?                @relation(fields: [generatedByUserId], references: [id])
+  publishedAt           DateTime?
   // Set when a StudentSubjectEnrollment change (opt-in) is detected for this
   // student+term after this card was generated — see
   // SubjectTermResultService.recomputeForStudentSubjectTerm. Cleared on the
   // next successful (re)generation. Admin-surfaced only; nothing regenerates
   // automatically.
-  needsRegeneration Boolean              @default(false)
-  staleReason       String?
-  staleSince        DateTime?
+  needsRegeneration     Boolean              @default(false)
+  staleReason           String?
+  staleSince            DateTime?
   // Hash of the opaque token embedded in the PDF's verification QR code
   // (same generateRawToken/hashToken pattern as Invitation.tokenHash) —
   // re-generated on every (re)generation, so an old printed QR code stops
   // resolving once the report is regenerated. Null until first generated.
-  verificationTokenHash String?          @unique
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
+  verificationTokenHash String?              @unique
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
 
   @@unique([studentId, termId, reportType])
   @@map("term_report_cards")

@@ -16,12 +16,13 @@ import type { Queue } from "bullmq";
 import { randomBytes } from "node:crypto";
 import {
   AssessmentComponentType,
+  ClassLevelCategory,
   ClassLevelCategoryGroup,
   ScheduleGenerationStatus,
   ScheduleScope,
   TimetableApprovalStatus,
 } from "@prisma/client";
-import { categoryToGroup, QUEUE_NAMES, type SchedulingSolveDispatchJob } from "@school/types";
+import { CLASS_LEVEL_CATEGORIES, categoryToGroup, DAYS_OF_WEEK, QUEUE_NAMES, type SchedulingSolveDispatchJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -232,6 +233,200 @@ export class ScheduleGenerationRequestService {
     }
   }
 
+  /**
+   * A subject required for a classLevelCategory, flattened the same way
+   * apps/worker's SchedulingSolveDispatchProcessor.resolveRequiredSubjects
+   * does (isGroup subjects expand to their childSubjects, each inheriting
+   * the parent ClassSubject row's periodsPerWeek/concurrencyGroupId) —
+   * deliberately re-derived here rather than shared with the worker: this
+   * needs to run synchronously in the API, before any BullMQ involvement,
+   * matching the worker's own "never trust upstream, re-derive" precedent
+   * in reverse.
+   */
+  private async resolveFlattenedRequiredSubjects(
+    category: ClassLevelCategory,
+  ): Promise<{ id: string; periodsPerWeek: number; requiresCalculation: boolean; concurrencyGroupId: string | null }[]> {
+    const classSubjects = await this.prisma.classSubject.findMany({
+      where: { classLevelCategory: category },
+      include: { subject: { include: { childSubjects: true } }, childPeriodOverrides: true },
+    });
+
+    return classSubjects.flatMap((cs) =>
+      cs.subject.isGroup
+        ? cs.subject.childSubjects.map((child) => ({
+            id: child.id,
+            // Same per-child override precedence as apps/worker's own
+            // resolveRequiredSubjects (ClassSubjectChildPeriods) — re-derived
+            // here rather than shared, same reasoning as the rest of this method.
+            periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
+            requiresCalculation: child.requiresCalculation,
+            concurrencyGroupId: cs.concurrencyGroupId,
+          }))
+        : [
+            {
+              id: cs.subject.id,
+              periodsPerWeek: cs.periodsPerWeek,
+              requiresCalculation: cs.subject.requiresCalculation,
+              concurrencyGroupId: cs.concurrencyGroupId,
+            },
+          ],
+    );
+  }
+
+  /** Same "unscoped for Super-Admin/Registrar, Principal→JSS/SSS, Headteacher→Creche/Nursery/Primary" mapping assertCanTrigger already checked, read directly off the JWT-derived RequestUser rather than a fresh DB round-trip (the worker's own resolveAllowedCategories re-derives it from the DB since it only has a userId — the API already has the roles/assignmentTypes in hand here). */
+  private resolveAllowedCategoriesFromUser(user: RequestUser): ClassLevelCategory[] {
+    if (user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("REGISTRAR")) {
+      return [...CLASS_LEVEL_CATEGORIES];
+    }
+    if (user.assignmentTypes.includes("PRINCIPAL")) return ["JSS", "SSS"];
+    if (user.assignmentTypes.includes("HEADTEACHER")) return ["CRECHE", "NURSERY", "PRIMARY"];
+    return [];
+  }
+
+  private async resolveClassArmIdsForFeasibilityCheck(
+    user: RequestUser,
+    academicSessionId: string,
+    targetGroup?: ClassLevelCategoryGroup | null,
+  ): Promise<string[]> {
+    const allowedCategories = this.resolveAllowedCategoriesFromUser(user);
+    const categories = targetGroup ? allowedCategories.filter((c) => categoryToGroup(c) === targetGroup) : allowedCategories;
+    const arms = await this.prisma.classArm.findMany({
+      where: { academicSessionId, classLevel: { category: { in: categories } } },
+      select: { id: true },
+    });
+    return arms.map((a) => a.id);
+  }
+
+  /**
+   * Necessary-condition check only (mirrors the Python solver's own
+   * per-subject fast-fail at class_timetable.py's `_solve_group`, just at
+   * the aggregate weekly-capacity level) — it can't catch every possible
+   * CP-SAT infeasibility (e.g. a teacher-availability deadlock), but it
+   * catches an over-committed curriculum instantly, before a request is
+   * even queued, instead of after a ~20s CP-SAT run comes back empty.
+   */
+  private async assertClassTimetableFeasible(dto: CreateScheduleGenerationRequestDto, user: RequestUser) {
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: dto.termId! } });
+
+    const classArmIds = dto.classArmId
+      ? [dto.classArmId]
+      : await this.resolveClassArmIdsForFeasibilityCheck(user, term.academicSessionId, dto.classLevelCategoryGroup);
+
+    const classArms = await this.prisma.classArm.findMany({
+      where: { id: { in: classArmIds } },
+      include: { classLevel: true },
+    });
+
+    const capacityByGroup = new Map<ClassLevelCategoryGroup, number | null>();
+    const requiredByCategory = new Map<ClassLevelCategory, number>();
+    const overshoots: string[] = [];
+
+    for (const arm of classArms) {
+      const group = categoryToGroup(arm.classLevel.category);
+      if (!capacityByGroup.has(group)) {
+        const periodsPerDay = await this.prisma.schedulingConstraint.findFirst({
+          where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, isActive: true, key: "PERIODS_PER_DAY" },
+        });
+        capacityByGroup.set(group, periodsPerDay ? Number(periodsPerDay.value) * DAYS_OF_WEEK.length : null);
+      }
+      const capacity = capacityByGroup.get(group) ?? null;
+      if (capacity === null) continue; // period structure not configured yet — nothing to check against
+
+      if (!requiredByCategory.has(arm.classLevel.category)) {
+        const subjects = await this.resolveFlattenedRequiredSubjects(arm.classLevel.category);
+        const seenGroups = new Set<string>();
+        let total = 0;
+        for (const s of subjects) {
+          const key = s.concurrencyGroupId ?? s.id;
+          if (seenGroups.has(key)) continue;
+          seenGroups.add(key);
+          total += s.periodsPerWeek;
+        }
+        requiredByCategory.set(arm.classLevel.category, total);
+      }
+      const required = requiredByCategory.get(arm.classLevel.category)!;
+
+      if (required > capacity) {
+        overshoots.push(`${arm.name} (${arm.classLevel.category}) needs ${required} periods/week but only ${capacity} are available`);
+      }
+    }
+
+    if (overshoots.length > 0) {
+      throw new BadRequestException(`Class timetable generation would be infeasible — ${overshoots.join("; ")}`);
+    }
+  }
+
+  /** Every weekday (Mon-Fri) between start and end inclusive — same UTC-anchored arithmetic as the worker's own resolveWeekdayDates, duplicated here for the same "runs synchronously in the API" reason as resolveFlattenedRequiredSubjects above. */
+  private resolveWeekdayCount(start: Date, end: Date): number {
+    const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+    const endUtc = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+    let count = 0;
+    while (cursor.getTime() <= endUtc) {
+      const day = cursor.getUTCDay();
+      if (day !== 0 && day !== 6) count++;
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return count;
+  }
+
+  private async assertExamTimetableFeasible(dto: CreateScheduleGenerationRequestDto) {
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: dto.assessmentComponentId! },
+    });
+
+    // assertValidExamTimetableRequest (called earlier in create()) already
+    // guarantees these parse and fall within the component's term.
+    const parameters = (dto.parameters ?? {}) as { examStartDate: string; examEndDate: string; maxSubjectsPerDay?: number };
+    const dayCount = this.resolveWeekdayCount(new Date(parameters.examStartDate), new Date(parameters.examEndDate));
+
+    const group = categoryToGroup(component.classLevelCategory);
+    const prefix = component.type === AssessmentComponentType.MID_TERM ? "MID_TERM" : "EXAM";
+    const groupConstraints = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.EXAM_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
+    });
+    const maxSubjectsPerDay =
+      parameters.maxSubjectsPerDay ?? Number(groupConstraints.find((c) => c.key === `${prefix}_MAX_SUBJECTS_PER_DAY`)?.value);
+    if (!maxSubjectsPerDay) return; // not configured yet — nothing to check against
+
+    const globalConstraints = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.EXAM_TIMETABLE, classLevelCategoryGroup: null, isActive: true },
+    });
+    const spreadCalculationSubjects =
+      (globalConstraints.find((c) => c.key === "SPREAD_CALCULATION_SUBJECTS")?.value as boolean | undefined) ?? true;
+    const minGap = Number(globalConstraints.find((c) => c.key === "MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS")?.value ?? 0);
+
+    const subjects = await this.resolveFlattenedRequiredSubjects(component.classLevelCategory);
+    const seenGroups = new Set<string>();
+    let distinctCount = 0;
+    let calcCount = 0;
+    for (const s of subjects) {
+      const key = s.concurrencyGroupId ?? s.id;
+      if (seenGroups.has(key)) continue;
+      seenGroups.add(key);
+      distinctCount++;
+      if (s.requiresCalculation) calcCount++;
+    }
+
+    const reasons: string[] = [];
+    const dayCapacity = dayCount * maxSubjectsPerDay;
+    if (distinctCount > dayCapacity) {
+      reasons.push(`${distinctCount} subjects need scheduling but only ${dayCapacity} exam-day slots exist (${dayCount} days × ${maxSubjectsPerDay}/day)`);
+    }
+    if (spreadCalculationSubjects && calcCount > dayCount) {
+      reasons.push(`${calcCount} calculation subjects must be spread one per day, but only ${dayCount} exam days exist`);
+    }
+    if (minGap > 0 && calcCount > 1) {
+      const minDaysNeeded = 1 + (calcCount - 1) * minGap;
+      if (minDaysNeeded > dayCount) {
+        reasons.push(`${calcCount} calculation subjects need at least ${minDaysNeeded} exam days (${minGap}-day gap apart) but only ${dayCount} exist`);
+      }
+    }
+
+    if (reasons.length > 0) {
+      throw new BadRequestException(`Exam timetable generation would be infeasible — ${reasons.join("; ")}`);
+    }
+  }
+
   async create(dto: CreateScheduleGenerationRequestDto, user: RequestUser) {
     // BUILD_PLAN.md §9 Step 2: TimetableSlot is already term-scoped (matching
     // manual CRUD), so a CLASS_TIMETABLE run generates exactly one term's
@@ -253,6 +448,17 @@ export class ScheduleGenerationRequestService {
     }
 
     await this.assertCanTrigger(user, dto);
+
+    // Fail fast with a specific reason before this ever reaches the queue —
+    // same "state the reason it can't be generated before doing so" bar as
+    // every guard above, just checking curriculum-vs-capacity math instead
+    // of request shape.
+    if (dto.scope === "CLASS_TIMETABLE") {
+      await this.assertClassTimetableFeasible(dto, user);
+    }
+    if (dto.scope === "EXAM_TIMETABLE") {
+      await this.assertExamTimetableFeasible(dto);
+    }
 
     const request = await this.prisma.scheduleGenerationRequest.create({
       data: {

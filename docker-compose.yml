@@ -65,6 +65,8 @@ services:
     build:
       context: .
       dockerfile: infra/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3001
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:3001
     ports:

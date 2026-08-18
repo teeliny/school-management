@@ -554,6 +554,30 @@ async function main() {
       return [req(subjectIdByCode[code], `subject id for ${code}`)];
     }
 
+    // BUILD_PLAN.md §9 Step 2 follow-up: real weekly period loads (not the
+    // uniform default-3 every ClassSubject row starts at) — Math/English run
+    // heavier than most, a handful of lighter subjects run at 2 or 1. Tuned
+    // so JSS's total (with the group-child overrides below) lands exactly at
+    // JSS_SSS's 40 periods/week capacity (PERIODS_PER_DAY=8 × 5 days).
+    const jssPeriodsPerWeek: Record<string, number> = {
+      ENG: 4,
+      MTH: 4,
+      BST: 3,
+      NVE: 3,
+      PVS: 3,
+      BUS: 3,
+      CRS: 2,
+      FRE: 2,
+      YOR: 2,
+      CCA: 3,
+    };
+
+    // classLevelCategory:code -> ClassSubject id, populated as each row is
+    // upserted below — the child-period-override step further down needs
+    // this to target the exact (category-scoped) row a group's children
+    // belong to, since e.g. ENG has one row for JSS and a separate one for SSS.
+    const classSubjectIdByKey: Record<string, string> = {};
+
     // Class-subject applicability.
     const jssClassSubjects: { code: string; type: SubjectType }[] = [
       { code: "ENG", type: SubjectType.COMPULSORY },
@@ -568,11 +592,13 @@ async function main() {
       { code: "CCA", type: SubjectType.GENERAL },
     ];
     for (const cs of jssClassSubjects) {
-      await upsertClassSubject(prisma, {
+      const row = await upsertClassSubject(prisma, {
         classLevelCategory: ClassLevelCategory.JSS,
         subjectId: req(subjectIdByCode[cs.code], `subject id for ${cs.code}`),
         type: cs.type,
+        periodsPerWeek: jssPeriodsPerWeek[cs.code],
       });
+      classSubjectIdByKey[`JSS:${cs.code}`] = row.id;
     }
 
     // SSS does not offer Business Studies, Information Technology, or
@@ -637,8 +663,57 @@ async function main() {
         department: DepartmentName.ART,
       },
     ];
+
+    // Same "not uniform 3" reasoning as jssPeriodsPerWeek above. Every
+    // ClassSubjectConcurrencyGroup member below is deliberately given the
+    // same periodsPerWeek (ClassSubjectService enforces this) so the block
+    // shares one slot/day cleanly.
+    const sssPeriodsPerWeek: Record<string, number> = {
+      ENG: 4,
+      MTH: 4,
+      FMT: 3,
+      AGR: 3,
+      DPS: 2,
+      MKT: 2,
+      GEO: 3,
+      CIVS: 2,
+      FNU: 3,
+      BIO: 3,
+      ECO: 3,
+      GOV: 3,
+      PHY: 3,
+      CHM: 3,
+      ACC: 3,
+      COM: 3,
+      LIT: 3,
+      CRS: 3,
+      YOR: 3,
+    };
+
+    // "Options column" elective blocks (schema.prisma's
+    // ClassSubjectConcurrencyGroup, BUILD_PLAN.md §9 Step 2 follow-up) — one
+    // subject per department taken at the exact same weekly slot / exam day,
+    // since no SSS student is ever enrolled in more than one member of a
+    // given block (see SSS_DEPARTMENT_ELECTIVE_BASE below). Without this,
+    // SSS's 19 ClassSubject rows sum to 56 periods/week against JSS_SSS's
+    // 40-period capacity — infeasible for the class-timetable solver
+    // regardless of staffing; collapsing these four blocks to one slot each
+    // brings it down to 38.
+    const sssConcurrencyGroupDefs: { name: string; codes: string[] }[] = [
+      { name: "Physics / Accounting / Literature", codes: ["PHY", "ACC", "LIT"] },
+      { name: "chem/crs/commerce", codes: ["CHM", "CRS", "COM"] },
+      { name: "Geo / Govt", codes: ["GEO", "GOV"] },
+      { name: "Agric/F&N", codes: ["AGR", "FNU"] },
+      { name: "Marketing / Data Processing", codes: ["MKT", "DPS"] },
+    ];
+    const concurrencyGroupIdByCode: Record<string, string> = {};
+    for (const def of sssConcurrencyGroupDefs) {
+      const group = await ensureConcurrencyGroup(prisma, def.name, ClassLevelCategory.SSS);
+      for (const code of def.codes) concurrencyGroupIdByCode[code] = group.id;
+    }
+
     for (const cs of sssClassSubjects) {
-      await upsertClassSubject(prisma, {
+      const row = await upsertClassSubject(prisma, {
         classLevelCategory: ClassLevelCategory.SSS,
         subjectId: req(subjectIdByCode[cs.code], `subject id for ${cs.code}`),
         type: cs.type,
@@ -648,9 +723,53 @@ async function main() {
               `department id for ${cs.department}`,
             )
           : undefined,
+        periodsPerWeek: sssPeriodsPerWeek[cs.code],
+        concurrencyGroupId: concurrencyGroupIdByCode[cs.code],
       });
+      classSubjectIdByKey[`SSS:${cs.code}`] = row.id;
     }
     logger.log("Class-subject applicability ready.");
+
+    // Per-child periods/week overrides (schema.prisma's
+    // ClassSubjectChildPeriods) — a group subject's children often need
+    // different weekly loads rather than uniformly inheriting the parent
+    // row's value (e.g. BST's Basic Science/Basic Technology stay at the
+    // group default of 3 while Information Technology and Physical and
+    // Health Education run lighter at 2). category:groupCode keys into
+    // classSubjectIdByKey since e.g. ENG has independent JSS and SSS rows.
+    const childPeriodOverrides: {
+      category: ClassLevelCategory;
+      groupCode: string;
+      childCode: string;
+      periodsPerWeek: number;
+    }[] = [
+      { category: ClassLevelCategory.JSS, groupCode: "BST", childCode: "IT", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "BST", childCode: "PHE", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "CCA", childCode: "CRA", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "CCA", childCode: "MUS", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "NVE", childCode: "CIV", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "NVE", childCode: "SEC", periodsPerWeek: 1 },
+      { category: ClassLevelCategory.JSS, groupCode: "NVE", childCode: "SOS", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "PVS", childCode: "AGR", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "PVS", childCode: "HEC", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "ENG", childCode: "ENG-01", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.JSS, groupCode: "ENG", childCode: "ENG-02", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.SSS, groupCode: "ENG", childCode: "ENG-01", periodsPerWeek: 2 },
+      { category: ClassLevelCategory.SSS, groupCode: "ENG", childCode: "ENG-02", periodsPerWeek: 2 },
+    ];
+    for (const o of childPeriodOverrides) {
+      const classSubjectId = req(
+        classSubjectIdByKey[`${o.category}:${o.groupCode}`],
+        `classSubject id for ${o.category} ${o.groupCode}`,
+      );
+      const childSubjectId = req(subjectIdByCode[o.childCode], `subject id for ${o.childCode}`);
+      await prisma.classSubjectChildPeriods.upsert({
+        where: { classSubjectId_childSubjectId: { classSubjectId, childSubjectId } },
+        create: { classSubjectId, childSubjectId, periodsPerWeek: o.periodsPerWeek },
+        update: { periodsPerWeek: o.periodsPerWeek },
+      });
+    }
+    logger.log("Elective blocks and per-child periods/week ready.");
 
     // JSS has no departments — every student opts into all three GENERAL
     // electives (French, Yoruba, Cultural and Creative Arts) on top of their
@@ -1527,6 +1646,8 @@ async function upsertClassSubject(
     subjectId: string;
     type: SubjectType;
     departmentId?: string;
+    periodsPerWeek?: number;
+    concurrencyGroupId?: string;
   },
 ) {
   return prisma.classSubject.upsert({
@@ -1536,9 +1657,31 @@ async function upsertClassSubject(
         subjectId: data.subjectId,
       },
     },
-    update: {},
+    // Applies periodsPerWeek/concurrencyGroupId on a re-run too (unlike the
+    // old no-op update) — every other field here is structural (type/
+    // department rarely change once seeded) but these two are exactly the
+    // kind of tuning this script exists to keep in sync with.
+    update: {
+      type: data.type,
+      departmentId: data.departmentId,
+      periodsPerWeek: data.periodsPerWeek,
+      concurrencyGroupId: data.concurrencyGroupId,
+    },
     create: data,
   });
+}
+
+/**
+ * Find-then-create (no unique constraint on name+classLevelCategory to
+ * upsert against, same as this file's other lookup-catalogue helpers, e.g.
+ * simpleSubjectDefs' find-then-create loop above) for a
+ * ClassSubjectConcurrencyGroup — an "options column" of subjects scheduled
+ * at the same slot/day instead of each reserving separate weekly capacity.
+ */
+async function ensureConcurrencyGroup(prisma: PrismaService, name: string, classLevelCategory: ClassLevelCategory) {
+  const existing = await prisma.classSubjectConcurrencyGroup.findFirst({ where: { name, classLevelCategory } });
+  if (existing) return existing;
+  return prisma.classSubjectConcurrencyGroup.create({ data: { name, classLevelCategory } });
 }
 
 /**

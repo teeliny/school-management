@@ -21,6 +21,12 @@ class SubjectPayload(BaseModel):
     staffId: str
     periodsPerWeek: int
     requiresCalculation: bool
+    # "Options column" membership (ClassSubjectConcurrencyGroup) — subjects
+    # sharing this id are mutually exclusive per student (e.g. SSS's
+    # Physics/Financial Accounting/Literature in English), so they're
+    # scheduled at the exact same (day, period) instead of each reserving
+    # separate weekly capacity. None means "not part of a bundle."
+    concurrencyGroupId: str | None = None
 
 
 class ClassArmPayload(BaseModel):
@@ -72,36 +78,69 @@ def _solve_group(
     periods = range(1, group.periodsPerDay + 1)
 
     staff_by_arm_subject: dict[tuple[str, str], str] = {}
+    subject_by_arm_id: dict[tuple[str, str], SubjectPayload] = {}
     variables: dict[tuple[str, str, str, int], Any] = {}
+
+    def is_open(arm_blocked: dict[str, set[int]], subject: SubjectPayload, day: str, period: int) -> bool:
+        staff_blocked_raw = group.staffBlockedPeriods.get(subject.staffId, {})
+        blocked_here = arm_blocked.get(day, set()) | set(staff_blocked_raw.get(day, []))
+        if period in blocked_here:
+            return False
+        return not (calculation_subjects_morning and subject.requiresCalculation and period > group.breakAfterPeriod)
 
     for arm in group.classArms:
         arm_blocked = {day: set(periods_) for day, periods_ in arm.blockedPeriods.items()}
         for subject in arm.subjects:
             staff_by_arm_subject[(arm.classArmId, subject.subjectId)] = subject.staffId
-            staff_blocked_raw = group.staffBlockedPeriods.get(subject.staffId, {})
-            staff_blocked = {day: set(periods_) for day, periods_ in staff_blocked_raw.items()}
+            subject_by_arm_id[(arm.classArmId, subject.subjectId)] = subject
 
+        # Group this arm's subjects by "options column" membership — an
+        # ungrouped subject is its own singleton group (keyed by its own id),
+        # so the same code path below covers both cases.
+        groups: dict[str, list[SubjectPayload]] = {}
+        for subject in arm.subjects:
+            groups.setdefault(subject.concurrencyGroupId or subject.subjectId, []).append(subject)
+
+        for group_key, members in groups.items():
             for day in group.days:
-                blocked_here = arm_blocked.get(day, set()) | staff_blocked.get(day, set())
                 for period in periods:
-                    if period in blocked_here:
+                    # A bundle only gets a slot when it's open for EVERY
+                    # member (arm-blocked ∪ that member's own staff-blocked ∪
+                    # the calc-morning restriction, whichever member(s)
+                    # require it) — otherwise one member would end up with no
+                    # variable at that slot while its bundle-mates did.
+                    if not all(is_open(arm_blocked, member, day, period) for member in members):
                         continue
-                    if (
-                        calculation_subjects_morning
-                        and subject.requiresCalculation
-                        and period > group.breakAfterPeriod
-                    ):
-                        continue
-                    key = (arm.classArmId, subject.subjectId, day, period)
-                    variables[key] = model.new_bool_var(f"x_{arm.classArmId}_{subject.subjectId}_{day}_{period}")
+                    # Every member points at the SAME BoolVar object rather
+                    # than each getting its own — this is what forces bundle-
+                    # mates onto the identical slot with zero extra
+                    # constraints: every per-subject constraint below
+                    # (periodsPerWeek sum, ≤1/day, teacher conflict) already
+                    # reads variables[(arm, subject, day, period)] on its own,
+                    # so sharing the object keeps them all in lockstep.
+                    shared_var = model.new_bool_var(f"x_{arm.classArmId}_{group_key}_{day}_{period}")
+                    for member in members:
+                        variables[(arm.classArmId, member.subjectId, day, period)] = shared_var
 
-    # At most one subject per class arm per period.
+    # At most one subject (or, for a bundle, one shared slot) per class arm
+    # per period — deduped by concurrencyGroupId so an N-member bundle counts
+    # once rather than N times. Without the dedupe, summing the identical
+    # shared variable N times would force it to always be 0 (N·v ≤ 1 with
+    # boolean v means v can't be 1 once N > 1), making every bundle unusable.
     for arm in group.classArms:
         for day in group.days:
             for period in periods:
-                vars_here = [
-                    v for (arm_id, _subject_id, d, p), v in variables.items() if arm_id == arm.classArmId and d == day and p == period
-                ]
+                seen_groups: set[str] = set()
+                vars_here = []
+                for (arm_id, subject_id, d, p), v in variables.items():
+                    if arm_id != arm.classArmId or d != day or p != period:
+                        continue
+                    subject = subject_by_arm_id[(arm_id, subject_id)]
+                    group_key = subject.concurrencyGroupId or subject_id
+                    if group_key in seen_groups:
+                        continue
+                    seen_groups.add(group_key)
+                    vars_here.append(v)
                 if vars_here:
                     model.add(sum(vars_here) <= 1)
 

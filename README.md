@@ -74,6 +74,19 @@ pnpm setup:school \
 
 This seeds the `SchoolProfile` and emails (or, if `RESEND_API_KEY` isn't set, logs) an invite link. Accepting it at `/accept-invite?token=...` sets the Proprietor's password and activates their account. Safe to re-run — it checks what already exists before creating anything.
 
+## Deploying
+
+Production topology: **Supabase** for Postgres + object storage, **Render** for the four apps (`api`, `worker`, `web`, `scheduling-engine`) plus Redis, per [render.yaml](./render.yaml).
+
+1. **Supabase project**: create one, then:
+   - Copy the **direct** connection string (Project Settings → Database → Connection string → "URI", port 5432 — not the port-6543 transaction pooler; see the comment on `DATABASE_URL` in `.env.example` for why).
+   - Create a Storage bucket, then grab S3-compatible credentials (Project Settings → Storage → S3 Connection) — see the `STORAGE_*` comments in `.env.example`.
+   - Run migrations against it once: `DATABASE_URL="<supabase-direct-url>" pnpm prisma:migrate:deploy`.
+2. **Render**: New → Blueprint, point at this repo, it reads `render.yaml` and provisions `school-api`/`school-worker`/`school-web`/`school-scheduling-engine` (Docker) + `school-redis` (Key Value). Fill in the secrets marked `sync: false` in the Render dashboard (`DATABASE_URL`, `STORAGE_*`, `JWT_ACCESS_SECRET`, `ENCRYPTION_MASTER_KEY`, `RESEND_*`, `MONNIFY_*`, `SENTRY_DSN`) — none of these are stored in the blueprint or in git.
+3. Run `pnpm setup:school` once against the deployed `api` (see below) to create the Super-Admin.
+
+If you rename any Render service away from the `school-*` defaults in `render.yaml`, update the hardcoded `https://school-*.onrender.com` cross-service URLs in the same file to match (Render blueprints don't support inter-service URL interpolation for non-database resources — see the comment at the top of `render.yaml`).
+
 ## Common Commands
 
 | Command | Does |

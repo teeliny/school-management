@@ -30,6 +30,11 @@ interface RequiredSubject {
   id: string;
   requiresCalculation: boolean;
   periodsPerWeek: number;
+  // "Options column" membership (ClassSubjectConcurrencyGroup) — subjects
+  // sharing this id are mutually exclusive per student, so the class-
+  // timetable/exam-timetable solvers schedule them in parallel (same period
+  // slot / same exam day) instead of each reserving its own weekly capacity.
+  concurrencyGroupId: string | null;
 }
 
 interface ResolvedSubject {
@@ -37,6 +42,7 @@ interface ResolvedSubject {
   staffId: string;
   periodsPerWeek: number;
   requiresCalculation: boolean;
+  concurrencyGroupId: string | null;
 }
 
 interface ClassArmPayload {
@@ -55,6 +61,7 @@ interface GroupPayload extends PeriodStructure {
 interface ExamSubjectPayload {
   subjectId: string;
   requiresCalculation: boolean;
+  concurrencyGroupId: string | null;
 }
 
 interface ExamClassArmPayload {
@@ -294,6 +301,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const subjectPayloads: ExamSubjectPayload[] = requiredSubjects.map((s) => ({
       subjectId: s.id,
       requiresCalculation: s.requiresCalculation,
+      concurrencyGroupId: s.concurrencyGroupId,
     }));
 
     const parameters = (request.parameters ?? {}) as {
@@ -793,7 +801,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   private async resolveRequiredSubjects(category: ClassLevelCategory): Promise<RequiredSubject[]> {
     const classSubjects = await this.prisma.classSubject.findMany({
       where: { classLevelCategory: category },
-      include: { subject: { include: { childSubjects: true } } },
+      include: { subject: { include: { childSubjects: true } }, childPeriodOverrides: true },
     });
 
     return classSubjects.flatMap((cs) =>
@@ -801,9 +809,22 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         ? cs.subject.childSubjects.map((child) => ({
             id: child.id,
             requiresCalculation: child.requiresCalculation,
-            periodsPerWeek: cs.periodsPerWeek,
+            // A child inherits the parent ClassSubject row's periodsPerWeek
+            // unless it has its own ClassSubjectChildPeriods override (e.g.
+            // Basic Science and Technology's Physical and Health Education
+            // running 2/week while its siblings run 3) — see that model's
+            // schema.prisma comment for the sparse-override reasoning.
+            periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
+            concurrencyGroupId: cs.concurrencyGroupId,
           }))
-        : [{ id: cs.subject.id, requiresCalculation: cs.subject.requiresCalculation, periodsPerWeek: cs.periodsPerWeek }],
+        : [
+            {
+              id: cs.subject.id,
+              requiresCalculation: cs.subject.requiresCalculation,
+              periodsPerWeek: cs.periodsPerWeek,
+              concurrencyGroupId: cs.concurrencyGroupId,
+            },
+          ],
     );
   }
 
@@ -834,6 +855,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         staffId: assignment.staffId,
         periodsPerWeek: subject.periodsPerWeek,
         requiresCalculation: subject.requiresCalculation,
+        concurrencyGroupId: subject.concurrencyGroupId,
       });
     }
     return resolved;

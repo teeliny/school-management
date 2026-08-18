@@ -6,6 +6,16 @@ function buildPrismaMock() {
     classSubject: {
       create: jest.fn().mockResolvedValue({ id: "cs-1" }),
       update: jest.fn().mockResolvedValue({ id: "cs-1" }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: "cs-1",
+        classLevelCategory: "JSS",
+        periodsPerWeek: 3,
+        concurrencyGroupId: null,
+        subject: { isGroup: false },
+      }),
+    },
+    subject: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ isGroup: false }),
     },
   };
 }

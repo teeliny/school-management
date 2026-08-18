@@ -26,6 +26,17 @@ export class CreateClassSubjectDto {
   @IsInt()
   @Min(1)
   periodsPerWeek?: number;
+
+  // "Options column" membership (schema.prisma's ClassSubjectConcurrencyGroup)
+  // — validated in ClassSubjectService.assertConcurrencyGroupConsistency, not
+  // here, since it depends on the group's own classLevelCategory/existing
+  // members' periodsPerWeek. Nullable (not just optional) so an update can
+  // send `null` explicitly to remove a row from its elective block —
+  // departmentId instead clears itself automatically off a type change, but
+  // there's no analogous field driving concurrencyGroupId.
+  @IsOptional()
+  @IsUUID()
+  concurrencyGroupId?: string | null;
 }
 
 export class UpdateClassSubjectDto extends PartialType(CreateClassSubjectDto) {}

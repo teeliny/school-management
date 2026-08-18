@@ -18,6 +18,12 @@ from pydantic import BaseModel, Field
 class ExamSubjectPayload(BaseModel):
     subjectId: str
     requiresCalculation: bool
+    # "Options column" membership (ClassSubjectConcurrencyGroup), same
+    # concept and id space as class_timetable.py's SubjectPayload — bundle
+    # members sit their exam on the exact same day (a student only ever sits
+    # one of them), so the day only costs 1 unit of max_subjects_per_day, not
+    # N. None means "not part of a bundle."
+    concurrencyGroupId: str | None = None
 
 
 class ExistingLoadPayload(BaseModel):
@@ -96,12 +102,37 @@ def _solve_class_arm(
                 if abs(i - existing_idx) < min_gap:
                     blocked_calc_days.add(i)
 
-    assign: dict[tuple[str, int], Any] = {}
+    subject_by_id = {s.subjectId: s for s in arm.subjects}
+
+    def group_key(subject: ExamSubjectPayload) -> str:
+        return subject.concurrencyGroupId or subject.subjectId
+
+    # Group this arm's subjects by "options column" membership — an
+    # ungrouped subject is its own singleton group, so the same code path
+    # below covers both cases (same pattern as class_timetable.py).
+    groups: dict[str, list[ExamSubjectPayload]] = {}
     for subject in arm.subjects:
+        groups.setdefault(group_key(subject), []).append(subject)
+
+    assign: dict[tuple[str, int], Any] = {}
+    for key, members in groups.items():
         for day_idx in range(day_count):
-            if subject.requiresCalculation and day_idx in blocked_calc_days:
+            # The gap-block only actually applies to a calculation-subject
+            # exam — but if ANY bundle member requires calculation, the whole
+            # bundle lands on this day if chosen, so the restriction covers
+            # the group as soon as one member needs it.
+            if any(m.requiresCalculation for m in members) and day_idx in blocked_calc_days:
                 continue
-            assign[(subject.subjectId, day_idx)] = model.new_bool_var(f"assign_{subject.subjectId}_{day_idx}")
+            # Every member points at the SAME BoolVar object — this alone
+            # forces bundle-mates onto the identical exam day, the same
+            # "reuse the variable" trick class_timetable.py uses for shared
+            # period slots. The existing per-subject "exactly one day" and
+            # per-day capacity constraints below already read
+            # assign[(subjectId, day_idx)] independently per subject, so
+            # sharing the object keeps every member in lockstep for free.
+            shared_var = model.new_bool_var(f"assign_{key}_{day_idx}")
+            for member in members:
+                assign[(member.subjectId, day_idx)] = shared_var
 
     # Exactly one day per subject — the whole exam period, not per-week
     # (unlike class_timetable.py's periodsPerWeek repetition).
@@ -114,21 +145,39 @@ def _solve_class_arm(
         model.add(sum(subject_vars) == 1)
 
     # Daily capacity: existing load + new assignments <= max_subjects_per_day.
+    # Deduped by group_key so an N-member bundle (all sharing the identical
+    # variable at this day_idx, set up above) costs 1 unit of capacity, not
+    # N — a student only ever sits one of them.
     for day_idx, day in enumerate(days):
         existing = arm.existingByDate.get(day)
         existing_count = existing.count if existing else 0
-        day_vars = [v for (_sid, d), v in assign.items() if d == day_idx]
+        seen_groups: set[str] = set()
+        day_vars = []
+        for (sid, d), v in assign.items():
+            if d != day_idx or group_key(subject_by_id[sid]) in seen_groups:
+                continue
+            seen_groups.add(group_key(subject_by_id[sid]))
+            day_vars.append(v)
         if day_vars:
             model.add(sum(day_vars) + existing_count <= max_subjects_per_day)
 
     # SPREAD_CALCULATION_SUBJECTS: at most one calculation-subject exam per
-    # day, counting existing load too.
+    # day, counting existing load too — same per-group dedupe as above.
     if spread_calc:
         calc_subject_ids = {s.subjectId for s in arm.subjects if s.requiresCalculation}
         for day_idx, day in enumerate(days):
             existing = arm.existingByDate.get(day)
             existing_has_calc = 1 if existing and existing.hasCalc else 0
-            day_calc_vars = [v for (sid, d), v in assign.items() if d == day_idx and sid in calc_subject_ids]
+            seen_calc_groups: set[str] = set()
+            day_calc_vars = []
+            for (sid, d), v in assign.items():
+                if d != day_idx or sid not in calc_subject_ids:
+                    continue
+                key = group_key(subject_by_id[sid])
+                if key in seen_calc_groups:
+                    continue
+                seen_calc_groups.add(key)
+                day_calc_vars.append(v)
             if day_calc_vars:
                 model.add(sum(day_calc_vars) + existing_has_calc <= 1)
 
@@ -137,8 +186,19 @@ def _solve_class_arm(
     # IntVar needed), gap enforced via the standard CP-SAT disjunctive-order
     # idiom (a boolean "i-before-j" variable gating two one-directional
     # inequalities), same technique class as class_timetable.py's teacher
-    # no-double-booking handling.
-    calc_subject_ids_list = [s.subjectId for s in arm.subjects if s.requiresCalculation]
+    # no-double-booking handling. Deduped to one representative subject per
+    # bundle — two calc subjects in the same bundle land on the identical day
+    # by design, so they must never be gap-checked against each other.
+    seen_calc_group_keys: set[str] = set()
+    calc_subject_ids_list: list[str] = []
+    for s in arm.subjects:
+        if not s.requiresCalculation:
+            continue
+        key = group_key(s)
+        if key in seen_calc_group_keys:
+            continue
+        seen_calc_group_keys.add(key)
+        calc_subject_ids_list.append(s.subjectId)
     if min_gap > 0 and len(calc_subject_ids_list) > 1:
         day_of: dict[str, Any] = {}
         for sid in calc_subject_ids_list:
@@ -162,7 +222,6 @@ def _solve_class_arm(
         return None
 
     subjects_by_day: dict[int, list[ExamSubjectPayload]] = {i: [] for i in range(day_count)}
-    subject_by_id = {s.subjectId: s for s in arm.subjects}
     for (sid, day_idx), var in assign.items():
         if solver.value(var):
             subjects_by_day[day_idx].append(subject_by_id[sid])

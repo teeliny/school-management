@@ -3,6 +3,10 @@ import { BullModule } from "@nestjs/bullmq";
 import { QUEUE_NAMES } from "@school/types";
 import { SubjectController, SubjectService } from "./subject";
 import { ClassSubjectController, ClassSubjectService } from "./class-subject";
+import {
+  ClassSubjectConcurrencyGroupController,
+  ClassSubjectConcurrencyGroupService,
+} from "./class-subject-concurrency-group";
 import { ClassSubjectTermStatusController, ClassSubjectTermStatusService } from "./class-subject-term-status";
 import { SubjectGroupWeightController, SubjectGroupWeightService } from "./subject-group-weight";
 import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } from "./student-subject-enrollment";
@@ -19,6 +23,7 @@ import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } f
   controllers: [
     SubjectController,
     ClassSubjectController,
+    ClassSubjectConcurrencyGroupController,
     ClassSubjectTermStatusController,
     SubjectGroupWeightController,
     StudentSubjectEnrollmentController,
@@ -26,6 +31,7 @@ import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } f
   providers: [
     SubjectService,
     ClassSubjectService,
+    ClassSubjectConcurrencyGroupService,
     ClassSubjectTermStatusService,
     SubjectGroupWeightService,
     StudentSubjectEnrollmentService,
