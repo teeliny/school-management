@@ -878,10 +878,17 @@ async function main() {
     logger.log("Bursar, Registrar, Principal ready.");
 
     // -------------------------------------------------------------------
-    // 16 teachers, max 2 subjects each — covers all 32 of the catalogue's
-    // assignable (non-group-parent) subjects.
+    // 21 teachers — covers all 32 of the catalogue's assignable
+    // (non-group-parent) subjects. A teacher's SUBJECT_TEACHER assignment
+    // always spans every arm within ONE class-level category (all 3 JSS
+    // arms, or all 3 SSS arms) — never a single arm, and never both
+    // categories at once. A subject offered at both JSS and SSS (English,
+    // Mathematics, CRS, Agricultural Science, Yoruba) therefore gets two
+    // separate teachers below, one per category, matching how a real school
+    // staffs a "shared" subject name with distinct junior/senior posts
+    // rather than one teacher commuting between both wings.
     // -------------------------------------------------------------------
-    const SCOPE: Record<string, "JSS_ONLY" | "SSS_ONLY" | "BOTH"> = {
+    const SCOPE: Record<string, "JSS_ONLY" | "SSS_ONLY"> = {
       // JSS only — includes BST/PVS/CCA/NVE's children (the group parents
       // themselves are never directly assignable) plus BUS, which SSS
       // doesn't offer at all. NVE's own "CIV" child is JSS-only — SSS's
@@ -913,98 +920,102 @@ async function main() {
       ECO: "SSS_ONLY",
       LIT: "SSS_ONLY",
       GOV: "SSS_ONLY",
-      // Both — carries over from JSS to SSS (AGR as an optional elective,
-      // not department-restricted; YOR as SSS's ART-department elective;
-      // see the sssClassSubjects comment above). ENG's own two children
-      // stand in for the ENG group parent, which (like BST/PVS/CCA/NVE) is
-      // never directly assignable.
-      "ENG-01": "BOTH",
-      "ENG-02": "BOTH",
-      MTH: "BOTH",
-      CRS: "BOTH",
-      AGR: "BOTH",
-      YOR: "BOTH",
+      // ENG-01/ENG-02/MTH/CRS/AGR/YOR are deliberately absent — each is
+      // offered at both JSS and SSS (AGR via JSS's PVS group and directly
+      // for SSS; YOR as SSS's ART-department elective; see the
+      // sssClassSubjects comment above; ENG's two children stand in for the
+      // ENG group parent, never directly assignable like BST/PVS/CCA/NVE),
+      // so its category is tagged explicitly per teacherDefs entry below via
+      // `subjectFor` instead of resolved from this map.
     };
-    const armCounters = { JSS_ONLY: 0, SSS_ONLY: 0, BOTH: 0 };
-    function armForSubject(code: string): string {
-      const scope = SCOPE[code];
-      if (scope === "JSS_ONLY")
-        return req(
-          jssArmIds[armCounters.JSS_ONLY++ % jssArmIds.length],
-          "JSS arm id",
-        );
-      if (scope === "SSS_ONLY")
-        return req(
-          sssArmIds[armCounters.SSS_ONLY++ % sssArmIds.length],
-          "SSS arm id",
-        );
-      return req(
-        jssArmIds[armCounters.BOTH++ % jssArmIds.length],
-        "JSS arm id",
-      );
+
+    /**
+     * Resolves a subject code to the category its SUBJECT_TEACHER
+     * assignment should span. Unambiguous codes (JSS-only/SSS-only) resolve
+     * straight from SCOPE; a code taught at both levels (ENG-01/ENG-02/MTH/
+     * CRS/AGR/YOR) requires an explicit category per call, since it's staffed
+     * by two separate teachers below — one per category.
+     */
+    function subjectFor(
+      code: string,
+      explicitCategory?: "JSS" | "SSS",
+    ): { code: string; category: "JSS" | "SSS" } {
+      if (explicitCategory) return { code, category: explicitCategory };
+      const scope = req(SCOPE[code], `SCOPE entry for ${code}`);
+      return { code, category: scope === "JSS_ONLY" ? "JSS" : "SSS" };
     }
 
     // `classTeacherOf` (a key into `arms`, e.g. "JSS 1") is only set for the
     // six teachers doubling as their class's CLASS_TEACHER — chosen from
-    // among whoever already has a SUBJECT_TEACHER presence in that exact
-    // arm (traceable via armForSubject's round-robin above), so the pairing
-    // reads as a real teacher's real class, not an arbitrary assignment.
+    // among whoever already teaches a subject spanning that exact category,
+    // so the pairing reads as a real teacher's real class, not an arbitrary
+    // assignment.
     const teacherDefs: {
       firstName: string;
       lastName: string;
-      subjectCodes: string[];
+      subjects: { code: string; category: "JSS" | "SSS" }[];
       classTeacherOf?: string;
     }[] = [
       {
         firstName: "Chidinma",
         lastName: "Eze",
-        subjectCodes: ["ENG-01", "ENG-02"],
+        subjects: [subjectFor("ENG-01", "JSS"), subjectFor("ENG-02", "JSS")],
       },
-      { firstName: "Tunde", lastName: "Afolabi", subjectCodes: ["MTH", "FMT"] },
-      { firstName: "Ngozi", lastName: "Umeh", subjectCodes: ["BSC", "PHY"] },
-      { firstName: "Bola", lastName: "Adeyemi", subjectCodes: ["BTN", "CHM"] },
-      { firstName: "Fatima", lastName: "Sule", subjectCodes: ["IT", "BIO"] },
+      // Tunde already teaches Further Maths (SSS-only) — a natural senior
+      // mathematics post, so his Mathematics assignment is the SSS side too
+      // (JSS Mathematics gets its own teacher, Femi, below).
+      { firstName: "Tunde", lastName: "Afolabi", subjects: [subjectFor("MTH", "SSS"), subjectFor("FMT")] },
+      { firstName: "Ngozi", lastName: "Umeh", subjects: [subjectFor("BSC"), subjectFor("PHY")] },
+      { firstName: "Bola", lastName: "Adeyemi", subjects: [subjectFor("BTN"), subjectFor("CHM")] },
+      { firstName: "Fatima", lastName: "Sule", subjects: [subjectFor("IT"), subjectFor("BIO")] },
       {
         firstName: "Kelechi",
         lastName: "Obi",
-        subjectCodes: ["PHE", "AGR"],
+        subjects: [subjectFor("PHE"), subjectFor("AGR", "JSS")],
         classTeacherOf: "JSS 1",
       },
       {
         firstName: "Amaka",
         lastName: "Nwachukwu",
-        subjectCodes: ["SOS", "GEO"],
+        subjects: [subjectFor("SOS"), subjectFor("GEO")],
         classTeacherOf: "JSS 2",
       },
       {
         firstName: "Yusuf",
         lastName: "Abdullahi",
-        subjectCodes: ["SEC", "ECO"],
+        subjects: [subjectFor("SEC"), subjectFor("ECO")],
         classTeacherOf: "JSS 3",
       },
       {
         firstName: "Blessing",
         lastName: "Etim",
-        subjectCodes: ["HEC", "COM"],
+        subjects: [subjectFor("HEC"), subjectFor("COM")],
         classTeacherOf: "SSS 1",
       },
-      { firstName: "Ibrahim", lastName: "Musa", subjectCodes: ["BUS", "DPS"] },
+      { firstName: "Ibrahim", lastName: "Musa", subjects: [subjectFor("BUS"), subjectFor("DPS")] },
       {
         firstName: "Peter",
         lastName: "Okafor",
-        subjectCodes: ["GOV", "LIT"],
+        subjects: [subjectFor("GOV"), subjectFor("LIT")],
         classTeacherOf: "SSS 3",
       },
-      { firstName: "Halima", lastName: "Bello", subjectCodes: ["FRE", "CRS"] },
-      { firstName: "Adaeze", lastName: "Uche", subjectCodes: ["YOR", "CIV"] },
-      { firstName: "Segun", lastName: "Alabi", subjectCodes: ["MUS", "CRA"] },
+      { firstName: "Halima", lastName: "Bello", subjects: [subjectFor("FRE"), subjectFor("CRS", "JSS")] },
+      { firstName: "Adaeze", lastName: "Uche", subjects: [subjectFor("YOR", "JSS"), subjectFor("CIV")] },
+      { firstName: "Segun", lastName: "Alabi", subjects: [subjectFor("MUS"), subjectFor("CRA")] },
       {
         firstName: "Chioma",
         lastName: "Nnaji",
-        subjectCodes: ["ACC", "CIVS"],
+        subjects: [subjectFor("ACC"), subjectFor("CIVS")],
         classTeacherOf: "SSS 2",
       },
-      { firstName: "David", lastName: "Osagie", subjectCodes: ["MKT", "FNU"] },
+      { firstName: "David", lastName: "Osagie", subjects: [subjectFor("MKT"), subjectFor("FNU")] },
+      // The other side of each shared subject above: JSS Mathematics (Tunde
+      // is now SSS-only), and the SSS side of English/CRS/Agric/Yoruba.
+      { firstName: "Femi", lastName: "Ogunleye", subjects: [subjectFor("MTH", "JSS")] },
+      { firstName: "Chinwe", lastName: "Okoli", subjects: [subjectFor("ENG-01", "SSS"), subjectFor("ENG-02", "SSS")] },
+      { firstName: "Uche", lastName: "Nnamdi", subjects: [subjectFor("CRS", "SSS")] },
+      { firstName: "Bimpe", lastName: "Adewale", subjects: [subjectFor("AGR", "SSS")] },
+      { firstName: "Gbenga", lastName: "Fashola", subjects: [subjectFor("YOR", "SSS")] },
     ];
 
     // Keyed by class name (e.g. "JSS 1"), populated below as each class
@@ -1027,14 +1038,16 @@ async function main() {
       const staffProfile = await prisma.staffProfile.findUniqueOrThrow({
         where: { userId: teacherUser.id },
       });
-      for (const code of def.subjectCodes) {
-        await ensureStaffAssignment(prisma, staffAssignments, {
-          staffId: staffProfile.id,
-          assignmentType: AssignmentType.SUBJECT_TEACHER,
-          subjectId: subjectIdByCode[code],
-          classArmId: armForSubject(code),
-          academicSessionId: session.id,
-        });
+      for (const subject of def.subjects) {
+        for (const classArmId of subject.category === "JSS" ? jssArmIds : sssArmIds) {
+          await ensureStaffAssignment(prisma, staffAssignments, {
+            staffId: staffProfile.id,
+            assignmentType: AssignmentType.SUBJECT_TEACHER,
+            subjectId: subjectIdByCode[subject.code],
+            classArmId,
+            academicSessionId: session.id,
+          });
+        }
       }
       if (def.classTeacherOf) {
         await ensureStaffAssignment(prisma, staffAssignments, {

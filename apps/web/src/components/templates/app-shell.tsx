@@ -63,8 +63,18 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
     eyebrow: "People",
     items: [
       { href: "/students", label: "Students", icon: GraduationCap },
-      { href: "/staff", label: "Staff assignments", icon: Users, adminOnly: true },
-      { href: "/invitations", label: "Invitations", icon: Mail, adminOnly: true },
+      {
+        href: "/staff",
+        label: "Staff assignments",
+        icon: Users,
+        adminOnly: true,
+      },
+      {
+        href: "/invitations",
+        label: "Invitations",
+        icon: Mail,
+        adminOnly: true,
+      },
     ],
   },
   {
@@ -78,14 +88,20 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         // Principal/Headteacher get `manage AcademicStructure` too, per
         // ability.factory.ts's near-Admin-parity grant.
         visible: ({ isAdmin, user }) =>
-          isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+          isAdmin ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       {
         href: "/subjects",
         label: "Subjects",
         icon: BookOpen,
         visible: ({ isAdmin, user }) =>
-          isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+          isAdmin ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       {
         href: "/planner",
@@ -114,7 +130,9 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           user.assignmentTypes.includes("REGISTRAR") ||
           user.assignmentTypes.includes("CLASS_TEACHER") ||
           user.assignmentTypes.includes("SUBJECT_TEACHER") ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       {
         href: "/fees",
@@ -123,7 +141,9 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         // Deliberately narrower than `isAdmin` — a plain Admin has zero
         // visibility into the fees domain (matches the backend CASL grant).
         visible: ({ user }) =>
-          user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("BURSAR") || user.roles.includes("PARENT"),
+          user.roles.includes("SUPER_ADMIN") ||
+          user.assignmentTypes.includes("BURSAR") ||
+          user.roles.includes("PARENT"),
       },
     ],
   },
@@ -135,7 +155,10 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         label: "Assessment Setup",
         icon: ClipboardList,
         visible: ({ isAdmin, user }) =>
-          isAdmin || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+          isAdmin ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       {
         href: "/gradebook",
@@ -144,7 +167,9 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         visible: ({ isAdmin, user }) =>
           isAdmin ||
           user.assignmentTypes.includes("SUBJECT_TEACHER") ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       {
         href: "/skills-comments",
@@ -152,8 +177,8 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         icon: MessageSquare,
         visible: ({ isAdmin, user }) =>
           isAdmin ||
-          ["CLASS_TEACHER", "SUBJECT_TEACHER", "PRINCIPAL", "HEADTEACHER"].some((t) =>
-            user.assignmentTypes.includes(t),
+          ["CLASS_TEACHER", "SUBJECT_TEACHER", "PRINCIPAL", "HEADTEACHER"].some(
+            (t) => user.assignmentTypes.includes(t),
           ),
       },
       { href: "/report-cards", label: "Report Cards", icon: FileText },
@@ -164,7 +189,10 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         // Deliberately narrower than `isAdmin` — a plain Admin does not get
         // this one (matches the backend CASL grant in ability.factory.ts).
         visible: ({ user }) =>
-          user.roles.includes("SUPER_ADMIN") || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)),
+          user.roles.includes("SUPER_ADMIN") ||
+          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       { href: "/calendar", label: "Calendar", icon: Calendar },
     ],
@@ -181,8 +209,10 @@ export function AppShell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const isAdmin = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
-  const initials = `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
+  const isAdmin =
+    user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
+  const initials =
+    `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
 
   return (
     <div className="min-h-screen">
@@ -204,7 +234,8 @@ export function AppShell({
           {NAV_SECTIONS.map((section) => {
             const items = section.items.filter((item) => {
               if (item.adminOnly && !isAdmin) return false;
-              if (item.visible && !item.visible({ isAdmin, user })) return false;
+              if (item.visible && !item.visible({ isAdmin, user }))
+                return false;
               return true;
             });
             if (items.length === 0) return null;
@@ -223,7 +254,8 @@ export function AppShell({
                       className={cn(
                         "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13.5px] text-primary-foreground/80 transition-colors",
                         "hover:bg-primary-foreground/10 hover:text-primary-foreground",
-                        active && "bg-primary-foreground/15 font-medium text-primary-foreground",
+                        active &&
+                          "bg-primary-foreground/15 font-medium text-primary-foreground",
                       )}
                     >
                       <Icon className="h-4 w-4 flex-none opacity-80" />
@@ -243,7 +275,7 @@ export function AppShell({
         </div>
       </aside>
 
-      <main className="ml-[72px] max-w-[1180px] px-5 pb-14 pt-5 sm:px-8 sm:pt-6">
+      <main className="ml-[72px] max-w-full px-5 pb-14 pt-5 sm:px-8 sm:pt-6">
         <div className="mb-5 flex items-center justify-end gap-3">
           <ThemeToggle />
           <NotificationBell />
@@ -257,7 +289,10 @@ export function AppShell({
                 <div className="mt-0.5">{user.roles.join(", ")}</div>
               </div>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onLogout} className="flex items-center gap-2">
+              <DropdownMenuItem
+                onSelect={onLogout}
+                className="flex items-center gap-2"
+              >
                 <LogOut className="h-3.5 w-3.5" />
                 Log out
               </DropdownMenuItem>
