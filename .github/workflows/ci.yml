@@ -87,3 +87,18 @@ jobs:
 
       - name: Test
         run: pytest || true # no tests yet in Phase 0
+
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, worker, web, scheduling-engine]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }} image
+        run: |
+          docker build \
+            -f infra/docker/${{ matrix.service }}.Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=http://localhost:3001 \
+            .
