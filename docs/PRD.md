@@ -363,7 +363,7 @@ User 1—* Notification
 | Open/close assessment components | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Enter scores | ✅ (override) | ✅ (override) | ❌ (unless also subject teacher) | ✅ (own subject/class only) | ❌ | ❌ | ❌ |
 | Enter subject/class comments | ✅ (override) | ✅ (override) | ✅ (class comment, own class) | ✅ (subject comment, own subject/class) | ❌ | ❌ | ❌ |
-| Publish report cards | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Publish report cards | ✅ | ✅ | ❌ (unless also Principal or Headteacher⁵) | ❌ (unless also Principal or Headteacher⁵) | ❌ | ❌ | ❌ |
 | View report cards | ✅ (all) | ✅ (all) | ✅ (own class) | ✅ (own subject entries) | ❌ | ✅ (own wards, published only) | ✅ (self, published only) |
 | View broadsheet (whole-class grade grid)⁷ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | View/manage academic & exam records (entire school)³ | ✅ | ❌ | ❌ | ❌ | ✅ (Registrar) | ❌ | ❌ |
