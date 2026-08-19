@@ -37,12 +37,12 @@ export class MailerService {
       return;
     }
 
-    // await this.resend.emails.send({
-    //   from:
-    //     this.config.get<string>("RESEND_FROM_EMAIL") ?? "no-reply@example.com",
-    //   to: input.to,
-    //   subject: input.subject,
-    //   html: input.html,
-    // });
+    await this.resend.emails.send({
+      from:
+        this.config.get<string>("RESEND_FROM_EMAIL") ?? "no-reply@example.com",
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+    });
   }
 }

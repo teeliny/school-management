@@ -46,13 +46,13 @@ export class EmailProcessor extends WorkerHost {
     }
 
     try {
-      // const result = await this.resend.emails.send({
-      //   from: this.fromEmail,
-      //   to: recipientEmail,
-      //   subject,
-      //   html: body,
-      // });
-      console.log(body, "body");
+      await this.resend.emails.send({
+        from: this.fromEmail,
+        to: recipientEmail,
+        subject,
+        html: body,
+      });
+
       await this.prisma.emailLog.update({
         where: { id: emailLogId },
         data: {
