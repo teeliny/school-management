@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { setAuthCookies } from "../../../../lib/server-cookies";
+import { checkApiReachable } from "../../../../lib/warmup-server";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 export async function POST(req: NextRequest) {
+  if (!(await checkApiReachable())) {
+    return NextResponse.json({ warming: true }, { status: 503 });
+  }
+
   const body = await req.text();
 
   const apiRes = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {

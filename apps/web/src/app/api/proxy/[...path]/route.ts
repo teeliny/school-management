@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ACCESS_COOKIE, REFRESH_COOKIE, setAuthCookies, clearAuthCookies } from "../../../../lib/server-cookies";
+import { checkApiReachable } from "../../../../lib/warmup-server";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
@@ -40,6 +41,10 @@ async function toResponse(apiRes: Response): Promise<NextResponse> {
 }
 
 async function handle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
+  if (!(await checkApiReachable())) {
+    return NextResponse.json({ warming: true }, { status: 503 });
+  }
+
   const { path } = await context.params;
   const search = req.nextUrl.search;
   const cookieStore = await cookies();

@@ -3,6 +3,7 @@ import { Fraunces, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "../components/providers/theme-provider";
 import { QueryProvider } from "../components/providers/query-provider";
+import { ApiWarmupBanner } from "../components/organisms/api-warmup-banner";
 import { cn } from "../lib/cn";
 
 const fraunces = Fraunces({
@@ -38,7 +39,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body>
         <QueryProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            <ApiWarmupBanner />
+            {children}
+          </ThemeProvider>
         </QueryProvider>
       </body>
     </html>

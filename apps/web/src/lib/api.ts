@@ -1,3 +1,5 @@
+import { waitUntilWarm } from "./warmup-store";
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -7,12 +9,29 @@ export class ApiError extends Error {
   }
 }
 
-export async function login(email: string, password: string): Promise<void> {
+async function isWarmingResponse(res: Response): Promise<boolean> {
+  if (res.status !== 503) return false;
+  // Clone before reading — an unrelated genuine 503 (e.g. a degraded
+  // downstream dependency) must leave the body unread for the normal
+  // !res.ok handling below to still parse its real error message.
+  const body = await res
+    .clone()
+    .json()
+    .catch(() => null);
+  return Boolean(body && (body as { warming?: boolean }).warming);
+}
+
+export async function login(email: string, password: string, _isRetry = false): Promise<void> {
   const res = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
+
+  if (!_isRetry && (await isWarmingResponse(res))) {
+    await waitUntilWarm();
+    return login(email, password, true);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
@@ -23,6 +42,7 @@ export async function login(email: string, password: string): Promise<void> {
 export async function apiFetch<T>(
   path: string,
   options: { method?: string; body?: unknown; auth?: boolean } = {},
+  _isRetry = false,
 ): Promise<T> {
   // A FormData body (the manual-bank-transfer proof-of-payment upload) must
   // NOT be JSON-stringified, and the Content-Type header must be left unset
@@ -33,6 +53,11 @@ export async function apiFetch<T>(
     headers: isFormData ? undefined : { "Content-Type": "application/json" },
     body: isFormData ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
   });
+
+  if (!_isRetry && (await isWarmingResponse(res))) {
+    await waitUntilWarm();
+    return apiFetch<T>(path, options, true);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ message: res.statusText }));
