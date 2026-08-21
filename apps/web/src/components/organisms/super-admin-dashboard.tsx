@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -41,10 +41,6 @@ interface ScheduleApprovalRow {
   scope: "CLASS_TIMETABLE" | "EXAM_TIMETABLE" | "INVIGILATION" | "WEEKLY_DUTY";
   pendingCount: number;
 }
-interface ClassArmOption {
-  id: string;
-  displayName: string;
-}
 interface ReportCardProgress {
   totalStudents: number;
   generatedCount: number;
@@ -66,60 +62,49 @@ const SCOPE_LABEL: Record<ScheduleApprovalRow["scope"], string> = {
  */
 export function SuperAdminDashboard({ user }: { user: CurrentUser }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [finance, setFinance] = useState<FinanceOverview | null>(null);
-  const [composition, setComposition] = useState<SchoolComposition | null>(null);
-  const [audit, setAudit] = useState<AuditHighlight[] | null>(null);
-  const [invitationTrend, setInvitationTrend] = useState<InvitationTrendRow[] | null>(null);
-  const [scheduleApprovals, setScheduleApprovals] = useState<ScheduleApprovalRow[] | null>(null);
-  const [reportCardPublishPct, setReportCardPublishPct] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!termId) return;
-    apiFetch<FinanceOverview>(`/dashboard/finance-overview?termId=${termId}`, { auth: true })
-      .then(setFinance)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load finance overview"));
-  }, [termId]);
+  const { data: finance, error: financeError } = useQuery({
+    queryKey: ["dashboard", "finance-overview", termId],
+    queryFn: () => apiFetch<FinanceOverview>(`/dashboard/finance-overview?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId),
+  });
+  const { data: composition } = useQuery({
+    queryKey: ["dashboard", "school-composition", academicSessionId],
+    queryFn: () => apiFetch<SchoolComposition>(`/dashboard/school-composition?academicSessionId=${academicSessionId}`, { auth: true }),
+    enabled: Boolean(academicSessionId),
+  });
+  const { data: audit } = useQuery({
+    queryKey: ["dashboard", "audit-highlights"],
+    queryFn: () => apiFetch<AuditHighlight[]>("/dashboard/audit-highlights?take=10", { auth: true }),
+  });
+  const { data: invitationTrend } = useQuery({
+    queryKey: ["dashboard", "invitation-trend"],
+    queryFn: () => apiFetch<InvitationTrendRow[]>("/dashboard/invitation-trend?weeks=8", { auth: true }),
+  });
+  const { data: scheduleApprovals } = useQuery({
+    queryKey: ["dashboard", "schedule-approvals-summary"],
+    queryFn: () => apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true }),
+  });
+  const error = financeError instanceof ApiError ? financeError.message : financeError ? "Failed to load finance overview" : null;
 
-  useEffect(() => {
-    if (!academicSessionId) return;
-    apiFetch<SchoolComposition>(`/dashboard/school-composition?academicSessionId=${academicSessionId}`, { auth: true })
-      .then(setComposition)
-      .catch(() => setComposition(null));
-  }, [academicSessionId]);
-
-  useEffect(() => {
-    apiFetch<AuditHighlight[]>("/dashboard/audit-highlights?take=10", { auth: true })
-      .then(setAudit)
-      .catch(() => setAudit([]));
-    apiFetch<InvitationTrendRow[]>("/dashboard/invitation-trend?weeks=8", { auth: true })
-      .then(setInvitationTrend)
-      .catch(() => setInvitationTrend([]));
-    apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true })
-      .then(setScheduleApprovals)
-      .catch(() => setScheduleApprovals([]));
-  }, []);
-
-  useEffect(() => {
-    if (!academicSessionId || !termId) return;
-    apiFetch<ClassArmOption[]>(`/class-arms?academicSessionId=${academicSessionId}`, { auth: true })
-      .then(async (arms) => {
-        const progresses = await Promise.all(
-          arms.map((arm) =>
-            apiFetch<ReportCardProgress>(`/term-report-cards/progress?classArmId=${arm.id}&termId=${termId}`, { auth: true }).catch(
-              () => null,
-            ),
-          ),
-        );
-        const totals = progresses.reduce<{ totalStudents: number; generatedCount: number }>(
-          (acc, p) =>
-            p ? { totalStudents: acc.totalStudents + p.totalStudents, generatedCount: acc.generatedCount + p.generatedCount } : acc,
-          { totalStudents: 0, generatedCount: 0 },
-        );
-        setReportCardPublishPct(totals.totalStudents > 0 ? (totals.generatedCount / totals.totalStudents) * 100 : 0);
-      })
-      .catch(() => setReportCardPublishPct(null));
-  }, [academicSessionId, termId]);
+  // Session-wide variant of /term-report-cards/progress (academicSessionId
+  // instead of classArmId) — one request/two DB queries computing the sum
+  // across every class arm server-side, instead of fetching per-arm progress
+  // for each of the session's class arms and summing client-side.
+  const { data: reportCardProgress } = useQuery({
+    queryKey: ["term-report-cards", "progress", { academicSessionId, termId }],
+    queryFn: () =>
+      apiFetch<ReportCardProgress>(
+        `/term-report-cards/progress?academicSessionId=${academicSessionId}&termId=${termId}`,
+        { auth: true },
+      ),
+    enabled: Boolean(academicSessionId && termId),
+  });
+  const reportCardPublishPct = reportCardProgress
+    ? reportCardProgress.totalStudents > 0
+      ? (reportCardProgress.generatedCount / reportCardProgress.totalStudents) * 100
+      : 0
+    : null;
 
   if (!user.roles.includes("SUPER_ADMIN")) return null;
 

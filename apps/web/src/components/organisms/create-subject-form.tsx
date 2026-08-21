@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
@@ -110,6 +111,7 @@ export function CreateSubjectForm({
   onEditSaved?: () => void;
   onCancelEdit?: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [requiresCalculation, setRequiresCalculation] = useState(false);
@@ -127,7 +129,10 @@ export function CreateSubjectForm({
   // diffs against in edit mode to know what to POST/PATCH/DELETE.
   const [groupAssignments, setGroupAssignments] = useState<GroupAssignment[]>([]);
   const [initialGroupAssignments, setInitialGroupAssignments] = useState<GroupAssignment[]>([]);
-  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: () => apiFetch<DepartmentOption[]>("/departments", { auth: true }),
+  });
 
   const [existingGroupChildren, setExistingGroupChildren] = useState<ExistingGroupChild[]>([]);
   const [savingChildId, setSavingChildId] = useState<string | null>(null);
@@ -136,10 +141,6 @@ export function CreateSubjectForm({
   const [addingChild, setAddingChild] = useState(false);
 
   const isEditing = Boolean(editingSubject);
-
-  useEffect(() => {
-    apiFetch<DepartmentOption[]>("/departments", { auth: true }).then(setDepartments).catch(() => setDepartments([]));
-  }, []);
 
   function loadGroupChildren(parentId: string) {
     return apiFetch<SubjectDetailResponse>(`/subjects/${parentId}`, { auth: true })
@@ -350,6 +351,7 @@ export function CreateSubjectForm({
           setError(`${name} was saved, but ${failedCount} class-group change(s) failed — please retry.`);
         }
 
+        queryClient.invalidateQueries({ queryKey: ["subjects"] });
         onEditSaved?.();
         return;
       }
@@ -384,6 +386,7 @@ export function CreateSubjectForm({
       }
 
       reset();
+      queryClient.invalidateQueries({ queryKey: ["subjects"] });
       onCreated?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");

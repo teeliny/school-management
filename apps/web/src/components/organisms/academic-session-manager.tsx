@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge } from "../atoms/badge";
@@ -30,8 +31,12 @@ function toDateInput(value: string) {
 // partial unique index, ARCHITECTURE.md §6.1) — everything else in the app
 // (class arms, staff assignments, subject catalogue per session) hangs off
 // whichever session is current.
-export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }) {
-  const [sessions, setSessions] = useState<AcademicSessionItem[] | null>(null);
+export function AcademicSessionManager() {
+  const queryClient = useQueryClient();
+  const { data: sessions } = useQuery({
+    queryKey: ["academic-sessions"],
+    queryFn: () => apiFetch<AcademicSessionItem[]>("/academic-sessions", { auth: true }),
+  });
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -45,15 +50,9 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    apiFetch<AcademicSessionItem[]>("/academic-sessions", { auth: true })
-      .then(setSessions)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load sessions"));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  function invalidateSessions() {
+    queryClient.invalidateQueries({ queryKey: ["academic-sessions"] });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,8 +63,7 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
       setName("");
       setStartDate("");
       setEndDate("");
-      load();
-      onChanged?.();
+      invalidateSessions();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -77,8 +75,7 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
     setError(null);
     try {
       await apiFetch(`/academic-sessions/${id}/set-current`, { method: "PATCH", auth: true });
-      load();
-      onChanged?.();
+      invalidateSessions();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to set current session");
     }
@@ -101,8 +98,7 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
         body: { name: editName, startDate: editStart, endDate: editEnd },
       });
       setEditingId(null);
-      load();
-      onChanged?.();
+      invalidateSessions();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update session");
     } finally {
@@ -115,8 +111,9 @@ export function AcademicSessionManager({ onChanged }: { onChanged?: () => void }
     try {
       await apiFetch(`/academic-sessions/${id}`, { method: "DELETE", auth: true });
       setDeletingId(null);
-      load();
-      onChanged?.();
+      invalidateSessions();
+      // Deleting a session cascades to its terms/class arms/etc. server-side.
+      queryClient.invalidateQueries({ queryKey: ["terms"] });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete session");
     }

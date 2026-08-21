@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
@@ -64,23 +65,27 @@ const TYPE_LABEL: Record<ClassSubjectItem["type"], string> = { COMPULSORY: "Comp
 /** PRD FR9.9 Student dashboard. */
 export function StudentDashboard({ user }: { user: CurrentUser }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [self, setSelf] = useState<StudentRecord | null>(null);
   const [todaySlots, setTodaySlots] = useState<TimetableSlotItem[] | null>(null);
   const [scoresBySubject, setScoresBySubject] = useState<{ subjectName: string; score: number }[] | null>(null);
   const [attendance, setAttendance] = useState<AttendanceSummary | null>(null);
   const [reportCard, setReportCard] = useState<ReportCardItem | null>(null);
   const [enrollmentsByType, setEnrollmentsByType] = useState<Record<string, string[]> | null>(null);
-  const [notifications, setNotifications] = useState<NotificationItem[] | null>(null);
 
-  useEffect(() => {
-    if (!user.studentProfileId) return;
-    apiFetch<StudentRecord[]>("/students", { auth: true })
-      .then((records) => setSelf(records[0] ?? null))
-      .catch(() => setSelf(null));
-    apiFetch<{ data: NotificationItem[] }>("/notifications?take=8", { auth: true })
-      .then((res) => setNotifications(res.data))
-      .catch(() => setNotifications([]));
-  }, [user.studentProfileId]);
+  const { data: students } = useQuery({
+    queryKey: ["students"],
+    queryFn: () => apiFetch<StudentRecord[]>("/students", { auth: true }),
+    enabled: Boolean(user.studentProfileId),
+  });
+  const self = students?.[0] ?? null;
+  const { data: notifications } = useQuery({
+    // Same key/shape as NotificationBell's recent-list query (RECENT_TAKE=8
+    // there too) so the two share one cached array instead of each keeping
+    // its own — queryFn must resolve to the same `NotificationItem[]` shape.
+    queryKey: ["notifications", "recent", 8],
+    queryFn: () =>
+      apiFetch<{ data: NotificationItem[] }>("/notifications?take=8", { auth: true }).then((res) => res.data),
+    enabled: Boolean(user.studentProfileId),
+  });
 
   useEffect(() => {
     if (!user.studentProfileId || !termId) return;

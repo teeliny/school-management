@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -52,15 +53,19 @@ const TYPE_VARIANT: Record<ClassSubjectSummary["type"], BadgeVariant> = {
 // that's also where class-group assignments are added/removed/changed now.
 export function SubjectList({
   canManage,
-  refreshKey,
   onEdit,
 }: {
   canManage?: boolean;
-  refreshKey?: unknown;
   onEdit?: (subject: SubjectListItem) => void;
 }) {
-  const [subjects, setSubjects] = useState<SubjectListItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: subjects,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["subjects"],
+    queryFn: () => apiFetch<SubjectListItem[]>("/subjects", { auth: true }),
+  });
+  const error = queryError instanceof ApiError ? queryError.message : queryError ? "Failed to load subjects" : null;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
 
@@ -72,16 +77,6 @@ export function SubjectList({
       return next;
     });
   }
-
-  const load = useCallback(() => {
-    apiFetch<SubjectListItem[]>("/subjects", { auth: true })
-      .then(setSubjects)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load subjects"));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load, refreshKey]);
 
   const filteredSubjects = useMemo(() => {
     if (!subjects) return subjects;

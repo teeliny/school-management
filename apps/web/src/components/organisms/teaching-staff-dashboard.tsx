@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { ClassLevelCategory } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -55,41 +56,35 @@ const DAY_LABEL: Record<string, string> = { MONDAY: "Mon", TUESDAY: "Tue", WEDNE
  */
 export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [assignments, setAssignments] = useState<StaffAssignmentItem[] | null>(null);
-  const [openComponents, setOpenComponents] = useState<AssessmentComponentRow[] | null>(null);
   const [scoreProgress, setScoreProgress] = useState<ScoreProgressRow[] | null>(null);
-  const [timetableSlots, setTimetableSlots] = useState<TimetableSlotItem[] | null>(null);
   const [backdateWindowDays, setBackdateWindowDays] = useState(3);
 
+  const { data: assignments } = useQuery({
+    queryKey: ["staff-assignments", "mine"],
+    queryFn: () => apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true }),
+    enabled: Boolean(user.staffProfileId),
+  });
+  const { data: openComponents } = useQuery({
+    queryKey: ["assessment-components", termId],
+    queryFn: () => apiFetch<AssessmentComponentRow[]>(`/assessment-components?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId),
+  });
+  const { data: schoolProfile } = useQuery({
+    queryKey: ["school-profile"],
+    queryFn: () => apiFetch<{ attendanceBackdateWindowDays: number }>("/school-profile", { auth: true }),
+  });
   useEffect(() => {
-    if (!user.staffProfileId) return;
-    apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true })
-      .then(setAssignments)
-      .catch(() => setAssignments([]));
-  }, [user.staffProfileId]);
-
-  useEffect(() => {
-    if (!termId) return;
-    apiFetch<AssessmentComponentRow[]>(`/assessment-components?termId=${termId}`, { auth: true })
-      .then(setOpenComponents)
-      .catch(() => setOpenComponents([]));
-  }, [termId]);
-
-  useEffect(() => {
-    apiFetch<{ attendanceBackdateWindowDays: number }>("/school-profile", { auth: true })
-      .then((profile) => setBackdateWindowDays(profile.attendanceBackdateWindowDays))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!user.staffProfileId || !academicSessionId || !termId) return;
-    apiFetch<TimetableSlotItem[]>(
-      `/timetable-slots?staffId=${user.staffProfileId}&academicSessionId=${academicSessionId}&termId=${termId}`,
-      { auth: true },
-    )
-      .then(setTimetableSlots)
-      .catch(() => setTimetableSlots([]));
-  }, [user.staffProfileId, academicSessionId, termId]);
+    if (schoolProfile) setBackdateWindowDays(schoolProfile.attendanceBackdateWindowDays);
+  }, [schoolProfile]);
+  const { data: timetableSlots } = useQuery({
+    queryKey: ["timetable-slots", { staffId: user.staffProfileId, academicSessionId, termId }],
+    queryFn: () =>
+      apiFetch<TimetableSlotItem[]>(
+        `/timetable-slots?staffId=${user.staffProfileId}&academicSessionId=${academicSessionId}&termId=${termId}`,
+        { auth: true },
+      ),
+    enabled: Boolean(user.staffProfileId && academicSessionId && termId),
+  });
 
   useEffect(() => {
     if (!assignments || !openComponents) return;

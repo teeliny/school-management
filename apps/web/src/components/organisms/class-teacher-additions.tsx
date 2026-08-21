@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
@@ -45,14 +46,11 @@ interface AttendanceTrendPoint {
  */
 export function ClassTeacherAdditions({ user }: { user: CurrentUser }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [assignments, setAssignments] = useState<StaffAssignmentItem[] | null>(null);
-
-  useEffect(() => {
-    if (!user.staffProfileId) return;
-    apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true })
-      .then(setAssignments)
-      .catch(() => setAssignments([]));
-  }, [user.staffProfileId]);
+  const { data: assignments } = useQuery({
+    queryKey: ["staff-assignments", "mine"],
+    queryFn: () => apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true }),
+    enabled: Boolean(user.staffProfileId),
+  });
 
   if (!user.staffProfileId) return null;
 
@@ -86,28 +84,29 @@ function ClassTeacherSection({
   academicSessionId: string;
   termId: string;
 }) {
-  const [roster, setRoster] = useState<RosterSummary | null>(null);
-  const [skillProgress, setSkillProgress] = useState<SkillProgress | null>(null);
   const [missingComments, setMissingComments] = useState<string[] | null>(null);
-  const [attendanceTrend, setAttendanceTrend] = useState<AttendanceTrendPoint[] | null>(null);
 
-  useEffect(() => {
-    apiFetch<RosterSummary>(`/dashboard/class-roster-summary?classArmId=${classArmId}`, { auth: true })
-      .then(setRoster)
-      .catch(() => setRoster(null));
-    apiFetch<SkillProgress>(
-      `/skill-ratings/progress?classArmId=${classArmId}&termId=${termId}&academicSessionId=${academicSessionId}`,
-      { auth: true },
-    )
-      .then(setSkillProgress)
-      .catch(() => setSkillProgress(null));
-    apiFetch<{ dailyTrend: AttendanceTrendPoint[] }>(
-      `/dashboard/attendance-insights?termId=${termId}&classArmId=${classArmId}`,
-      { auth: true },
-    )
-      .then((data) => setAttendanceTrend(data.dailyTrend))
-      .catch(() => setAttendanceTrend([]));
-  }, [classArmId, academicSessionId, termId]);
+  const { data: roster } = useQuery({
+    queryKey: ["dashboard", "class-roster-summary", classArmId],
+    queryFn: () => apiFetch<RosterSummary>(`/dashboard/class-roster-summary?classArmId=${classArmId}`, { auth: true }),
+  });
+  const { data: skillProgress } = useQuery({
+    queryKey: ["skill-ratings-progress", classArmId, academicSessionId, termId],
+    queryFn: () =>
+      apiFetch<SkillProgress>(
+        `/skill-ratings/progress?classArmId=${classArmId}&termId=${termId}&academicSessionId=${academicSessionId}`,
+        { auth: true },
+      ),
+  });
+  const { data: attendanceInsights } = useQuery({
+    queryKey: ["dashboard", "attendance-insights", termId, classArmId],
+    queryFn: () =>
+      apiFetch<{ dailyTrend: AttendanceTrendPoint[] }>(
+        `/dashboard/attendance-insights?termId=${termId}&classArmId=${classArmId}`,
+        { auth: true },
+      ),
+  });
+  const attendanceTrend = attendanceInsights?.dailyTrend ?? null;
 
   useEffect(() => {
     apiFetch<StudentListItem[]>(`/students?classArmId=${classArmId}`, { auth: true })

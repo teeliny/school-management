@@ -412,15 +412,25 @@ export class TermReportCardService {
   }
 
   // Same shape as ReportCommentService.progress (assessments/report-comment.ts)
-  // — totalStudents is everyone currently in the arm, generatedCount is
-  // distinct students with at least one report card for the term (either
-  // reportType), so it reflects "does this student have something on file",
-  // not raw row count (a student can hold both a MID_TERM and FULL_TERM row).
-  async progress(filters: { classArmId: string; termId: string }) {
+  // — totalStudents is everyone currently in the arm (or, with
+  // academicSessionId instead of classArmId, everyone in the session — the
+  // dashboard's session-wide publish-rate widget needs the sum across every
+  // arm, not a per-arm breakdown, so this avoids the N-requests-per-arm fan
+  // out that used to require), generatedCount is distinct students with at
+  // least one report card for the term (either reportType), so it reflects
+  // "does this student have something on file", not raw row count (a student
+  // can hold both a MID_TERM and FULL_TERM row).
+  async progress(filters: { classArmId?: string; academicSessionId?: string; termId: string }) {
+    if (!filters.classArmId && !filters.academicSessionId) {
+      throw new BadRequestException("classArmId or academicSessionId is required");
+    }
+    const studentWhere = filters.classArmId
+      ? { currentClassId: filters.classArmId }
+      : { currentClass: { academicSessionId: filters.academicSessionId } };
     const [totalStudents, generatedStudents] = await Promise.all([
-      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.studentProfile.count({ where: studentWhere }),
       this.prisma.termReportCard.findMany({
-        where: { termId: filters.termId, student: { currentClassId: filters.classArmId } },
+        where: { termId: filters.termId, student: studentWhere },
         select: { studentId: true },
         distinct: ["studentId"],
       }),
@@ -463,8 +473,12 @@ export class TermReportCardController {
   }
 
   @Get("progress")
-  progress(@Query("classArmId") classArmId: string, @Query("termId") termId: string) {
-    return this.service.progress({ classArmId, termId });
+  progress(
+    @Query("classArmId") classArmId: string | undefined,
+    @Query("academicSessionId") academicSessionId: string | undefined,
+    @Query("termId") termId: string,
+  ) {
+    return this.service.progress({ classArmId, academicSessionId, termId });
   }
 
   @Patch(":id/regenerate")

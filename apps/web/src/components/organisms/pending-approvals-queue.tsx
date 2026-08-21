@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -55,15 +56,15 @@ function rejectPath(row: QueueRow) {
  * one queue, sorted oldest-first, per the mockup's single review queue.
  */
 export function PendingApprovalsQueue() {
-  const [rows, setRows] = useState<QueueRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [actionError, setActionError] = useState<string | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
+  const { data: rows, error: queryError } = useQuery({
+    queryKey: ["pending-approvals"],
+    queryFn: async () => {
       const [payments, discountRequests] = await Promise.all([
         apiFetch<PendingPaymentItem[]>("/payments?status=PENDING_APPROVAL", { auth: true }),
         apiFetch<PendingDiscountRequestItem[]>("/discount-requests?status=PENDING", { auth: true }),
@@ -90,39 +91,35 @@ export function PendingApprovalsQueue() {
           reason: d.reason,
         })),
       ].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      setRows(merged);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to load pending approvals");
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      return merged;
+    },
+  });
+  const error =
+    actionError ?? (queryError instanceof ApiError ? queryError.message : queryError ? "Failed to load pending approvals" : null);
 
   async function handleApprove(row: QueueRow) {
-    setError(null);
+    setActionError(null);
     setPendingActionId(row.id);
     try {
       await apiFetch(approvePath(row), { method: "PATCH", auth: true });
-      load();
+      queryClient.invalidateQueries({ queryKey: ["pending-approvals"] });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to approve");
+      setActionError(err instanceof ApiError ? err.message : "Failed to approve");
     } finally {
       setPendingActionId(null);
     }
   }
 
   async function handleReject(row: QueueRow) {
-    setError(null);
+    setActionError(null);
     setPendingActionId(row.id);
     try {
       await apiFetch(rejectPath(row), { method: "PATCH", auth: true, body: { rejectionReason } });
       setRejectingId(null);
       setRejectionReason("");
-      load();
+      queryClient.invalidateQueries({ queryKey: ["pending-approvals"] });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to reject");
+      setActionError(err instanceof ApiError ? err.message : "Failed to reject");
     } finally {
       setPendingActionId(null);
     }

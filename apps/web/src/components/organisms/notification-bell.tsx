@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Bell } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
@@ -17,37 +18,50 @@ const RECENT_TAKE = 8;
  * of the session. The dropdown's recent list is a plain REST fetch on open
  * — no pagination here, that's what the full /notifications page is for.
  */
+const RECENT_QUERY_KEY = ["notifications", "recent", RECENT_TAKE];
+
 export function NotificationBell() {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [recent, setRecent] = useState<NotificationPayload[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const { unreadCount, setUnreadCount } = useNotificationSocket((notification) => {
-    setRecent((prev) => (prev ? [notification, ...prev].slice(0, RECENT_TAKE) : prev));
+    queryClient.setQueryData<NotificationPayload[]>(RECENT_QUERY_KEY, (prev) =>
+      prev ? [notification, ...prev].slice(0, RECENT_TAKE) : prev,
+    );
   });
 
+  const { data: seededUnreadCount } = useQuery({
+    queryKey: ["notifications", "unread-count"],
+    queryFn: () => apiFetch<number>("/notifications/unread-count", { auth: true }),
+  });
   useEffect(() => {
-    apiFetch<number>("/notifications/unread-count", { auth: true })
-      .then(setUnreadCount)
-      .catch(() => {});
-  }, [setUnreadCount]);
+    if (seededUnreadCount !== undefined) setUnreadCount(seededUnreadCount);
+  }, [seededUnreadCount, setUnreadCount]);
 
-  useEffect(() => {
-    if (!open) return;
-    setError(null);
-    apiFetch<{ data: NotificationPayload[]; total: number }>(`/notifications?take=${RECENT_TAKE}`, { auth: true })
-      .then((res) => setRecent(res.data))
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load notifications"));
-  }, [open]);
+  const {
+    data: recent,
+    error: queryError,
+  } = useQuery({
+    queryKey: RECENT_QUERY_KEY,
+    queryFn: () =>
+      apiFetch<{ data: NotificationPayload[]; total: number }>(`/notifications?take=${RECENT_TAKE}`, { auth: true }).then(
+        (res) => res.data,
+      ),
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const error = queryError instanceof ApiError ? queryError.message : queryError ? "Failed to load notifications" : null;
 
   async function markRead(id: string) {
-    setRecent((prev) => prev?.map((n) => (n.id === id ? { ...n, isRead: true } : n)) ?? null);
+    queryClient.setQueryData<NotificationPayload[]>(RECENT_QUERY_KEY, (prev) =>
+      prev?.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
+    );
     setUnreadCount((count) => Math.max(0, count - 1));
     await apiFetch(`/notifications/${id}/read`, { method: "PATCH", auth: true }).catch(() => {});
   }
 
   async function markAllRead() {
-    setRecent((prev) => prev?.map((n) => ({ ...n, isRead: true })) ?? null);
+    queryClient.setQueryData<NotificationPayload[]>(RECENT_QUERY_KEY, (prev) => prev?.map((n) => ({ ...n, isRead: true })));
     setUnreadCount(0);
     await apiFetch("/notifications/read-all", { method: "PATCH", auth: true }).catch(() => {});
   }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
@@ -38,14 +39,24 @@ interface ClassArmItem {
   academicSessionId: string;
 }
 
-export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
-  const [classLevels, setClassLevels] = useState<ClassLevelOption[]>([]);
-  const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
+export function ClassArmManager() {
+  const queryClient = useQueryClient();
+  const { data: classLevels = [] } = useQuery({
+    queryKey: ["class-levels"],
+    queryFn: () => apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }),
+  });
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["academic-sessions"],
+    queryFn: () => apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }),
+  });
+  const { data: arms } = useQuery({
+    queryKey: ["class-arms"],
+    queryFn: () => apiFetch<ClassArmItem[]>("/class-arms", { auth: true }),
+  });
   const [classLevelId, setClassLevelId] = useState("");
   const [academicSessionId, setAcademicSessionId] = useState("");
   const [name, setName] = useState("");
   const [capacity, setCapacity] = useState("");
-  const [arms, setArms] = useState<ClassArmItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -55,20 +66,9 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }).then(setClassLevels).catch(() => setClassLevels([]));
-    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }).then(setSessions).catch(() => setSessions([]));
-  }, []);
-
-  const load = useCallback(() => {
-    apiFetch<ClassArmItem[]>("/class-arms", { auth: true })
-      .then(setArms)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load class arms"));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  function invalidateArms() {
+    queryClient.invalidateQueries({ queryKey: ["class-arms"] });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -82,8 +82,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
       });
       setName("");
       setCapacity("");
-      load();
-      onChanged?.();
+      invalidateArms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -107,8 +106,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
         body: { name: editName, capacity: editCapacity ? Number(editCapacity) : undefined },
       });
       setEditingId(null);
-      load();
-      onChanged?.();
+      invalidateArms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update class arm");
     } finally {
@@ -121,8 +119,7 @@ export function ClassArmManager({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch(`/class-arms/${id}`, { method: "DELETE", auth: true });
       setDeletingId(null);
-      load();
-      onChanged?.();
+      invalidateArms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete class arm");
     }

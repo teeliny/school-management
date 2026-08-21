@@ -133,7 +133,7 @@ export class StudentService {
       });
 
       return studentProfile;
-    });
+    }, { timeout: 15000 });
 
     // Emails go out only after the transaction commits — a failed send
     // shouldn't roll back a real student/guardian record.
@@ -247,7 +247,7 @@ export class StudentService {
         classArmId: dto.classArmId!,
       });
       return updated;
-    });
+    }, { timeout: 15000 });
   }
 
   /**

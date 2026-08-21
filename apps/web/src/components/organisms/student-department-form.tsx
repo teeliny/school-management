@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
@@ -33,8 +34,14 @@ interface StudentDepartmentRow {
 // but the backend check stays the real authority — same "narrow the UI, but
 // don't trust it alone" precedent as everywhere else in this app.
 export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void }) {
-  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
-  const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: () => apiFetch<DepartmentOption[]>("/departments", { auth: true }),
+  });
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["academic-sessions"],
+    queryFn: () => apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }),
+  });
   const [existingAssignments, setExistingAssignments] = useState<StudentDepartmentRow[]>([]);
   const [studentId, setStudentId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
@@ -44,15 +51,10 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    apiFetch<DepartmentOption[]>("/departments", { auth: true }).then(setDepartments).catch(() => setDepartments([]));
-    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true })
-      .then((all) => {
-        setSessions(all);
-        const current = all.find((s) => s.isCurrent);
-        if (current) setAcademicSessionId(current.id);
-      })
-      .catch(() => setSessions([]));
-  }, []);
+    if (academicSessionId || sessions.length === 0) return;
+    const current = sessions.find((s) => s.isCurrent);
+    if (current) setAcademicSessionId(current.id);
+  }, [sessions, academicSessionId]);
 
   // Existing assignments for the selected session — surfaced per-student in
   // the picker below (via extraLabelsByStudentId) so re-picking an

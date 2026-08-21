@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
@@ -32,8 +33,12 @@ interface DepartmentItem {
 
 // PRD §3.2: applicable only to SSS-category class levels — a fixed 3-value
 // set, so this is "create the ones this school uses" rather than free-text.
-export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
-  const [departments, setDepartments] = useState<DepartmentItem[] | null>(null);
+export function DepartmentManager() {
+  const queryClient = useQueryClient();
+  const { data: departments } = useQuery({
+    queryKey: ["departments"],
+    queryFn: () => apiFetch<DepartmentItem[]>("/departments", { auth: true }),
+  });
   const [name, setName] = useState<DepartmentName>("SCIENCE");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,15 +49,9 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    apiFetch<DepartmentItem[]>("/departments", { auth: true })
-      .then(setDepartments)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load departments"));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  function invalidateDepartments() {
+    queryClient.invalidateQueries({ queryKey: ["departments"] });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,8 +60,7 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch("/departments", { method: "POST", auth: true, body: { name, description: description || undefined } });
       setDescription("");
-      load();
-      onChanged?.();
+      invalidateDepartments();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -85,8 +83,7 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
         body: { description: editDescription || undefined },
       });
       setEditingId(null);
-      load();
-      onChanged?.();
+      invalidateDepartments();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update department");
     } finally {
@@ -99,8 +96,7 @@ export function DepartmentManager({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch(`/departments/${id}`, { method: "DELETE", auth: true });
       setDeletingId(null);
-      load();
-      onChanged?.();
+      invalidateDepartments();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete department");
     }

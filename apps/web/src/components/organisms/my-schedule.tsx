@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import type { ParentChild } from "../../lib/use-parent-children";
@@ -55,19 +56,17 @@ interface DutyAssignmentItem {
  */
 export function MySchedule({ user, selectedChild }: { user: CurrentUser; selectedChild: ParentChild | null }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [children, setChildren] = useState<StudentRecord[] | null>(null);
-
-  useEffect(() => {
-    // Parent branch reads `selectedChild` (shared with ParentDashboard's tab
-    // selector, resolved in DashboardPage via useParentChildren) instead of
-    // fetching its own list — previously it looped over every ward here
-    // independently of that selector, so switching tabs never filtered this
-    // section.
-    if (!user.studentProfileId) return;
-    apiFetch<StudentRecord[]>("/students", { auth: true })
-      .then(setChildren)
-      .catch(() => setChildren([]));
-  }, [user.studentProfileId]);
+  // Parent branch reads `selectedChild` (shared with ParentDashboard's tab
+  // selector, resolved in DashboardPage via useParentChildren) instead of
+  // fetching its own list — previously it looped over every ward here
+  // independently of that selector, so switching tabs never filtered this
+  // section. Shares the ["students"] cache with StudentDashboard's identical
+  // unscoped fetch (the backend scopes the response by caller identity).
+  const { data: children } = useQuery({
+    queryKey: ["students"],
+    queryFn: () => apiFetch<StudentRecord[]>("/students", { auth: true }),
+    enabled: Boolean(user.studentProfileId),
+  });
 
   const hasAnyScope = Boolean(user.studentProfileId || user.parentProfileId || user.staffProfileId);
   if (!hasAnyScope) return null;

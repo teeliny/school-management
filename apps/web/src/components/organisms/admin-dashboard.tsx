@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -80,77 +80,80 @@ const SCOPE_LABEL: Record<ScheduleApprovalRow["scope"], string> = {
 
 export function AdminDashboard({ user }: { user: CurrentUser }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [composition, setComposition] = useState<SchoolComposition | null>(null);
-  const [components, setComponents] = useState<AssessmentComponentRow[] | null>(null);
-  const [scoreEntryRows, setScoreEntryRows] = useState<ScoreEntryCompletionRow[] | null>(null);
-  const [readinessByClass, setReadinessByClass] = useState<{ classArmId: string; className: string; readyPct: number }[] | null>(
-    null,
-  );
-  const [anomalies, setAnomalies] = useState<AttendanceAnomalyRow[] | null>(null);
-  const [scheduleApprovals, setScheduleApprovals] = useState<ScheduleApprovalRow[] | null>(null);
-  const [invitations, setInvitations] = useState<InvitationRow[] | null>(null);
-  const [bouncedParents, setBouncedParents] = useState<BouncedParentRow[] | null>(null);
 
-  useEffect(() => {
-    if (!academicSessionId) return;
-    apiFetch<SchoolComposition>(`/dashboard/school-composition?academicSessionId=${academicSessionId}`, { auth: true })
-      .then(setComposition)
-      .catch(() => setComposition(null));
-  }, [academicSessionId]);
+  const { data: composition } = useQuery({
+    queryKey: ["dashboard", "school-composition", academicSessionId],
+    queryFn: () => apiFetch<SchoolComposition>(`/dashboard/school-composition?academicSessionId=${academicSessionId}`, { auth: true }),
+    enabled: Boolean(academicSessionId),
+  });
+  const { data: components } = useQuery({
+    queryKey: ["assessment-components", termId],
+    queryFn: () => apiFetch<AssessmentComponentRow[]>(`/assessment-components?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId),
+  });
+  const { data: attendanceInsights } = useQuery({
+    queryKey: ["dashboard", "attendance-insights", termId],
+    queryFn: () => apiFetch<{ anomalies: AttendanceAnomalyRow[] }>(`/dashboard/attendance-insights?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId),
+  });
+  const anomalies = attendanceInsights?.anomalies ?? null;
 
-  useEffect(() => {
-    if (!termId) return;
-    apiFetch<AssessmentComponentRow[]>(`/assessment-components?termId=${termId}`, { auth: true })
-      .then(setComponents)
-      .catch(() => setComponents([]));
-    apiFetch<{ anomalies: AttendanceAnomalyRow[] }>(`/dashboard/attendance-insights?termId=${termId}`, { auth: true })
-      .then((data) => setAnomalies(data.anomalies))
-      .catch(() => setAnomalies([]));
-  }, [termId]);
-
-  useEffect(() => {
-    if (!termId) return;
-    Promise.all(
-      CLASS_LEVEL_CATEGORIES.map((category) =>
+  const scoreEntryQueries = useQueries({
+    queries: CLASS_LEVEL_CATEGORIES.map((category) => ({
+      queryKey: ["dashboard", "score-entry-completion", termId, category],
+      queryFn: () =>
         apiFetch<ScoreEntryCompletionRow[]>(
           `/dashboard/score-entry-completion?termId=${termId}&classLevelCategory=${category}`,
           { auth: true },
-        ).catch(() => []),
-      ),
-    ).then((rowsPerCategory) => setScoreEntryRows(rowsPerCategory.flat()));
-  }, [termId]);
+        ),
+      enabled: Boolean(termId),
+    })),
+  });
+  const scoreEntryRows = scoreEntryQueries.every((q) => q.isSuccess || q.isError)
+    ? scoreEntryQueries.flatMap((q) => q.data ?? [])
+    : null;
 
-  useEffect(() => {
-    if (!academicSessionId || !termId) return;
-    apiFetch<ClassArmOption[]>(`/class-arms?academicSessionId=${academicSessionId}`, { auth: true })
-      .then(async (arms) => {
-        const results = await Promise.all(
-          arms.map(async (arm) => {
-            const readiness = await apiFetch<ReadinessResponse>(
-              `/term-report-cards/class-readiness?classArmId=${arm.id}&termId=${termId}`,
-              { auth: true },
-            ).catch(() => null);
-            if (!readiness || readiness.totalStudents === 0) return null;
-            const readyCount = readiness.students.filter((s) => s.ready).length;
-            return { classArmId: arm.id, className: arm.displayName, readyPct: (readyCount / readiness.totalStudents) * 100 };
-          }),
-        );
-        setReadinessByClass(results.filter((r): r is { classArmId: string; className: string; readyPct: number } => r !== null));
-      })
-      .catch(() => setReadinessByClass([]));
-  }, [academicSessionId, termId]);
+  // useQuery/useQueries (rather than a raw fetch-in-effect) so this shares
+  // its /class-arms cache with SuperAdminDashboard's identical fetch, and so
+  // React StrictMode's dev-mode double-effect-invocation dedupes into one
+  // request per class arm instead of firing every readiness call twice.
+  const { data: classArms } = useQuery({
+    queryKey: ["class-arms", { academicSessionId }],
+    queryFn: () => apiFetch<ClassArmOption[]>(`/class-arms?academicSessionId=${academicSessionId}`, { auth: true }),
+    enabled: Boolean(academicSessionId),
+  });
+  const readinessQueries = useQueries({
+    queries: (classArms ?? []).map((arm) => ({
+      queryKey: ["term-report-cards", "class-readiness", arm.id, termId],
+      queryFn: () =>
+        apiFetch<ReadinessResponse>(`/term-report-cards/class-readiness?classArmId=${arm.id}&termId=${termId}`, { auth: true }),
+      enabled: Boolean(termId),
+    })),
+  });
+  const readinessByClass =
+    classArms && readinessQueries.every((q) => q.isSuccess || q.isError)
+      ? readinessQueries
+          .map((q, i) => {
+            const arm = classArms[i];
+            if (!arm || !q.data || q.data.totalStudents === 0) return null;
+            const readyCount = q.data.students.filter((s) => s.ready).length;
+            return { classArmId: arm.id, className: arm.displayName, readyPct: (readyCount / q.data.totalStudents) * 100 };
+          })
+          .filter((r): r is { classArmId: string; className: string; readyPct: number } => r !== null)
+      : null;
 
-  useEffect(() => {
-    apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true })
-      .then(setScheduleApprovals)
-      .catch(() => setScheduleApprovals([]));
-    apiFetch<InvitationRow[]>("/invitations", { auth: true })
-      .then(setInvitations)
-      .catch(() => setInvitations([]));
-    apiFetch<BouncedParentRow[]>("/parent-profiles?emailBounced=true", { auth: true })
-      .then(setBouncedParents)
-      .catch(() => setBouncedParents([]));
-  }, []);
+  const { data: scheduleApprovals } = useQuery({
+    queryKey: ["dashboard", "schedule-approvals-summary"],
+    queryFn: () => apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true }),
+  });
+  const { data: invitations } = useQuery({
+    queryKey: ["invitations"],
+    queryFn: () => apiFetch<InvitationRow[]>("/invitations", { auth: true }),
+  });
+  const { data: bouncedParents } = useQuery({
+    queryKey: ["parent-profiles", { emailBounced: true }],
+    queryFn: () => apiFetch<BouncedParentRow[]>("/parent-profiles?emailBounced=true", { auth: true }),
+  });
 
   if (!user.roles.includes("ADMIN")) return null;
 

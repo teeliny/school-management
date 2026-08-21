@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
@@ -83,11 +84,19 @@ interface RowEdit {
 // ClassSubject in schema.prisma); the academic session/term pickers below
 // are only used to choose which term to disable a subject for.
 export function ClassSubjectAssignment() {
-  const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
-  const [subjects, setSubjects] = useState<SubjectOption[]>([]);
-  const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["academic-sessions"],
+    queryFn: () => apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }),
+  });
+  const { data: subjects = [] } = useQuery({
+    queryKey: ["subjects"],
+    queryFn: () => apiFetch<SubjectOption[]>("/subjects", { auth: true }),
+  });
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: () => apiFetch<DepartmentOption[]>("/departments", { auth: true }),
+  });
   const [concurrencyGroups, setConcurrencyGroups] = useState<ConcurrencyGroupOption[]>([]);
-  const [terms, setTerms] = useState<TermOption[]>([]);
   const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
   const [academicSessionId, setAcademicSessionId] = useState("");
   const [termId, setTermId] = useState("");
@@ -106,21 +115,14 @@ export function ClassSubjectAssignment() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }).then(setSessions).catch(() => setSessions([]));
-    apiFetch<SubjectOption[]>("/subjects", { auth: true }).then(setSubjects).catch(() => setSubjects([]));
-    apiFetch<DepartmentOption[]>("/departments", { auth: true }).then(setDepartments).catch(() => setDepartments([]));
-  }, []);
-
-  useEffect(() => {
     setTermId("");
-    if (!academicSessionId) {
-      setTerms([]);
-      return;
-    }
-    apiFetch<TermOption[]>(`/terms?academicSessionId=${academicSessionId}`, { auth: true })
-      .then(setTerms)
-      .catch(() => setTerms([]));
   }, [academicSessionId]);
+
+  const { data: terms = [] } = useQuery({
+    queryKey: ["terms", academicSessionId],
+    queryFn: () => apiFetch<TermOption[]>(`/terms?academicSessionId=${academicSessionId}`, { auth: true }),
+    enabled: Boolean(academicSessionId),
+  });
 
   const loadConcurrencyGroups = useCallback(() => {
     if (!classLevelCategory) {

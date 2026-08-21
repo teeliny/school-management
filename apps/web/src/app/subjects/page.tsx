@@ -13,7 +13,6 @@ import { StudentSubjectEnrollmentManager } from "../../components/organisms/stud
 
 export default function SubjectsPage() {
   const { user, loading, logout } = useCurrentUser();
-  const [refreshKey, setRefreshKey] = useState(0);
   const [editingSubject, setEditingSubject] = useState<EditableSubject | null>(null);
 
   if (loading) {
@@ -50,7 +49,7 @@ export default function SubjectsPage() {
       <div className="space-y-4">
         <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
           <CollapsibleCard title="Subject catalogue">
-            <SubjectList canManage={canManage} refreshKey={refreshKey} onEdit={handleEdit} />
+            <SubjectList canManage={canManage} onEdit={handleEdit} />
           </CollapsibleCard>
 
           {canManage && (
@@ -66,11 +65,7 @@ export default function SubjectsPage() {
             >
               <CreateSubjectForm
                 editingSubject={editingSubject}
-                onCreated={() => setRefreshKey((k) => k + 1)}
-                onEditSaved={() => {
-                  setEditingSubject(null);
-                  setRefreshKey((k) => k + 1);
-                }}
+                onEditSaved={() => setEditingSubject(null)}
                 onCancelEdit={() => setEditingSubject(null)}
               />
             </CollapsibleCard>

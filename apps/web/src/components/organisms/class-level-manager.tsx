@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
@@ -29,8 +30,12 @@ interface ClassLevelItem {
   category: ClassLevelCategory;
 }
 
-export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
-  const [levels, setLevels] = useState<ClassLevelItem[] | null>(null);
+export function ClassLevelManager() {
+  const queryClient = useQueryClient();
+  const { data: levels } = useQuery({
+    queryKey: ["class-levels"],
+    queryFn: () => apiFetch<ClassLevelItem[]>("/class-levels", { auth: true }),
+  });
   const [name, setName] = useState("");
   const [order, setOrder] = useState("");
   const [category, setCategory] = useState<ClassLevelCategory>("SSS");
@@ -44,15 +49,9 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    apiFetch<ClassLevelItem[]>("/class-levels", { auth: true })
-      .then(setLevels)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load class levels"));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  function invalidateLevels() {
+    queryClient.invalidateQueries({ queryKey: ["class-levels"] });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,8 +61,7 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
       await apiFetch("/class-levels", { method: "POST", auth: true, body: { name, order: Number(order), category } });
       setName("");
       setOrder("");
-      load();
-      onChanged?.();
+      invalidateLevels();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -88,8 +86,7 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
         body: { name: editName, order: Number(editOrder), category: editCategory },
       });
       setEditingId(null);
-      load();
-      onChanged?.();
+      invalidateLevels();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update class level");
     } finally {
@@ -102,8 +99,7 @@ export function ClassLevelManager({ onChanged }: { onChanged?: () => void }) {
     try {
       await apiFetch(`/class-levels/${id}`, { method: "DELETE", auth: true });
       setDeletingId(null);
-      load();
-      onChanged?.();
+      invalidateLevels();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete class level");
     }

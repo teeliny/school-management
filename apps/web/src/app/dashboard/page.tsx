@@ -71,17 +71,23 @@ export default function DashboardPage() {
         </nav>
       </Card>
 
-      <SuperAdminDashboard user={user} />
-      <AdminDashboard user={user} />
-      <TeachingStaffDashboard user={user} />
-      <ClassTeacherAdditions user={user} />
-      <PrincipalHeadteacherAdditions user={user} />
-      <RegistrarAdditions user={user} />
-      <BursarDashboard user={user} />
-      <ParentDashboard user={user} children={children} selectedChildId={selectedChildId} onSelectChild={setSelectedChildId} />
-      <StudentDashboard user={user} />
+      {user.roles.includes("SUPER_ADMIN") && <SuperAdminDashboard user={user} />}
+      {user.roles.includes("ADMIN") && <AdminDashboard user={user} />}
+      {user.staffProfileId && <TeachingStaffDashboard user={user} />}
+      {user.staffProfileId && <ClassTeacherAdditions user={user} />}
+      {(user.assignmentTypes.includes("PRINCIPAL") || user.assignmentTypes.includes("HEADTEACHER")) && (
+        <PrincipalHeadteacherAdditions user={user} />
+      )}
+      {user.assignmentTypes.includes("REGISTRAR") && <RegistrarAdditions user={user} />}
+      {user.assignmentTypes.includes("BURSAR") && <BursarDashboard user={user} />}
+      {user.parentProfileId && (
+        <ParentDashboard user={user} children={children} selectedChildId={selectedChildId} onSelectChild={setSelectedChildId} />
+      )}
+      {user.studentProfileId && <StudentDashboard user={user} />}
 
-      <MySchedule user={user} selectedChild={children?.find((c) => c.id === selectedChildId) ?? children?.[0] ?? null} />
+      {(user.studentProfileId || user.parentProfileId || user.staffProfileId) && (
+        <MySchedule user={user} selectedChild={children?.find((c) => c.id === selectedChildId) ?? children?.[0] ?? null} />
+      )}
     </AppShell>
   );
 }

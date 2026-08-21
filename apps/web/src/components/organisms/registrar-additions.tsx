@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
@@ -17,16 +17,14 @@ interface AttendanceOverview {
 /** PRD FR9.6 REGISTRAR additions. */
 export function RegistrarAdditions({ user }: { user: CurrentUser }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [attendance, setAttendance] = useState<AttendanceOverview | null>(null);
 
   const isRegistrar = user.assignmentTypes.includes("REGISTRAR");
 
-  useEffect(() => {
-    if (!termId || !isRegistrar) return;
-    apiFetch<AttendanceOverview>(`/dashboard/attendance-insights?termId=${termId}`, { auth: true })
-      .then(setAttendance)
-      .catch(() => setAttendance(null));
-  }, [termId, isRegistrar]);
+  const { data: attendance } = useQuery({
+    queryKey: ["dashboard", "attendance-insights", termId],
+    queryFn: () => apiFetch<AttendanceOverview>(`/dashboard/attendance-insights?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId) && isRegistrar,
+  });
 
   if (!isRegistrar) return null;
 

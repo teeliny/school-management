@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
@@ -49,32 +49,32 @@ const SCOPE_LABEL: Record<ScheduleApprovalRow["scope"], string> = {
  */
 export function PrincipalHeadteacherAdditions({ user }: { user: CurrentUser }) {
   const { termId } = useCurrentTerm();
-  const [snapshot, setSnapshot] = useState<BroadsheetSnapshot | null>(null);
-  const [scheduleApprovals, setScheduleApprovals] = useState<ScheduleApprovalRow[] | null>(null);
-  const [duties, setDuties] = useState<DutyAssignmentRow[] | null>(null);
 
   const isPrincipal = user.assignmentTypes.includes("PRINCIPAL");
   const isHeadteacher = user.assignmentTypes.includes("HEADTEACHER");
+  const isPrincipalOrHeadteacher = isPrincipal || isHeadteacher;
 
-  useEffect(() => {
-    if (!termId || (!isPrincipal && !isHeadteacher)) return;
-    apiFetch<BroadsheetSnapshot>(`/dashboard/broadsheet-snapshot?termId=${termId}`, { auth: true })
-      .then(setSnapshot)
-      .catch(() => setSnapshot(null));
-  }, [termId, isPrincipal, isHeadteacher]);
+  const { data: snapshot } = useQuery({
+    queryKey: ["dashboard", "broadsheet-snapshot", termId],
+    queryFn: () => apiFetch<BroadsheetSnapshot>(`/dashboard/broadsheet-snapshot?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId) && isPrincipalOrHeadteacher,
+  });
+  const { data: scheduleApprovals } = useQuery({
+    queryKey: ["dashboard", "schedule-approvals-summary"],
+    queryFn: () => apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true }),
+    enabled: isPrincipalOrHeadteacher,
+  });
 
-  useEffect(() => {
-    if (!isPrincipal && !isHeadteacher) return;
-    apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true })
-      .then(setScheduleApprovals)
-      .catch(() => setScheduleApprovals([]));
-
-    const group = isPrincipal ? "JSS_SSS" : "CRECHE_NURSERY_PRIMARY";
-    const today = new Date().toISOString().slice(0, 10);
-    apiFetch<DutyAssignmentRow[]>(`/duty-assignments?classLevelCategoryGroup=${group}&weekStartDateFrom=${today}`, { auth: true })
-      .then(setDuties)
-      .catch(() => setDuties([]));
-  }, [isPrincipal, isHeadteacher]);
+  const dutyGroup = isPrincipal ? "JSS_SSS" : "CRECHE_NURSERY_PRIMARY";
+  const dutyToday = new Date().toISOString().slice(0, 10);
+  const { data: duties } = useQuery({
+    queryKey: ["duty-assignments", { classLevelCategoryGroup: dutyGroup, weekStartDateFrom: dutyToday }],
+    queryFn: () =>
+      apiFetch<DutyAssignmentRow[]>(`/duty-assignments?classLevelCategoryGroup=${dutyGroup}&weekStartDateFrom=${dutyToday}`, {
+        auth: true,
+      }),
+    enabled: isPrincipalOrHeadteacher,
+  });
 
   if (!isPrincipal && !isHeadteacher) return null;
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -76,14 +77,14 @@ export function ParentDashboard({
   onSelectChild: (id: string) => void;
 }) {
   const { academicSessionId, termId } = useCurrentTerm();
-  const [notifications, setNotifications] = useState<NotificationItem[] | null>(null);
-
-  useEffect(() => {
-    if (!user.parentProfileId) return;
-    apiFetch<{ data: NotificationItem[] }>("/notifications?take=8", { auth: true })
-      .then((res) => setNotifications(res.data))
-      .catch(() => setNotifications([]));
-  }, [user.parentProfileId]);
+  const { data: notifications } = useQuery({
+    // Shared key/shape with NotificationBell's and StudentDashboard's
+    // identical recent-notifications fetch (take=8) — see student-dashboard.tsx.
+    queryKey: ["notifications", "recent", 8],
+    queryFn: () =>
+      apiFetch<{ data: NotificationItem[] }>("/notifications?take=8", { auth: true }).then((res) => res.data),
+    enabled: Boolean(user.parentProfileId),
+  });
 
   if (!user.parentProfileId) return null;
   if (!children || children.length === 0) return null;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -46,32 +46,30 @@ interface DiscountRequestItem {
  */
 export function BursarDashboard({ user }: { user: CurrentUser }) {
   const { termId } = useCurrentTerm();
-  const [finance, setFinance] = useState<FinanceOverview | null>(null);
-  const [pendingPayments, setPendingPayments] = useState<PaymentItem[] | null>(null);
-  const [discountRequests, setDiscountRequests] = useState<DiscountRequestItem[] | null>(null);
-  const [recentReceipts, setRecentReceipts] = useState<PaymentItem[] | null>(null);
 
   const isBursar = user.assignmentTypes.includes("BURSAR");
 
-  useEffect(() => {
-    if (!termId || !isBursar) return;
-    apiFetch<FinanceOverview>(`/dashboard/finance-overview?termId=${termId}`, { auth: true })
-      .then(setFinance)
-      .catch(() => setFinance(null));
-  }, [termId, isBursar]);
-
-  useEffect(() => {
-    if (!isBursar) return;
-    apiFetch<PaymentItem[]>("/payments?status=PENDING_APPROVAL", { auth: true })
-      .then(setPendingPayments)
-      .catch(() => setPendingPayments([]));
-    apiFetch<DiscountRequestItem[]>("/discount-requests?status=PENDING", { auth: true })
-      .then(setDiscountRequests)
-      .catch(() => setDiscountRequests([]));
-    apiFetch<{ data: PaymentItem[]; total: number }>("/payments?status=SUCCESSFUL&take=10", { auth: true })
-      .then((result) => setRecentReceipts(result.data))
-      .catch(() => setRecentReceipts([]));
-  }, [isBursar]);
+  const { data: finance } = useQuery({
+    queryKey: ["dashboard", "finance-overview", termId],
+    queryFn: () => apiFetch<FinanceOverview>(`/dashboard/finance-overview?termId=${termId}`, { auth: true }),
+    enabled: Boolean(termId) && isBursar,
+  });
+  const { data: pendingPayments } = useQuery({
+    queryKey: ["payments", { status: "PENDING_APPROVAL" }],
+    queryFn: () => apiFetch<PaymentItem[]>("/payments?status=PENDING_APPROVAL", { auth: true }),
+    enabled: isBursar,
+  });
+  const { data: discountRequests } = useQuery({
+    queryKey: ["discount-requests", { status: "PENDING" }],
+    queryFn: () => apiFetch<DiscountRequestItem[]>("/discount-requests?status=PENDING", { auth: true }),
+    enabled: isBursar,
+  });
+  const { data: recentReceiptsResult } = useQuery({
+    queryKey: ["payments", { status: "SUCCESSFUL", take: 10 }],
+    queryFn: () => apiFetch<{ data: PaymentItem[]; total: number }>("/payments?status=SUCCESSFUL&take=10", { auth: true }),
+    enabled: isBursar,
+  });
+  const recentReceipts = recentReceiptsResult?.data ?? null;
 
   if (!isBursar) return null;
 

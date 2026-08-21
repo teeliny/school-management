@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge } from "../atoms/badge";
@@ -45,9 +46,12 @@ function toDateInput(value: string) {
 // service layer (TermService.setCurrent). Needed for compulsory subject
 // auto-enrollment (PRD §3.3), which resolves against isCurrent=true.
 export function TermManager() {
-  const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
+  const queryClient = useQueryClient();
+  const { data: sessions = [] } = useQuery({
+    queryKey: ["academic-sessions"],
+    queryFn: () => apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }),
+  });
   const [academicSessionId, setAcademicSessionId] = useState("");
-  const [terms, setTerms] = useState<TermItem[] | null>(null);
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -62,28 +66,20 @@ export function TermManager() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true })
-      .then((fetched) => {
-        setSessions(fetched);
-        const current = fetched.find((s) => s.isCurrent);
-        if (current) setAcademicSessionId(current.id);
-      })
-      .catch(() => setSessions([]));
-  }, []);
+    if (academicSessionId || sessions.length === 0) return;
+    const current = sessions.find((s) => s.isCurrent);
+    if (current) setAcademicSessionId(current.id);
+  }, [sessions, academicSessionId]);
 
-  const load = useCallback(() => {
-    if (!academicSessionId) {
-      setTerms(null);
-      return;
-    }
-    apiFetch<TermItem[]>(`/terms?academicSessionId=${academicSessionId}`, { auth: true })
-      .then(setTerms)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load terms"));
-  }, [academicSessionId]);
+  const { data: terms } = useQuery({
+    queryKey: ["terms", academicSessionId],
+    queryFn: () => apiFetch<TermItem[]>(`/terms?academicSessionId=${academicSessionId}`, { auth: true }),
+    enabled: Boolean(academicSessionId),
+  });
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  function invalidateTerms() {
+    queryClient.invalidateQueries({ queryKey: ["terms", academicSessionId] });
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -94,7 +90,7 @@ export function TermManager() {
       setName("");
       setStartDate("");
       setEndDate("");
-      load();
+      invalidateTerms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
@@ -106,7 +102,7 @@ export function TermManager() {
     setError(null);
     try {
       await apiFetch(`/terms/${id}/set-current`, { method: "PATCH", auth: true });
-      load();
+      invalidateTerms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to set current term");
     }
@@ -129,7 +125,7 @@ export function TermManager() {
         body: { name: editName, startDate: editStart, endDate: editEnd },
       });
       setEditingId(null);
-      load();
+      invalidateTerms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update term");
     } finally {
@@ -142,7 +138,7 @@ export function TermManager() {
     try {
       await apiFetch(`/terms/${id}`, { method: "DELETE", auth: true });
       setDeletingId(null);
-      load();
+      invalidateTerms();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to delete term");
     }
