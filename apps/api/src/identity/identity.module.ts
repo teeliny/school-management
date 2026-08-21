@@ -8,6 +8,7 @@ import { StaffProfileController, StaffProfileService } from "./profiles/staff-pr
 import { ParentProfileController, ParentProfileService } from "./profiles/parent-profile";
 import { StudentController, StudentService } from "./students/student";
 import { OwnershipTransferController, OwnershipTransferService } from "./ownership-transfer";
+import { SetupController, SetupService } from "./setup/setup";
 
 @Module({
   imports: [SubjectModule],
@@ -18,6 +19,7 @@ import { OwnershipTransferController, OwnershipTransferService } from "./ownersh
     ParentProfileController,
     StudentController,
     OwnershipTransferController,
+    SetupController,
   ],
   providers: [
     UserService,
@@ -27,6 +29,7 @@ import { OwnershipTransferController, OwnershipTransferService } from "./ownersh
     ParentProfileService,
     StudentService,
     OwnershipTransferService,
+    SetupService,
   ],
   exports: [UserService, InvitationService, StaffProfileService, ParentProfileService],
 })
