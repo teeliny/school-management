@@ -1,4 +1,4 @@
-import { INestApplicationContext } from "@nestjs/common";
+import { INestApplicationContext, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { IoAdapter } from "@nestjs/platform-socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
@@ -16,6 +16,7 @@ import { parseCorsOrigins } from "../common/cors";
  * issue other commands.
  */
 export class RedisIoAdapter extends IoAdapter {
+  private readonly logger = new Logger(RedisIoAdapter.name);
   private adapterConstructor?: ReturnType<typeof createAdapter>;
 
   constructor(private readonly app: INestApplicationContext) {
@@ -26,6 +27,12 @@ export class RedisIoAdapter extends IoAdapter {
     const sharedClient = this.app.get<Redis>(REDIS_CLIENT);
     const pubClient = sharedClient.duplicate();
     const subClient = sharedClient.duplicate();
+    // @socket.io/redis-adapter attaches its own 'error' listener below, but
+    // warns "missing 'error' handler on this Redis client" when it's the
+    // only one — attach ours first so real connection errors are visible
+    // through the app's logger instead of a bare console.warn.
+    pubClient.on("error", (error) => this.logger.error(`Redis pub client error: ${error.message}`, error.stack));
+    subClient.on("error", (error) => this.logger.error(`Redis sub client error: ${error.message}`, error.stack));
     this.adapterConstructor = createAdapter(pubClient, subClient);
   }
 

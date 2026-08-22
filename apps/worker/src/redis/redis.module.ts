@@ -1,4 +1,4 @@
-import { Global, Inject, Module, OnModuleDestroy } from "@nestjs/common";
+import { Global, Inject, Logger, Module, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 
@@ -7,13 +7,18 @@ import Redis from "ioredis";
 // BullModule.forRootAsync connection config. Only needed here for the
 // /health Redis PING; BullMQ manages its own internal connection separately.
 export const REDIS_CLIENT = Symbol("REDIS_CLIENT");
+const logger = new Logger("RedisClient");
 
 @Global()
 @Module({
   providers: [
     {
       provide: REDIS_CLIENT,
-      useFactory: (config: ConfigService) => new Redis(config.getOrThrow<string>("REDIS_URL")),
+      useFactory: (config: ConfigService) => {
+        const client = new Redis(config.getOrThrow<string>("REDIS_URL"));
+        client.on("error", (error) => logger.error(`Redis connection error: ${error.message}`, error.stack));
+        return client;
+      },
       inject: [ConfigService],
     },
   ],

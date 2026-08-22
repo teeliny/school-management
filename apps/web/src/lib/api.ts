@@ -1,4 +1,4 @@
-import { waitUntilWarm } from "./warmup-store";
+import { ensureWarm, waitUntilWarm } from "./warmup-store";
 
 export class ApiError extends Error {
   constructor(
@@ -22,6 +22,8 @@ async function isWarmingResponse(res: Response): Promise<boolean> {
 }
 
 export async function login(email: string, password: string, _isRetry = false): Promise<void> {
+  if (!_isRetry) await ensureWarm();
+
   const res = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -44,6 +46,8 @@ export async function apiFetch<T>(
   options: { method?: string; body?: unknown; auth?: boolean } = {},
   _isRetry = false,
 ): Promise<T> {
+  if (!_isRetry) await ensureWarm();
+
   // A FormData body (the manual-bank-transfer proof-of-payment upload) must
   // NOT be JSON-stringified, and the Content-Type header must be left unset
   // so the browser can attach its own `multipart/form-data; boundary=...`.

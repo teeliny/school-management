@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useApiWarmup } from "../../lib/use-api-warmup";
 
-const COUNTDOWN_SECONDS = 60;
+const COUNTDOWN_SECONDS = 90;
 
 /**
  * Mounted once at the root layout so it covers both AppShell and AuthLayout.
