@@ -6,13 +6,13 @@
  * public/logo.* and CrestBadge callers are swapped for an <Image>.
  */
 export const siteContent = {
-  schoolName: "Ridgeview Academy",
-  crestLetter: "R",
+  schoolName: "Mercylag Schools",
+  crestLetter: "M",
   tagline: "Where every learner is known, challenged, and prepared to lead.",
   foundedYear: 1998,
   studentCount: "1,200+",
   staffCount: "140+",
-  classLevels: "Creche – SS3",
+  classLevels: "Reception – SS3",
 
   vision:
     "To be a leading centre of academic excellence and character formation, raising graduates who thrive anywhere in the world.",
@@ -20,7 +20,7 @@ export const siteContent = {
     "We provide a safe, richly resourced environment where every child is guided by qualified educators to discover their potential, master a rigorous curriculum, and grow into disciplined, compassionate leaders.",
 
   history:
-    "Founded in 1998 by a small group of educators who believed Nigerian children deserved a school built around both rigor and warmth, [School Name] has grown from a single classroom block into a full Creche-through-Senior-Secondary campus. Replace this paragraph with the school's real founding story.",
+    "Founded in 1998 by a small group of educators who believed Nigerian children deserved a school built around both rigor and warmth, [School Name] has grown from a single classroom block into a full Reception-through-Senior-Secondary campus. Replace this paragraph with the school's real founding story.",
 
   coreValues: [
     { name: "Excellence", description: "We hold every learner to a high standard and support them in reaching it." },
@@ -37,16 +37,18 @@ export const siteContent = {
   },
 
   contact: {
-    address: "[Street Address], [City], [State]",
-    phone: "+234 800 000 0000",
-    email: "info@example.edu.ng",
-    admissionsEmail: "admissions@example.edu.ng",
-    careersEmail: "careers@example.edu.ng",
+    address: "3 Salami Olaleye Street, Isashi, Ibeshe, Ikorodu, Lagos, Nigeria",
+    emails: [
+      { label: "General", value: "info@mercylag.sch-portals.com" },
+      { label: "Admissions", value: "admissions@mercylag.sch-portals.com" },
+      { label: "Careers", value: "careers@mercylag.sch-portals.com" },
+    ],
+    phones: ["+234 803 551 7032", "+234 703 318 5714"],
     officeHours: "Mon–Fri, 8:00am – 4:00pm",
   },
 
   academicLevels: [
-    { name: "Creche & Nursery", ageRange: "Ages 1 – 4", description: "Play-based early learning that builds language, motor skills, and social confidence." },
+    { name: "Reception & Nursery", ageRange: "Ages 1 – 4", description: "Play-based early learning that builds language, motor skills, and social confidence." },
     { name: "Primary", ageRange: "Ages 5 – 10", description: "A structured foundation in literacy, numeracy, and the sciences, alongside creative and physical development." },
     { name: "Junior Secondary", ageRange: "Ages 11 – 13", description: "Broad subject exposure preparing students for the Basic Education Certificate Examination (BECE)." },
     { name: "Senior Secondary", ageRange: "Ages 14 – 17", description: "Science, Arts, and Commercial tracks preparing students for WASSCE/NECO and university admission." },

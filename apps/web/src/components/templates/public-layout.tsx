@@ -100,8 +100,15 @@ export function PublicLayout({ children }: { children: ReactNode }) {
             <div className="text-[10.5px] font-semibold uppercase tracking-wide text-muted">Contact</div>
             <ul className="mt-3 space-y-1.5 text-[12.5px] text-muted">
               <li>{siteContent.contact.address}</li>
-              <li className="font-mono">{siteContent.contact.phone}</li>
-              <li className="font-mono">{siteContent.contact.email}</li>
+              {siteContent.contact.phones.map((phone) => (
+                <li key={phone} className="font-mono">
+                  {phone}
+                </li>
+              ))}
+              {/* Footer stays to the one general address — every labeled
+                  inbox (Admissions/Careers/etc.) is listed in full on the
+                  Careers & Contact page. */}
+              <li className="font-mono">{siteContent.contact.emails[0]?.value}</li>
             </ul>
           </div>
         </div>

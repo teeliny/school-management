@@ -44,11 +44,24 @@ export default function CareersPage() {
               </li>
               <li className="flex items-start gap-2.5">
                 <Phone className="mt-0.5 h-4 w-4 flex-none text-muted" strokeWidth={1.75} />
-                <span className="font-mono">{siteContent.contact.phone}</span>
+                <div className="space-y-0.5">
+                  {siteContent.contact.phones.map((phone) => (
+                    <div key={phone} className="font-mono">
+                      {phone}
+                    </div>
+                  ))}
+                </div>
               </li>
               <li className="flex items-start gap-2.5">
                 <Mail className="mt-0.5 h-4 w-4 flex-none text-muted" strokeWidth={1.75} />
-                <span className="font-mono">{siteContent.contact.email}</span>
+                <div className="space-y-0.5">
+                  {siteContent.contact.emails.map((email) => (
+                    <div key={email.value}>
+                      <span className="text-muted">{email.label}: </span>
+                      <span className="font-mono">{email.value}</span>
+                    </div>
+                  ))}
+                </div>
               </li>
               <li className="flex items-start gap-2.5">
                 <Clock className="mt-0.5 h-4 w-4 flex-none text-muted" strokeWidth={1.75} />
