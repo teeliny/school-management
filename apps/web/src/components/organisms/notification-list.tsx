@@ -86,7 +86,7 @@ export function NotificationList() {
             <button
               key={n.id}
               onClick={() => handleClick(n.id, n.isRead)}
-              className="flex w-full items-start gap-3 border-b border-border/60 px-4 py-3 text-left last:border-none hover:bg-card-inset"
+              className="flex w-full items-start gap-3 border-b border-border/60 px-4 py-3 text-left last:border-none hover:border-white"
             >
               <span className={cn("mt-1.5 h-2 w-2 flex-none rounded-full", n.isRead ? "bg-transparent" : "bg-info")} />
               <span className="min-w-0 flex-1">

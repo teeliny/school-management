@@ -94,7 +94,7 @@ export function NotificationBell() {
             <button
               key={n.id}
               onClick={() => !n.isRead && markRead(n.id)}
-              className="flex w-full items-start gap-2.5 border-b border-border/60 px-3 py-2.5 text-left last:border-none hover:bg-card-inset"
+              className="flex w-full items-start gap-2.5 border-b border-border/60 px-3 py-2.5 text-left last:border-none hover:border-white"
             >
               <span className={cn("mt-1 h-2 w-2 flex-none rounded-full", n.isRead ? "bg-transparent" : "bg-info")} />
               <span className="min-w-0 flex-1">

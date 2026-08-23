@@ -78,7 +78,7 @@ export function RecordPaymentForm({
             onClick={() => setMethod(m)}
             className={cn(
               "rounded-full border px-3 py-1.5 text-[11.5px] font-medium transition-colors",
-              method === m ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted hover:bg-card-inset",
+              method === m ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted hover:border-white",
             )}
           >
             {m === "CASH" ? "Cash" : "Bank transfer proof"}

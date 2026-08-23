@@ -68,7 +68,7 @@ export function CareerContactInquiryForm() {
                 "rounded-full border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors",
                 form.type === option
                   ? "border-primary bg-primary text-primary-foreground"
-                  : "border-border bg-card text-muted hover:bg-card-inset",
+                  : "border-border bg-card text-muted hover:border-white",
               )}
             >
               {option === "GENERAL" ? "A general inquiry" : "A job opening"}

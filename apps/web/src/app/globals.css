@@ -17,11 +17,12 @@
   --background: 255 255 255; /* #ffffff */
   --foreground: 0 27 58; /* #001b3a */
   --primary: 0 27 58;
-  --primary-foreground: 245 238 212;
-  --border: 221 208 168; /* #ddd0a8 */
+  --primary-foreground: 255 255 255;
+  /* --border: 221 208 168; #ddd0a8  */
+  --border: 255 244 156;
   --muted: 92 107 122; /* #5c6b7a */
   --card: 255 255 255;
-  --card-inset: 250 248 240;
+  --card-inset: 255 244 156;
 
   --success: 45 107 76;
   --success-bg: 227 237 231;
@@ -35,8 +36,8 @@
 
 .dark {
   --background: 0 27 58; /* #001b3a */
-  --foreground: 245 238 212; /* #ffffff */
-  --primary: 245 238 212;
+  --foreground: 255 255 255; /* #ffffff */
+  --primary: 255 255 255;
   --primary-foreground: 0 27 58;
   --border: 22 52 92; /* #16345c */
   --muted: 159 176 194; /* #9fb0c2 */
@@ -47,7 +48,7 @@
      rather than introducing new hues — a cool lightened-navy glow upper-left,
      a faint warm cream glow behind the page center. */
   --glow-cool: 30 64 122;
-  --glow-warm: 245 238 212;
+  --glow-warm: 255 255 255;
 
   --success: 122 189 154;
   --success-bg: 20 51 42;

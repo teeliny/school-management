@@ -13,7 +13,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantClass: Record<ButtonVariant, string> = {
   primary: "border border-primary bg-primary text-primary-foreground hover:opacity-90",
-  outline: "border border-border bg-card hover:bg-card-inset",
+  outline: "border border-border bg-card hover:border-white",
 };
 
 const sizeClass: Record<ButtonSize, string> = {

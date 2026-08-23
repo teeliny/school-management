@@ -169,7 +169,7 @@ export function InvoiceList({
               <tr
                 key={invoice.id}
                 onClick={() => onSelect(invoice.id)}
-                className="cursor-pointer border-b border-border/60 last:border-none hover:bg-card-inset"
+                className="cursor-pointer border-b border-border/60 last:border-none hover:border-white"
               >
                 <td className="py-2.5 pr-4 font-medium">
                   {canManageFees ? (

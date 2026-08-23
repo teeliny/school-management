@@ -259,7 +259,7 @@ export function AttendanceRollCall({
                           onClick={() => setStatus(person.id, status)}
                           className={cn(
                             "rounded-md border px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition-colors",
-                            active ? config.activeClass : "border-border text-muted hover:bg-card-inset",
+                            active ? config.activeClass : "border-border text-muted hover:border-white",
                           )}
                         >
                           {config.short}
