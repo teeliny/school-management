@@ -1670,6 +1670,8 @@ enum NotificationType {
   SCHEDULE_GENERATION_COMPLETED
   SCHEDULE_GENERATION_TIMED_OUT
   SCHEDULE_GENERATION_FAILED
+  ADMISSION_INQUIRY_RECEIVED
+  CAREER_CONTACT_INQUIRY_RECEIVED
 }
 
 enum NotificationChannel {
@@ -1790,4 +1792,49 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+enum InquiryStatus {
+  NEW
+  REVIEWED
+}
+
+// Public marketing-site submission (no authenticated actor) — persisted for
+// staff review at GET /admission-inquiries, and fans out a Notification to
+// Super-Admin/Admin plus whoever currently holds an active REGISTRAR/
+// PRINCIPAL/HEADTEACHER StaffAssignment (see public-inquiries module).
+model AdmissionInquiry {
+  id                String        @id @default(uuid())
+  parentFullName    String
+  parentEmail       String
+  parentPhone       String?
+  studentFullName   String?
+  desiredEntryClass String
+  message           String
+  status            InquiryStatus @default(NEW)
+  createdAt         DateTime      @default(now())
+
+  @@map("admission_inquiries")
+}
+
+enum CareerContactInquiryType {
+  CAREERS
+  GENERAL
+}
+
+// Public marketing-site submission from the combined Careers & Contact
+// page — same shape as AdmissionInquiry but notifies Super-Admin/Admin
+// only (never Registrar/Principal/Headteacher).
+model CareerContactInquiry {
+  id        String                   @id @default(uuid())
+  type      CareerContactInquiryType
+  fullName  String
+  email     String
+  phone     String?
+  subject   String?
+  message   String
+  status    InquiryStatus            @default(NEW)
+  createdAt DateTime                 @default(now())
+
+  @@map("career_contact_inquiries")
 }

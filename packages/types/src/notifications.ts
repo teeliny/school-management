@@ -16,7 +16,9 @@ export type NotificationType =
   | "MANUAL_PAYMENT_REJECTED"
   | "SCHEDULE_GENERATION_COMPLETED"
   | "SCHEDULE_GENERATION_TIMED_OUT"
-  | "SCHEDULE_GENERATION_FAILED";
+  | "SCHEDULE_GENERATION_FAILED"
+  | "ADMISSION_INQUIRY_RECEIVED"
+  | "CAREER_CONTACT_INQUIRY_RECEIVED";
 
 export type NotificationChannel = "IN_APP" | "EMAIL" | "BOTH";
 
@@ -124,6 +126,21 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     channel: "BOTH",
     subject: "Schedule generation failed",
     bodyTemplate: "The {{scope}} generation you requested failed: {{errorMessage}}.",
+    isCritical: false,
+  },
+  {
+    key: "ADMISSION_INQUIRY_RECEIVED",
+    channel: "BOTH",
+    subject: "New admission inquiry",
+    bodyTemplate:
+      'New admission inquiry from {{parentFullName}} ({{parentEmail}}) for {{studentFullName}}, entry class {{desiredEntryClass}}: "{{message}}"',
+    isCritical: false,
+  },
+  {
+    key: "CAREER_CONTACT_INQUIRY_RECEIVED",
+    channel: "BOTH",
+    subject: "New careers/contact inquiry",
+    bodyTemplate: 'New {{type}} inquiry from {{fullName}} ({{email}}): "{{message}}"',
     isCritical: false,
   },
 ];

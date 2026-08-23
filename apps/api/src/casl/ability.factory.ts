@@ -48,7 +48,9 @@ export type Subject =
   | "DiscountRequest"
   | "NotificationTemplate"
   | "SchedulingConstraint"
-  | "ScheduleGenerationRequest";
+  | "ScheduleGenerationRequest"
+  | "AdmissionInquiry"
+  | "CareerContactInquiry";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;
@@ -120,6 +122,12 @@ export class AbilityFactory {
       // branches below, additive on top of this one for an Admin who also
       // holds one of those titles.
       can("manage", "SchedulingConstraint");
+
+      // Marketing-site inquiries: Admin reviews and marks both kinds
+      // reviewed. Registrar/Principal/Headteacher get their own narrower
+      // read-only grant on AdmissionInquiry alone, below — matching exactly
+      // who AdmissionInquiryService.notifyStaff notifies.
+      can("manage", ["AdmissionInquiry", "CareerContactInquiry"]);
     }
 
     // PRD §5: Registrar manages the class timetable even though it's not a
@@ -149,6 +157,11 @@ export class AbilityFactory {
       // ScheduleGenerationRequestService.assertCanTrigger, not a CASL
       // condition.
       can("manage", "ScheduleGenerationRequest");
+
+      // Same notification-routing parity as the PRINCIPAL/HEADTEACHER
+      // branch below: whoever gets notified of an admission inquiry can
+      // also read it.
+      can("read", "AdmissionInquiry");
     }
 
     // PRD §3.9/§5: the entire fee/finance domain is invisible to Admin —
@@ -220,6 +233,12 @@ export class AbilityFactory {
       // (JSS/SSS vs. CRECHE/NURSERY/PRIMARY) by
       // ScheduleGenerationRequestService.assertCanTrigger.
       can("manage", "ScheduleGenerationRequest");
+
+      // Principal/Headteacher are notified of admission inquiries
+      // (AdmissionInquiryService.notifyStaff) — this is the matching
+      // read grant, kept narrower than Admin's "manage" on purpose (no
+      // mark-reviewed action, and no CareerContactInquiry visibility).
+      can("read", "AdmissionInquiry");
     }
 
     return build();

@@ -21,6 +21,7 @@ import {
   Calendar,
   Table,
   Bell,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
@@ -57,6 +58,19 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/notifications", label: "Notifications", icon: Bell },
+      {
+        href: "/inquiries",
+        label: "Inquiries",
+        icon: Inbox,
+        // Matches AdmissionInquiryService.notifyStaff's recipient set —
+        // Admin sees both tabs, Registrar/Principal/Headteacher see the
+        // Admissions tab only (enforced inside the page itself).
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          ["REGISTRAR", "PRINCIPAL", "HEADTEACHER"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
+      },
     ],
   },
   {

@@ -26,6 +26,7 @@ import { ExamSchedulingModule } from "./exam-scheduling/exam-scheduling.module";
 import { FeesModule } from "./fees/fees.module";
 import { StorageModule } from "./storage/storage.module";
 import { NotificationsModule } from "./notifications/notifications.module";
+import { PublicInquiriesModule } from "./public-inquiries/public-inquiries.module";
 import { AuditModule } from "./audit/audit.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { WarmupModule } from "./warmup/warmup.module";
@@ -92,6 +93,7 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
     ExamSchedulingModule,
     FeesModule,
     NotificationsModule,
+    PublicInquiriesModule,
     HealthModule,
     MetricsModule,
     DashboardModule,
