@@ -22,6 +22,7 @@ import {
   Table,
   Bell,
   Inbox,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
@@ -209,6 +210,21 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           ),
       },
       { href: "/calendar", label: "Calendar", icon: Calendar },
+    ],
+  },
+  {
+    eyebrow: "Settings",
+    items: [
+      {
+        href: "/school-profile",
+        label: "School profile",
+        icon: Settings,
+        // Deliberately narrower than `isAdmin` — matches the backend CASL
+        // check (ability.factory.ts's "manage SchoolProfile", granted only
+        // via SUPER_ADMIN's "manage all", not the ADMIN/Principal/
+        // Headteacher "manage AcademicStructure" grant).
+        visible: ({ user }) => user.roles.includes("SUPER_ADMIN"),
+      },
     ],
   },
 ];

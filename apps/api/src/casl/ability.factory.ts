@@ -16,6 +16,7 @@ export type Action = "manage" | "invite" | "read";
 export type Subject =
   | "all"
   | "AcademicStructure"
+  | "SchoolProfile"
   | "Invitation"
   | "AdminProfile"
   | "StaffProfile"
@@ -64,6 +65,10 @@ export class AbilityFactory {
       can("manage", "all");
     } else if (user.roles.includes("ADMIN")) {
       can("manage", "AcademicStructure");
+      // SchoolProfile (name/address/logo/contact info/attendance defaults)
+      // is deliberately NOT granted here, nor in the PRINCIPAL/HEADTEACHER
+      // near-parity branch below — unlike the rest of AcademicStructure,
+      // it's Super-Admin-only (covered by the "manage all" grant above).
       can("invite", "Invitation");
       // PRD FR1.2: appointing an Admin is an owner-only action.
       cannot("invite", "Invitation", { invitedRole: "ADMIN" });
