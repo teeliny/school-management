@@ -6,7 +6,7 @@ import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
-import { SearchableSelect } from "../molecules/searchable-select";
+import { MultiSelect } from "../molecules/multi-select";
 import { StudentCombobox } from "../molecules/student-combobox";
 import { TYPE_LABELS, type SubjectType } from "../../lib/subject-applicability";
 
@@ -32,6 +32,9 @@ interface EnrollmentRow {
   status: "ACTIVE" | "DROPPED";
   subject: { name: string; code: string };
 }
+interface DepartmentOption {
+  department: { name: string };
+}
 
 const STATUS_VARIANT: Record<EnrollmentRow["status"], BadgeVariant> = {
   ACTIVE: "success",
@@ -52,7 +55,8 @@ export function StudentSubjectEnrollmentManager() {
   const [classSubjects, setClassSubjects] = useState<ClassSubjectOption[]>([]);
   const [studentId, setStudentId] = useState("");
   const [enrollments, setEnrollments] = useState<EnrollmentRow[] | null>(null);
-  const [subjectToEnroll, setSubjectToEnroll] = useState("");
+  const [department, setDepartment] = useState<{ name: string } | null>(null);
+  const [subjectsToEnroll, setSubjectsToEnroll] = useState<string[]>([]);
   const [enrolling, setEnrolling] = useState(false);
   const [droppingId, setDroppingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,9 +74,26 @@ export function StudentSubjectEnrollmentManager() {
   useEffect(() => {
     setStudentId("");
     setTermId("");
-    setSubjectToEnroll("");
+    setSubjectsToEnroll([]);
     setEnrollments(null);
   }, [classArmId]);
+
+  // Department gates which DEPARTMENT-type subjects a student can opt into
+  // (enroll() rejects a mismatch) — shown upfront rather than only
+  // surfacing as an enroll-time error. Only meaningful for SSS, same
+  // scoping StudentDepartmentService.create enforces.
+  useEffect(() => {
+    if (!studentId || selectedClassArm?.classLevel.category !== "SSS") {
+      setDepartment(null);
+      return;
+    }
+    apiFetch<DepartmentOption[]>(
+      `/student-departments?studentId=${studentId}&academicSessionId=${selectedClassArm.academicSessionId}`,
+      { auth: true },
+    )
+      .then((rows) => setDepartment(rows[0]?.department ?? null))
+      .catch(() => setDepartment(null));
+  }, [studentId, selectedClassArm]);
 
   useEffect(() => {
     if (!selectedClassArm) {
@@ -125,24 +146,36 @@ export function StudentSubjectEnrollmentManager() {
   );
 
   async function enroll() {
-    if (!selectedClassArm) return;
+    if (!selectedClassArm || subjectsToEnroll.length === 0) return;
     setError(null);
     setSuccess(null);
     setEnrolling(true);
     try {
-      await apiFetch("/student-subject-enrollments", {
-        method: "POST",
-        auth: true,
-        body: {
-          studentId,
-          subjectId: subjectToEnroll,
-          classArmId,
-          academicSessionId: selectedClassArm.academicSessionId,
-          termId,
+      const result = await apiFetch<{ enrolled: string[]; failed: { subjectId: string; error: string }[] }>(
+        "/student-subject-enrollments/bulk",
+        {
+          method: "POST",
+          auth: true,
+          body: {
+            studentId,
+            subjectIds: subjectsToEnroll,
+            classArmId,
+            academicSessionId: selectedClassArm.academicSessionId,
+            termId,
+          },
         },
-      });
-      setSubjectToEnroll("");
-      setSuccess("Student enrolled in the subject.");
+      );
+      setSubjectsToEnroll([]);
+      if (result.failed.length === 0) {
+        setSuccess(`Enrolled in ${result.enrolled.length} subject${result.enrolled.length === 1 ? "" : "s"}.`);
+      } else {
+        const failedNames = result.failed.map((f) => {
+          const subject = classSubjects.find((cs) => cs.subjectId === f.subjectId)?.subject;
+          return `${subject ? `${subject.name} (${subject.code})` : f.subjectId}: ${f.error}`;
+        });
+        setSuccess(result.enrolled.length > 0 ? `Enrolled in ${result.enrolled.length} subject(s).` : null);
+        setError(`Failed to enroll in ${result.failed.length} subject(s) — ${failedNames.join("; ")}`);
+      }
       loadEnrollments();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to enroll student");
@@ -215,6 +248,12 @@ export function StudentSubjectEnrollmentManager() {
 
       {studentId && termId && (
         <>
+          {selectedClassArm?.classLevel.category === "SSS" && (
+            <p className="text-sm text-muted">
+              Department: <span className="font-medium text-foreground">{department?.name ?? "Not assigned"}</span>
+            </p>
+          )}
+
           <div>
             <table className="w-full text-left text-[12.5px]">
               <thead>
@@ -260,22 +299,21 @@ export function StudentSubjectEnrollmentManager() {
           </div>
 
           <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end">
-            <div className="flex-1">
-              <Label htmlFor="sse-add-subject">Opt into a subject</Label>
-              <SearchableSelect
+            <div className="min-w-0 flex-1">
+              <Label htmlFor="sse-add-subject">Opt into subjects</Label>
+              <MultiSelect
                 id="sse-add-subject"
-                value={subjectToEnroll}
-                onValueChange={setSubjectToEnroll}
+                value={subjectsToEnroll}
+                onValueChange={setSubjectsToEnroll}
                 options={eligibleSubjects.map((cs) => ({
                   value: cs.subjectId,
                   label: `${cs.subject.name} (${cs.subject.code}) — ${TYPE_LABELS[cs.type]}`,
                 }))}
-                placeholder="Select subject"
-                searchPlaceholder="Search by name or code…"
+                placeholder="Select subjects"
                 className="mt-1"
               />
             </div>
-            <Button type="button" disabled={!subjectToEnroll || enrolling} onClick={enroll}>
+            <Button type="button" disabled={subjectsToEnroll.length === 0 || enrolling} onClick={enroll}>
               {enrolling ? "Enrolling…" : "Enroll"}
             </Button>
           </div>

@@ -232,22 +232,146 @@ export class StudentService {
     return parentProfile.id;
   }
 
-  // PRD §3.3: reassigning a class arm re-syncs compulsory enrollment for the
-  // new class, same transaction. Known limitation, not silently fixed: this
-  // does not drop enrollments tied to the student's *previous* class arm.
-  update(id: string, dto: UpdateStudentDto) {
-    if (!dto.classArmId) {
-      return this.prisma.studentProfile.update({ where: { id }, data: dto });
+  /**
+   * Name/gender/dateOfBirth live on User, everything else (classArmId →
+   * currentClassId, bloodGroup, medicalNotes, status) on StudentProfile —
+   * both written in one transaction. Fields are mapped explicitly rather
+   * than spreading `dto` straight into `data` (the previous implementation
+   * did that, which silently passed an invalid `classArmId` key instead of
+   * `currentClassId` — Prisma's own StudentProfileUpdateInput type would
+   * reject it, but TS didn't catch it here since `dto` is a variable, not
+   * an object literal, so excess-property checking never ran).
+   *
+   * PRD §3.3: reassigning a class arm re-syncs compulsory enrollment for
+   * the new class, same transaction. Known limitation, not silently fixed:
+   * this does not drop enrollments tied to the student's *previous* class
+   * arm.
+   */
+  async update(id: string, dto: UpdateStudentDto) {
+    const pendingInvites: { email: string; rawToken: string }[] = [];
+
+    await this.prisma.$transaction(async (tx) => {
+      const existing = await tx.studentProfile.findUniqueOrThrow({
+        where: { id },
+        include: { guardians: true },
+      });
+
+      if (
+        dto.firstName !== undefined ||
+        dto.lastName !== undefined ||
+        dto.middleName !== undefined ||
+        dto.gender !== undefined ||
+        dto.dateOfBirth !== undefined
+      ) {
+        await tx.user.update({
+          where: { id: existing.userId },
+          data: {
+            firstName: dto.firstName,
+            lastName: dto.lastName,
+            middleName: dto.middleName,
+            gender: dto.gender,
+            dateOfBirth: dto.dateOfBirth,
+          },
+        });
+      }
+
+      await tx.studentProfile.update({
+        where: { id },
+        data: {
+          currentClassId: dto.classArmId,
+          bloodGroup: dto.bloodGroup,
+          medicalNotes: dto.medicalNotes,
+          status: dto.status,
+        },
+      });
+
+      if (dto.classArmId) {
+        await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
+          studentId: id,
+          classArmId: dto.classArmId,
+        });
+      }
+
+      if (dto.guardians) {
+        await this.reconcileGuardians(tx, id, existing.guardians, dto.guardians, pendingInvites);
+      }
+    }, { timeout: 15000 });
+
+    // Same as create(): emails go out only after the transaction commits.
+    for (const invite of pendingInvites) {
+      await this.invitationService.sendInviteEmail(invite.email, invite.rawToken);
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.studentProfile.update({ where: { id }, data: dto });
-      await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
-        studentId: id,
-        classArmId: dto.classArmId!,
+    return this.prisma.studentProfile.findUniqueOrThrow({
+      where: { id },
+      include: {
+        ...STUDENT_LIST_INCLUDE,
+        guardians: { include: { parent: { include: { user: true } } } },
+      },
+    });
+  }
+
+  /**
+   * Find-diff reconciliation against the incoming full guardian list — same
+   * shape as StaffAssignment.syncSubjectTeacherAssignments. Incoming rows
+   * whose `existingParentProfileId` matches a currently-linked guardian's
+   * `parentId` are kept (and updated if relationship/contact flags
+   * changed); currently-linked guardians with no match in the incoming
+   * list are removed; everything else is resolved via the same
+   * `resolveGuardian` used by `create()` (covers both "link an existing,
+   * currently-unlinked ParentProfile by id" and "inline-invite a brand-new
+   * guardian") and newly linked.
+   */
+  private async reconcileGuardians(
+    tx: Tx,
+    studentId: string,
+    current: { id: string; parentId: string }[],
+    incoming: GuardianInputDto[],
+    pendingInvites: { email: string; rawToken: string }[],
+  ): Promise<void> {
+    const incomingParentIds = new Set(
+      incoming.map((g) => g.existingParentProfileId).filter((id): id is string => !!id),
+    );
+    const kept = current.filter((g) => incomingParentIds.has(g.parentId));
+    const removed = current.filter((g) => !incomingParentIds.has(g.parentId));
+    const newRows = incoming.filter(
+      (g) => !g.existingParentProfileId || !current.some((c) => c.parentId === g.existingParentProfileId),
+    );
+
+    if (kept.length + newRows.length === 0) {
+      throw new BadRequestException("A student must have at least one guardian.");
+    }
+
+    for (const guardian of removed) {
+      await tx.studentGuardian.delete({ where: { id: guardian.id } });
+    }
+
+    for (const guardian of incoming) {
+      if (!guardian.existingParentProfileId) continue;
+      const match = current.find((c) => c.parentId === guardian.existingParentProfileId);
+      if (!match) continue;
+      await tx.studentGuardian.update({
+        where: { id: match.id },
+        data: {
+          relationship: guardian.relationship,
+          isPrimaryContact: guardian.isPrimaryContact ?? false,
+          isEmergencyContact: guardian.isEmergencyContact ?? false,
+        },
       });
-      return updated;
-    }, { timeout: 15000 });
+    }
+
+    for (const guardian of newRows) {
+      const parentProfileId = await this.resolveGuardian(tx, guardian, pendingInvites);
+      await tx.studentGuardian.create({
+        data: {
+          studentId,
+          parentId: parentProfileId,
+          relationship: guardian.relationship,
+          isPrimaryContact: guardian.isPrimaryContact ?? false,
+          isEmergencyContact: guardian.isEmergencyContact ?? false,
+        },
+      });
+    }
   }
 
   /**
@@ -301,10 +425,12 @@ export class StudentService {
 
   /**
    * PRD §5 row-level list scoping: SUPER_ADMIN/ADMIN see every student;
-   * STAFF holding an active PRINCIPAL/HEADTEACHER assignment (school-wide
-   * roles, not tied to a classArmId) see every student too, matching their
-   * real-world remit (e.g. writing PRINCIPAL report-card comments for any
-   * student); other STAFF see students in class arms they hold an active
+   * STAFF holding an active PRINCIPAL/HEADTEACHER/REGISTRAR assignment
+   * (school-wide roles, not tied to a classArmId) see every student too,
+   * matching their real-world remit (e.g. writing PRINCIPAL report-card
+   * comments for any student, or Registrar enrolling/maintaining any
+   * student — see ability.factory.ts's REGISTRAR block); other STAFF see
+   * students in class arms they hold an active
    * CLASS_TEACHER or SUBJECT_TEACHER assignment for (subject-level narrowing
    * arrives in Phase 3 once StudentSubjectEnrollment exists); PARENT see
    * their own wards; STUDENT sees only themself. This is plain Prisma
@@ -397,6 +523,11 @@ export class StudentService {
       include: {
         ...STUDENT_LIST_INCLUDE,
         guardians: { include: { parent: { include: { user: true } } } },
+        // PRD §3.2: department is per-current-session (@@unique on
+        // [studentId, academicSessionId]) — filtering to the singleton
+        // "current" session, not currentClassId's session, matches how
+        // "current" is resolved everywhere else in this codebase.
+        departmentHistory: { where: { academicSession: { isCurrent: true } }, include: { department: true } },
       },
     });
 
@@ -445,7 +576,7 @@ export class StudentService {
       where: {
         staffId: staffProfile.id,
         isActive: true,
-        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER] },
+        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.REGISTRAR] },
       },
     });
     return count > 0;

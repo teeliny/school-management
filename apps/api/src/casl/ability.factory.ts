@@ -134,8 +134,15 @@ export class AbilityFactory {
     // Role — it's a StaffAssignment.assignmentType, so this check is
     // additive on top of whatever the role branches above already granted,
     // not exclusive with them (a STAFF user who's also Registrar gets
-    // exactly this one extra permission, nothing else).
+    // exactly these extra permissions, nothing else).
     if (user.assignmentTypes?.includes("REGISTRAR")) {
+      // Registrar enrolls/maintains students, same StudentProfile grant as
+      // Admin — deliberately no matching "invite" grant on Invitation here,
+      // so the standalone InvitationsController stays forbidden to them
+      // while the inline invite-a-new-guardian sub-flow inside
+      // StudentService.resolveGuardian (which never checks the "invite"
+      // ability) keeps working exactly as it does for Admin.
+      can("manage", "StudentProfile");
       can("manage", "TimetableSlot");
       // Needed to pick a staff member for a TimetableSlot and to build the
       // roster for a STAFF-type attendance register below — StaffProfile

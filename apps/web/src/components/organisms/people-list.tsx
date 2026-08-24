@@ -34,7 +34,17 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
  * the real per-class authorization is enforced server-side regardless
  * (StudentService.uploadPhoto).
  */
-export function PeopleList({ refreshKey, canUploadPhoto = false }: { refreshKey?: unknown; canUploadPhoto?: boolean }) {
+export function PeopleList({
+  refreshKey,
+  canUploadPhoto = false,
+  canEdit = false,
+  onEdit,
+}: {
+  refreshKey?: unknown;
+  canUploadPhoto?: boolean;
+  canEdit?: boolean;
+  onEdit?: (id: string) => void;
+}) {
   const [students, setStudents] = useState<StudentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -115,9 +125,16 @@ export function PeopleList({ refreshKey, canUploadPhoto = false }: { refreshKey?
                   <Badge variant={STATUS_VARIANT[student.status] ?? "muted"}>{student.status}</Badge>
                 </td>
                 <td className="py-2.5 text-right">
-                  <Button asChild variant="outline" size="sm">
-                    <Link href={`/students/${student.id}`}>View</Link>
-                  </Button>
+                  <span className="inline-flex gap-1.5">
+                    {canEdit && (
+                      <Button variant="outline" size="sm" onClick={() => onEdit?.(student.id)}>
+                        Edit
+                      </Button>
+                    )}
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/students/${student.id}`}>View</Link>
+                    </Button>
+                  </span>
                 </td>
               </tr>
             ))}

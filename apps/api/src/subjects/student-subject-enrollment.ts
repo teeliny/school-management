@@ -19,7 +19,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
-import { CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
+import { CreateBulkEnrollmentDto, CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 import { ClassSubjectTermStatusService } from "./class-subject-term-status";
 
 type Tx = Prisma.TransactionClient;
@@ -259,6 +259,40 @@ export class StudentSubjectEnrollmentService {
     return enrollment;
   }
 
+  /**
+   * Same GENERAL/DEPARTMENT opt-in as enroll(), for several subjects in one
+   * request — resolves each subjectId through the unchanged single-subject
+   * enroll() and reports per-subject outcomes rather than aborting the
+   * whole batch, same "batch op, partial-result summary" shape as
+   * InvoiceService.generate. enroll() has no transaction wrapper of its
+   * own today, so looping it here doesn't remove any atomicity that
+   * existed before.
+   */
+  async enrollMany(dto: CreateBulkEnrollmentDto): Promise<{
+    enrolled: string[];
+    failed: { subjectId: string; error: string }[];
+  }> {
+    const enrolled: string[] = [];
+    const failed: { subjectId: string; error: string }[] = [];
+
+    for (const subjectId of dto.subjectIds) {
+      try {
+        await this.enroll({
+          studentId: dto.studentId,
+          subjectId,
+          classArmId: dto.classArmId,
+          academicSessionId: dto.academicSessionId,
+          termId: dto.termId,
+        });
+        enrolled.push(subjectId);
+      } catch (err) {
+        failed.push({ subjectId, error: err instanceof Error ? err.message : "Unknown error" });
+      }
+    }
+
+    return { enrolled, failed };
+  }
+
   drop(id: string) {
     return this.prisma.studentSubjectEnrollment.update({
       where: { id },
@@ -284,6 +318,12 @@ export class StudentSubjectEnrollmentController {
   @CheckPolicies((ability) => ability.can("manage", "StudentSubjectEnrollment"))
   enroll(@Body() dto: CreateEnrollmentDto) {
     return this.service.enroll(dto);
+  }
+
+  @Post("bulk")
+  @CheckPolicies((ability) => ability.can("manage", "StudentSubjectEnrollment"))
+  enrollMany(@Body() dto: CreateBulkEnrollmentDto) {
+    return this.service.enrollMany(dto);
   }
 
   @Get()

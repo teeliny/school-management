@@ -36,6 +36,7 @@ interface StudentDetail {
     avatarUrl: string | null;
   };
   guardians: Guardian[];
+  departmentHistory: { department: { name: string } }[];
 }
 
 const STATUS_VARIANT: Record<string, BadgeVariant> = {
@@ -172,6 +173,12 @@ export function StudentProfile({
                     <div>
                       <dt className="text-[10px] uppercase tracking-wide text-muted">Title</dt>
                       <dd className="mt-0.5">{student.studentTitle}</dd>
+                    </div>
+                  )}
+                  {student.currentClass?.classLevel.category === "SSS" && (
+                    <div>
+                      <dt className="text-[10px] uppercase tracking-wide text-muted">Department</dt>
+                      <dd className="mt-0.5">{student.departmentHistory[0]?.department.name ?? "Not assigned"}</dd>
                     </div>
                   )}
                   {student.bloodGroup && (
