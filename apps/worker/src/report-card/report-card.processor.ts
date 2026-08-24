@@ -368,6 +368,7 @@ export class ReportCardProcessor extends WorkerHost {
         grade: annualSubject ? annualSubject.grade : result.grade,
         remark: annualSubject ? annualSubject.remark : result.remark,
         position: annualSubject ? annualSubject.position : result.position,
+        annualAverage: annualSubject ? annualSubject.average : null,
       };
     });
 

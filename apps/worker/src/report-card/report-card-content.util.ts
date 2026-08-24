@@ -97,6 +97,13 @@ export interface FullTermSubjectResultInput {
   grade: string | null;
   remark: string | null;
   position: number | null;
+  // This subject's totalScore averaged across every term in the session the
+  // student actually has a SubjectTermResult for (SubjectTermResultService.
+  // computeAnnualSummary — join-late aware: a term the student wasn't
+  // enrolled for yet is excluded from the average, not treated as a zero).
+  // Only set on the session's last term (mirrors `grade`/`remark`/`position`
+  // switching to the annual values there); null on every earlier term.
+  annualAverage: number | null;
 }
 
 export interface FullTermOverallInput {

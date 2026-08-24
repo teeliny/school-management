@@ -82,6 +82,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
       grade: "A1",
       remark: "Excellent",
       position: 1,
+      annualAverage: null,
       ...overrides,
     };
   }
@@ -164,6 +165,7 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
       grade: "A1",
       remark: "Excellent",
       position: 1,
+      annualAverage: null,
     });
   });
 

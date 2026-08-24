@@ -62,72 +62,138 @@ function headerRow(labels: string[]): { text: string; font: { src: string } }[] 
   return labels.map((text) => ({ text: text.toUpperCase(), font: { src: "Helvetica-Bold" } }));
 }
 
+// Logo/photo badge size in the header's top corners — same size for both so
+// the two sides read as a matched pair.
+const HEADER_BADGE_SIZE = 44;
+
+/**
+ * Generic schoolhouse glyph drawn with plain vector primitives (no external
+ * asset, no network/data: URI) — stands in for the school crest in the
+ * header's top-left corner until a real SchoolProfile.logoUrl is uploaded.
+ */
+function renderLogoPlaceholder(doc: PDFKit.PDFDocument, x: number, y: number, size: number): void {
+  doc.save();
+  doc.fillColor(BAND).rect(x, y, size, size).fill();
+  doc.lineWidth(1).strokeColor(BORDER).rect(x, y, size, size).stroke();
+
+  const pad = size * 0.2;
+  const roofTop = y + pad;
+  const bodyTop = y + size * 0.45;
+  const bodyBottom = y + size - pad;
+  const cx = x + size / 2;
+
+  doc.fillColor(NAVY);
+  doc.moveTo(cx, roofTop).lineTo(x + size - pad, bodyTop).lineTo(x + pad, bodyTop).closePath().fill();
+  doc.rect(x + pad, bodyTop, size - pad * 2, bodyBottom - bodyTop).fill();
+
+  const doorWidth = size * 0.18;
+  doc.fillColor(BAND).rect(cx - doorWidth / 2, bodyBottom - size * 0.3, doorWidth, size * 0.3).fill();
+
+  doc.restore();
+}
+
+/**
+ * Compact "label / value" grid for the student's basic info (Student,
+ * Gender, Class, Session, Term, Parent/Guardian) — laid out `columns` per
+ * row (3, by default) instead of one field per line, so six fields take two
+ * rows instead of six. Row height is driven by whichever cell in the row
+ * wraps to the most lines, so a long student name doesn't clip a neighbor.
+ */
+function renderInfoGrid(doc: PDFKit.PDFDocument, fields: [string, string][], columns = 3): void {
+  const left = doc.page.margins.left;
+  const width = contentWidth(doc);
+  const colWidth = width / columns;
+  const cellGutter = 10;
+
+  let rowY = doc.y;
+  let rowHeight = 0;
+
+  fields.forEach(([label, value], i) => {
+    const col = i % columns;
+    if (col === 0 && i !== 0) {
+      rowY += rowHeight + 3;
+      rowHeight = 0;
+    }
+    const x = left + col * colWidth;
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(7.5).text(label.toUpperCase(), x, rowY, { width: colWidth - cellGutter });
+    doc.fillColor("black").font("Helvetica").fontSize(9.5).text(value, x, doc.y, { width: colWidth - cellGutter });
+    rowHeight = Math.max(rowHeight, doc.y - rowY);
+  });
+
+  doc.x = left;
+  doc.y = rowY + rowHeight + 4;
+}
+
 /**
  * Shared header (logo/school name+address/generated date/student+term) for
  * both report types, per PRD §3.6. Kept as a plain function taking the doc
  * rather than a class — pdfkit's own API is already a mutable-builder
  * pattern, no need for a second one on top.
+ *
+ * Layout: the school logo sits top-left and the student photo top-right —
+ * mirror images of each other — with the school name/address centered
+ * between them. Both badges are placed at an absolute x/y rather than
+ * flowed, so neither disturbs the centered text block; the divider rule
+ * below is positioned relative to whichever of the three (name/address
+ * text, logo, photo) ends up tallest.
  */
 function renderHeader(doc: PDFKit.PDFDocument, meta: ReportCardMeta, title: string): void {
   const headerTop = doc.y;
+  const left = doc.page.margins.left;
+  const width = contentWidth(doc);
+  const badge = HEADER_BADGE_SIZE;
 
   if (meta.logoBuffer) {
     try {
-      doc.image(meta.logoBuffer, { fit: [64, 64], align: "center" });
+      doc.image(meta.logoBuffer, left, headerTop, { fit: [badge, badge] });
     } catch {
-      // Malformed/unsupported image bytes — skip the logo, don't fail the
-      // whole report over a decorative header element.
+      // Malformed/unsupported image bytes — fall back to the placeholder
+      // rather than leaving the corner blank.
+      renderLogoPlaceholder(doc, left, headerTop, badge);
     }
+  } else {
+    renderLogoPlaceholder(doc, left, headerTop, badge);
   }
 
-  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(15).text(meta.schoolName, { align: "center" });
-  if (meta.schoolAddress) {
-    doc.fillColor(MUTED).font("Helvetica").fontSize(9).text(meta.schoolAddress, { align: "center" });
-  }
-  doc.moveDown(0.5);
-
-  // Student photo — placed at an absolute x/y (top-right corner) rather
-  // than flowed, so it doesn't disturb the centered logo/school-name block
-  // above. If the flowed content above ended up shorter than the photo
-  // (e.g. no logo), doc.y is nudged down so the divider rule below doesn't
-  // cut through it.
+  let photoBottom = headerTop;
   if (meta.photoBuffer) {
     try {
-      const photoSize = 56;
-      const photoX = doc.page.margins.left + contentWidth(doc) - photoSize;
-      doc.image(meta.photoBuffer, photoX, headerTop, { fit: [photoSize, photoSize] });
-      const photoBottom = headerTop + photoSize + 6;
-      if (doc.y < photoBottom) doc.y = photoBottom;
+      const photoX = left + width - badge;
+      doc.image(meta.photoBuffer, photoX, headerTop, { fit: [badge, badge] });
+      photoBottom = headerTop + badge;
     } catch {
       // Malformed/unsupported image bytes — skip, same as the logo.
     }
   }
 
-  const left = doc.page.margins.left;
-  const width = contentWidth(doc);
+  const textGutter = badge + 12;
+  const textX = left + textGutter;
+  const textWidth = width - textGutter * 2;
+  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(14).text(meta.schoolName, textX, headerTop, { width: textWidth, align: "center" });
+  if (meta.schoolAddress) {
+    doc.fillColor(MUTED).font("Helvetica").fontSize(8.5).text(meta.schoolAddress, textX, doc.y + 1, { width: textWidth, align: "center" });
+  }
+
+  doc.x = left;
+  doc.y = Math.max(doc.y, headerTop + badge, photoBottom) + 8;
+
   doc.moveTo(left, doc.y).lineTo(left + width, doc.y).lineWidth(1.25).strokeColor(NAVY).stroke();
-  doc.moveDown(0.12);
+  doc.moveDown(0.1);
   doc.moveTo(left, doc.y).lineTo(left + width, doc.y).lineWidth(0.5).strokeColor(NAVY).stroke();
-  doc.moveDown(0.6);
+  doc.moveDown(0.25);
 
-  doc.fillColor(NAVY).font("Times-Bold").fontSize(19).text(title, { align: "center" });
-  doc.fillColor(MUTED).font("Helvetica").fontSize(8).text(`Generated: ${meta.generatedAt.toDateString()}`, { align: "center" });
-  doc.moveDown(0.7);
+  doc.fillColor(NAVY).font("Times-Bold").fontSize(14.5).text(title, { align: "center" });
+  doc.fillColor(MUTED).font("Helvetica").fontSize(7.5).text(`Generated: ${meta.generatedAt.toDateString()}`, { align: "center" });
+  doc.moveDown(0.3);
 
-  doc.fillColor("black").fontSize(10.5);
-  doc.font("Helvetica-Bold").text("Student: ", { continued: true });
-  doc.font("Helvetica").text(`${meta.studentName} (${meta.admissionNumber})`);
-  doc.font("Helvetica-Bold").text("Gender: ", { continued: true });
-  doc.font("Helvetica").text(meta.gender ?? "-");
-  doc.font("Helvetica-Bold").text("Class: ", { continued: true });
-  doc.font("Helvetica").text(meta.className);
-  doc.font("Helvetica-Bold").text("Session: ", { continued: true });
-  doc.font("Helvetica").text(meta.sessionName);
-  doc.font("Helvetica-Bold").text("Term: ", { continued: true });
-  doc.font("Helvetica").text(meta.termName);
-  doc.font("Helvetica-Bold").text("Parent/Guardian: ", { continued: true });
-  doc.font("Helvetica").text(meta.parentName ?? "-");
-  doc.moveDown(0.7);
+  renderInfoGrid(doc, [
+    ["Student", `${meta.studentName} (${meta.admissionNumber})`],
+    ["Gender", meta.gender ?? "-"],
+    ["Class", meta.className],
+    ["Session", meta.sessionName],
+    ["Term", meta.termName],
+    ["Parent/Guardian", meta.parentName ?? "-"],
+  ]);
 
   doc.fillColor("black").font("Helvetica").fontSize(10);
 }
@@ -142,16 +208,16 @@ function renderHeader(doc: PDFKit.PDFDocument, meta: ReportCardMeta, title: stri
  */
 function renderVerificationQr(doc: PDFKit.PDFDocument, qrCodeBuffer: Buffer | null): void {
   if (!qrCodeBuffer) return;
-  const size = 64;
-  if (doc.y > doc.page.height - doc.page.margins.bottom - size - 20) doc.addPage();
+  const size = 42;
+  if (doc.y > doc.page.height - doc.page.margins.bottom - size - 10) doc.addPage();
 
   const left = doc.page.margins.left;
   const width = contentWidth(doc);
   const x = left + width - size;
-  const y = doc.y + 8;
+  const y = doc.y + 3;
   try {
     doc.image(qrCodeBuffer, x, y, { fit: [size, size] });
-    doc.fillColor(MUTED).font("Helvetica").fontSize(7).text("Scan to verify", x, y + size + 2, { width: size, align: "center" });
+    doc.fillColor(MUTED).font("Helvetica").fontSize(6.5).text("Scan to verify", x, y + size + 2, { width: size, align: "center" });
   } catch {
     // Malformed QR bytes — skip rather than fail the report.
   }
@@ -159,15 +225,44 @@ function renderVerificationQr(doc: PDFKit.PDFDocument, qrCodeBuffer: Buffer | nu
 
 /** Section title with a navy rule beneath it, replacing plain underlined text. */
 function sectionHeader(doc: PDFKit.PDFDocument, label: string): void {
-  if (doc.y > doc.page.height - doc.page.margins.bottom - 60) doc.addPage();
-  doc.moveDown(0.4);
-  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(12).text(label);
+  if (doc.y > doc.page.height - doc.page.margins.bottom - 50) doc.addPage();
+  doc.moveDown(0.15);
+  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(10).text(label);
   const left = doc.page.margins.left;
   const width = contentWidth(doc);
-  const y = doc.y + 2;
+  const y = doc.y + 1;
   doc.moveTo(left, y).lineTo(left + width, y).lineWidth(0.75).strokeColor(NAVY).stroke();
-  doc.y = y + 8;
-  doc.fillColor("black").font("Helvetica").fontSize(10);
+  doc.y = y + 4;
+  doc.fillColor("black").font("Helvetica").fontSize(9.5);
+}
+
+/**
+ * One or more labeled stat boxes side by side (Term/Annual Summary +
+ * Attendance) — a single row instead of two full sectionHeader+box blocks
+ * stacked, so the pairing that used to cost ~2 section heights now costs
+ * one. Falls back to a single full-width box when there's only one entry
+ * (e.g. no attendance data for this term).
+ */
+function renderStatBoxRow(doc: PDFKit.PDFDocument, boxes: { label: string; text: string }[]): void {
+  if (doc.y > doc.page.height - doc.page.margins.bottom - 50) doc.addPage();
+  const left = doc.page.margins.left;
+  const gap = 16;
+  const colWidth = boxes.length === 1 ? contentWidth(doc) : (contentWidth(doc) - gap * (boxes.length - 1)) / boxes.length;
+  const startY = doc.y + 2;
+  const boxHeight = 20;
+  let maxBottom = startY;
+
+  boxes.forEach((box, i) => {
+    const x = left + i * (colWidth + gap);
+    const boxY = columnHeader(doc, box.label, x, colWidth, startY);
+    doc.save().fillColor(BAND).rect(x, boxY, colWidth, boxHeight).fill().restore();
+    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(8.5).text(box.text, x + 7, boxY + 5.5, { width: colWidth - 14 });
+    maxBottom = Math.max(maxBottom, boxY + boxHeight);
+  });
+
+  doc.fillColor("black").font("Helvetica").fontSize(9.5);
+  doc.x = left;
+  doc.y = maxBottom + 5;
 }
 
 /** Muted italic placeholder for a section with no data yet — used instead of
@@ -183,15 +278,15 @@ function commentBox(doc: PDFKit.PDFDocument, comment: string | null): void {
   const left = doc.page.margins.left;
   const width = contentWidth(doc);
   const text = comment ?? "No comment recorded yet.";
-  const inset = 10;
-  doc.font(comment ? "Helvetica" : "Helvetica-Oblique").fontSize(10);
+  const inset = 6;
+  doc.font(comment ? "Helvetica" : "Helvetica-Oblique").fontSize(9);
   const textHeight = doc.heightOfString(text, { width: width - inset * 2 });
   const boxHeight = textHeight + inset * 2;
   const boxY = doc.y;
   doc.save().fillColor(BAND).rect(left, boxY, width, boxHeight).fill().restore();
   doc.fillColor(comment ? "black" : MUTED).text(text, left + inset, boxY + inset, { width: width - inset * 2 });
-  doc.y = boxY + boxHeight + 12;
-  doc.fillColor("black").font("Helvetica").fontSize(10);
+  doc.y = boxY + boxHeight + 4;
+  doc.fillColor("black").font("Helvetica").fontSize(9.5);
 }
 
 /**
@@ -202,7 +297,7 @@ function commentBox(doc: PDFKit.PDFDocument, comment: string | null): void {
  */
 export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ margin: 40 });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -237,19 +332,10 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
       doc.moveDown(0.6);
     }
 
-    sectionHeader(doc, "Overall");
     const overallPercentage = snapshot.overallPercentage === null ? "-" : `${Math.round(snapshot.overallPercentage)}%`;
-    const left = doc.page.margins.left;
-    const width = contentWidth(doc);
-    const boxY = doc.y;
-    doc.save().fillColor(BAND).rect(left, boxY, width, 26).fill().restore();
-    doc
-      .fillColor(NAVY)
-      .font("Helvetica-Bold")
-      .fontSize(10)
-      .text(`Overall percentage: ${overallPercentage}    Overall grade: ${snapshot.overallGrade ?? "-"}`, left + 10, boxY + 8);
-    doc.fillColor("black").font("Helvetica").fontSize(10);
-    doc.y = boxY + 26 + 10;
+    renderStatBoxRow(doc, [
+      { label: "Overall", text: `Overall percentage: ${overallPercentage}    Overall grade: ${snapshot.overallGrade ?? "-"}` },
+    ]);
 
     renderVerificationQr(doc, meta.qrCodeBuffer);
 
@@ -267,7 +353,12 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
  */
 export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50 });
+    // Narrower side margins than renderMidTermPdf's uniform 40 — the subject
+    // table here carries per-component columns plus prior-term columns
+    // (dynamic per term, see below) and, on the annual term, an average
+    // column; the extra ~30pt of width is needed to fit all of that in
+    // portrait without the table becoming illegibly cramped.
+    const doc = new PDFDocument({ margins: { top: 40, bottom: 40, left: 25, right: 25 } });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -279,29 +370,44 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
     if (content.subjects.length === 0) {
       emptyPlaceholder(doc, "No subject results recorded yet — scores haven't been finalized for this term.");
     } else {
-      doc.font("Helvetica").fontSize(8.5);
+      doc.font("Helvetica").fontSize(8);
+
+      // Prior-term total columns, one per earlier term in the session
+      // (empty on the session's first term, per FullTermSubjectResultInput's
+      // own doc comment) — every subject shares the same list of prior
+      // term names, sourced from the first subject here. Shown most-recent
+      // first (reversed), so they read right-to-left away from this term's
+      // own Total column: e.g. on the 3rd term, "Total | 2nd Term | 1st
+      // Term". The annual-average column only exists on the session's last
+      // term (content.isAnnual), grouped right after the prior-term totals.
+      const priorTermNames = content.subjects[0] ? [...content.subjects[0].priorTerms].reverse().map((t) => t.termName) : [];
+
       doc.table({
         columnStyles: [
-          { width: "*", minWidth: 74 },
+          { width: "*", minWidth: 65 },
           // Wide enough for the header ("1ST TEST / 10") to wrap by whole
           // word rather than mid-word — the data cells themselves are just
           // a bare number now, so this column is header-width-driven, not
           // data-width-driven.
-          ...content.components.map(() => ({ width: 48 })),
-          { width: 42 },
-          { width: 27 },
-          { width: 31 },
-          { width: 31 },
-          { width: 46 },
-          { width: "*", minWidth: 68 },
+          ...content.components.map(() => ({ width: 40 })),
+          { width: 40 },
+          ...priorTermNames.map(() => ({ width: 34 })),
+          ...(content.isAnnual ? [{ width: 34 }] : []),
+          { width: 24 },
+          { width: 26 },
+          { width: 26 },
+          { width: 36 },
+          { width: "*", minWidth: 55 },
         ],
-        defaultStyle: { padding: 5, border: { bottom: 0.5 }, borderColor: BORDER },
+        defaultStyle: { padding: 3, border: { bottom: 0.5 }, borderColor: BORDER },
         rowStyles: (i) => (i === 0 ? { backgroundColor: NAVY, textColor: "white" } : i % 2 === 0 ? { backgroundColor: BAND } : {}),
         data: [
           headerRow([
             "Subject",
             ...content.components.map((c) => `${c.name} / ${c.maxScore}`),
             `Total / ${content.totalObtainable}`,
+            ...priorTermNames,
+            ...(content.isAnnual ? ["Avg"] : []),
             "Min",
             "Max",
             "Pos.",
@@ -309,10 +415,14 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
             "Remark",
           ]),
           ...content.subjects.map((subject) => {
-            const priorLine =
-              subject.priorTerms.length > 0
-                ? subject.priorTerms.map((t) => `${t.termName}: ${formatScore(t.total)}`).join("   ")
-                : null;
+            const priorCells = [...subject.priorTerms].reverse().map((t) => ({
+              text: formatScore(t.total),
+              align: "center" as const,
+              textColor: MUTED,
+            }));
+            const avgCell = content.isAnnual
+              ? [{ text: formatScore(subject.annualAverage), align: "center" as const, font: { src: "Helvetica-Bold" } }]
+              : [];
             return [
               { text: subject.subjectName, font: { src: "Helvetica-Bold" } },
               ...subject.components.map((c) => ({
@@ -321,24 +431,28 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
                 textColor: MUTED,
               })),
               { text: formatScore(subject.totalScore), align: "center" as const },
+              ...priorCells,
+              ...avgCell,
               { text: formatScore(subject.classLowScore), align: "center" as const },
               { text: formatScore(subject.classHighScore), align: "center" as const },
               { text: subject.position ? String(subject.position) : "-", align: "center" as const },
               { text: subject.grade ?? "-", align: "center" as const },
-              { text: priorLine ? `${subject.remark ?? "-"}\n${priorLine}` : (subject.remark ?? "-") },
+              { text: subject.remark ?? "-" },
             ];
           }),
         ],
       });
-      doc.moveDown(0.6);
+      doc.moveDown(0.3);
     }
 
-    sectionHeader(doc, content.isAnnual ? "Annual Summary" : "Term Summary");
+    // Term/Annual Summary and Attendance (PRD §3.6/§3.7 — "days present /
+    // school-days-opened this term") share one row of stat boxes rather than
+    // two stacked sectionHeader+box blocks. Attendance is omitted (rather
+    // than shown as "-") when the caller had no attendance data to offer,
+    // same degrade-quietly contract as the logo/photo/QR images — the
+    // summary box then simply takes the full row width.
     {
       const overallAverage = formatScore(content.overallAverage);
-      const left = doc.page.margins.left;
-      const width = contentWidth(doc);
-      const boxY = doc.y;
       const summaryLine = [
         `Average: ${overallAverage}`,
         `Grade: ${content.overallGrade ?? "-"}`,
@@ -346,26 +460,15 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
       ]
         .filter(Boolean)
         .join("     ");
-      doc.save().fillColor(BAND).rect(left, boxY, width, 26).fill().restore();
-      doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(10).text(summaryLine, left + 10, boxY + 8);
-      doc.fillColor("black").font("Helvetica").fontSize(10);
-      doc.y = boxY + 26 + 10;
-    }
-
-    // PRD §3.6/§3.7: "days present / school-days-opened this term" — absent
-    // (content.attendance null) if the caller had no attendance data to
-    // offer, same degrade-quietly contract as the logo/photo/QR images.
-    if (content.attendance) {
-      sectionHeader(doc, "Attendance");
-      const left = doc.page.margins.left;
-      const width = contentWidth(doc);
-      const boxY = doc.y;
-      const percentageText = content.attendance.percentage === null ? "-" : `${content.attendance.percentage}%`;
-      const line = `Days present: ${content.attendance.daysPresent} / ${content.attendance.schoolDaysOpened} school days opened     Attendance: ${percentageText}`;
-      doc.save().fillColor(BAND).rect(left, boxY, width, 26).fill().restore();
-      doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(10).text(line, left + 10, boxY + 8);
-      doc.fillColor("black").font("Helvetica").fontSize(10);
-      doc.y = boxY + 26 + 10;
+      const boxes = [{ label: content.isAnnual ? "Annual Summary" : "Term Summary", text: summaryLine }];
+      if (content.attendance) {
+        const percentageText = content.attendance.percentage === null ? "-" : `${content.attendance.percentage}%`;
+        boxes.push({
+          label: "Attendance",
+          text: `Days present: ${content.attendance.daysPresent} / ${content.attendance.schoolDaysOpened}     Attendance: ${percentageText}`,
+        });
+      }
+      renderStatBoxRow(doc, boxes);
     }
 
     renderSkillSectionsSideBySide(doc, content.psychomotorSkills, content.affectiveCognitiveSkills);
@@ -393,11 +496,11 @@ function humanizeRating(rating: string): string {
  * since it always spans margin-to-margin. Returns the y position right
  * below the rule, where that column's content should start. */
 function columnHeader(doc: PDFKit.PDFDocument, label: string, x: number, width: number, y: number): number {
-  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(11).text(label, x, y, { width });
-  const ruleY = doc.y + 2;
+  doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(9.5).text(label, x, y, { width });
+  const ruleY = doc.y + 1;
   doc.moveTo(x, ruleY).lineTo(x + width, ruleY).lineWidth(0.75).strokeColor(NAVY).stroke();
-  doc.fillColor("black").font("Helvetica").fontSize(10);
-  return ruleY + 8;
+  doc.fillColor("black").font("Helvetica").fontSize(9.5);
+  return ruleY + 4;
 }
 
 function renderSkillTable(
@@ -406,12 +509,12 @@ function renderSkillTable(
   position: { x: number; y: number },
   width: number,
 ): void {
-  doc.font("Helvetica").fontSize(8.5);
+  doc.font("Helvetica").fontSize(8);
   doc.table({
     position,
     maxWidth: width,
     columnStyles: [{ width: "*", minWidth: width - 66 }, { width: 66 }],
-    defaultStyle: { padding: 4, border: { bottom: 0.5 }, borderColor: BORDER },
+    defaultStyle: { padding: 2.5, border: { bottom: 0.5 }, borderColor: BORDER },
     rowStyles: (i) => (i === 0 ? { backgroundColor: NAVY, textColor: "white" } : i % 2 === 0 ? { backgroundColor: BAND } : {}),
     data: [
       headerRow(["Skill", "Rating"]),
@@ -438,7 +541,7 @@ function renderSkillSectionsSideBySide(
   const gap = 16;
   const colWidth = (contentWidth(doc) - gap) / 2;
   const rightX = left + colWidth + gap;
-  const startY = doc.y + 6;
+  const startY = doc.y + 3;
 
   const psychTableY = columnHeader(doc, "Psychomotor Skills", left, colWidth, startY);
   const affTableY = columnHeader(doc, "Affective/Cognitive Skills", rightX, colWidth, startY);
