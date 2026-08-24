@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { User as UserIcon } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -14,7 +15,7 @@ interface StudentListItem {
   status: string;
   currentClassId: string | null;
   currentClass: { name: string; classLevel: { name: string } } | null;
-  user: { firstName: string; lastName: string };
+  user: { firstName: string; lastName: string; avatarUrl: string | null };
 }
 
 const STATUS_VARIANT: Record<string, BadgeVariant> = {
@@ -107,6 +108,17 @@ export function PeopleList({
                 <td className="py-2.5 pr-4 font-mono text-muted">{student.admissionNumber}</td>
                 <td className="py-2.5 pr-4 font-medium">
                   <span className="inline-flex items-center gap-1.5">
+                    {student.user.avatarUrl ? (
+                      <img
+                        src={student.user.avatarUrl}
+                        alt=""
+                        className="h-3.5 w-3.5 flex-none rounded-full border border-border object-cover"
+                      />
+                    ) : (
+                      <span className="flex h-3.5 w-3.5 flex-none items-center justify-center rounded-full border border-border bg-card-inset text-muted">
+                        <UserIcon className="h-2.5 w-2.5" />
+                      </span>
+                    )}
                     {student.user.firstName} {student.user.lastName}
                     {canUploadPhoto && (
                       <PhotoUploadButton

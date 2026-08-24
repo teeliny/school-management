@@ -26,7 +26,11 @@ interface TermReportCardItem {
   overallScore: string | null;
   overallGrade: string | null;
   needsRegeneration: boolean;
-  student: { admissionNumber: string; user: { firstName: string; lastName: string } };
+  student: {
+    admissionNumber: string;
+    user: { firstName: string; lastName: string };
+    currentClass: { displayName: string } | null;
+  };
 }
 interface TermOption {
   id: string;
@@ -183,6 +187,7 @@ export function ReportCardList({
         <thead>
           <tr className="border-b border-border text-muted">
             <th className="py-2 pr-3 text-[10px] font-medium uppercase tracking-wide">Student</th>
+            <th className="py-2 pr-3 text-[10px] font-medium uppercase tracking-wide">Class</th>
             <th className="py-2 pr-3 text-[10px] font-medium uppercase tracking-wide">Term</th>
             <th className="py-2 pr-3 text-[10px] font-medium uppercase tracking-wide">Type</th>
             <th className="py-2 pr-3 text-[10px] font-medium uppercase tracking-wide">Status</th>
@@ -194,6 +199,7 @@ export function ReportCardList({
           {cards.map((card) => (
             <tr key={card.id} className="border-b border-border/60 last:border-none">
               <td className="py-2.5 pr-3 font-medium">{studentLabel(card)}</td>
+              <td className="py-2.5 pr-3 text-muted">{card.student?.currentClass?.displayName ?? "—"}</td>
               <td className="py-2.5 pr-3">{termLabel(card.termId)}</td>
               <td className="py-2.5 pr-3">
                 <Badge variant={TYPE_VARIANT[card.reportType]}>{card.reportType.replace("_", " ")}</Badge>

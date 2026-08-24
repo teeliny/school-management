@@ -42,6 +42,29 @@ interface ClassReadinessEntry {
   missing: string[];
 }
 
+// Same "{ClassLevel.name} {ClassArm.name}" display format as
+// academic-structure/class-arm.ts's own `withDisplayName` — duplicated
+// rather than imported for the same module-boundary reason documented in
+// staff-assignments/staff-assignment.ts.
+function withStudentClassArmDisplayName<
+  T extends { student: { currentClass: { name: string; classLevel: { name: string } } | null } },
+>(
+  card: T,
+): T & { student: T["student"] & { currentClass: (T["student"]["currentClass"] & { displayName: string }) | null } } {
+  return {
+    ...card,
+    student: {
+      ...card.student,
+      currentClass: card.student.currentClass
+        ? {
+            ...card.student.currentClass,
+            displayName: `${card.student.currentClass.classLevel.name} ${card.student.currentClass.name}`,
+          }
+        : null,
+    },
+  };
+}
+
 @Injectable()
 export class TermReportCardService {
   private readonly logger = new Logger(TermReportCardService.name);
@@ -302,13 +325,19 @@ export class TermReportCardService {
    */
   async findForUser(user: RequestUser, filters: { studentId?: string; termId?: string; classArmId?: string }) {
     const { classArmId, ...scalarFilters } = filters;
+    const studentSelect = {
+      admissionNumber: true,
+      user: { select: { firstName: true, lastName: true } },
+      currentClass: { select: { name: true, classLevel: { select: { name: true } } } },
+    } as const;
 
     if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) {
-      return this.prisma.termReportCard.findMany({
+      const cards = await this.prisma.termReportCard.findMany({
         where: { ...scalarFilters, ...(classArmId ? { student: { currentClassId: classArmId } } : {}) },
-        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
+        include: { student: { select: studentSelect } },
         orderBy: { createdAt: "desc" },
       });
+      return cards.map(withStudentClassArmDisplayName);
     }
 
     if (user.roles.includes("STAFF")) {
@@ -317,10 +346,12 @@ export class TermReportCardService {
       // applies, otherwise they'd see zero report cards (no CLASS_TEACHER/
       // SUBJECT_TEACHER assignment to scope by).
       if (await this.staffAssignments.hasActiveSchoolWideAssignment(user.id)) {
-        return this.prisma.termReportCard.findMany({
+        const cards = await this.prisma.termReportCard.findMany({
           where: { ...scalarFilters, ...(classArmId ? { student: { currentClassId: classArmId } } : {}) },
+          include: { student: { select: studentSelect } },
           orderBy: { createdAt: "desc" },
         });
+        return cards.map(withStudentClassArmDisplayName);
       }
 
       // PRD §5: class/subject teacher see report cards for their own
@@ -334,17 +365,18 @@ export class TermReportCardService {
         ? assignedClassArmIds.filter((id) => id === classArmId)
         : assignedClassArmIds;
       if (scopedClassArmIds.length === 0) return [];
-      return this.prisma.termReportCard.findMany({
+      const cards = await this.prisma.termReportCard.findMany({
         where: { ...scalarFilters, student: { currentClassId: { in: scopedClassArmIds } } },
-        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
+        include: { student: { select: studentSelect } },
         orderBy: { createdAt: "desc" },
       });
+      return cards.map(withStudentClassArmDisplayName);
     }
 
     if (user.roles.includes("PARENT")) {
       const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
       if (!parentProfile) return [];
-      return this.prisma.termReportCard.findMany({
+      const cards = await this.prisma.termReportCard.findMany({
         where: {
           ...scalarFilters,
           status: TermReportCardStatus.PUBLISHED,
@@ -353,20 +385,22 @@ export class TermReportCardService {
             ...(classArmId ? { currentClassId: classArmId } : {}),
           },
         },
-        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
+        include: { student: { select: studentSelect } },
         orderBy: { createdAt: "desc" },
       });
+      return cards.map(withStudentClassArmDisplayName);
     }
 
     if (user.roles.includes("STUDENT")) {
       const studentProfile = await this.prisma.studentProfile.findUnique({ where: { userId: user.id } });
       if (!studentProfile) return [];
       if (classArmId && studentProfile.currentClassId !== classArmId) return [];
-      return this.prisma.termReportCard.findMany({
+      const cards = await this.prisma.termReportCard.findMany({
         where: { ...scalarFilters, studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED },
-        include: { student: { select: { admissionNumber: true, user: { select: { firstName: true, lastName: true } } } } },
+        include: { student: { select: studentSelect } },
         orderBy: { createdAt: "desc" },
       });
+      return cards.map(withStudentClassArmDisplayName);
     }
 
     return [];
