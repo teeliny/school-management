@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { FlaskConical, Monitor, BookOpen, Landmark, Presentation, Trophy, Award, ShieldCheck, Users, Sparkles } from "lucide-react";
 import { Button } from "../../components/atoms/button";
@@ -5,6 +6,11 @@ import { Card } from "../../components/molecules/card";
 import { SectionHeading } from "../../components/molecules/section-heading";
 import { PlaceholderImage } from "../../components/molecules/placeholder-image";
 import { siteContent } from "../../lib/site-content";
+
+export const metadata: Metadata = {
+  description: `${siteContent.tagline} ${siteContent.schoolName} offers Reception through Senior Secondary education in Ikorodu, Lagos.`,
+  alternates: { canonical: "/" },
+};
 
 const CAMPUS_GALLERY = [
   { icon: FlaskConical, label: "Science Laboratory" },

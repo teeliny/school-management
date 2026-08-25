@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { FlaskConical, Landmark, BookOpen } from "lucide-react";
 import { PageHero } from "../../../components/molecules/page-hero";
 import { SectionHeading } from "../../../components/molecules/section-heading";
@@ -5,6 +6,12 @@ import { Card } from "../../../components/molecules/card";
 import { PlaceholderImage } from "../../../components/molecules/placeholder-image";
 import { CrestBadge } from "../../../components/atoms/crest-badge";
 import { siteContent } from "../../../lib/site-content";
+
+export const metadata: Metadata = {
+  title: "About Us",
+  description: `Our story, vision, mission, and values at ${siteContent.schoolName}.`,
+  alternates: { canonical: "/about" },
+};
 
 const FACILITIES = [
   { icon: Landmark, label: "Assembly Hall" },
@@ -50,7 +57,13 @@ export default function AboutPage() {
       <section className="mx-auto max-w-6xl px-5 py-12">
         <SectionHeading eyebrow="Leadership" title="A note from our leadership" />
         <Card className="flex flex-col gap-4 sm:flex-row sm:items-start">
-          <CrestBadge letter={siteContent.crestLetter} variant="solid" size="lg" className="flex-none" />
+          <CrestBadge
+            letter={siteContent.crestLetter}
+            darkLetter={siteContent.crestLetterDark}
+            variant="solid"
+            size="lg"
+            className="flex-none"
+          />
           <div>
             <p className="text-[14px] leading-relaxed">{siteContent.leadership.message}</p>
             <div className="mt-3 text-[12.5px] font-medium">{siteContent.leadership.name}</div>

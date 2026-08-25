@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { FlaskConical, Monitor, BookOpen } from "lucide-react";
 import { Button } from "../../../components/atoms/button";
@@ -6,6 +7,12 @@ import { SectionHeading } from "../../../components/molecules/section-heading";
 import { Card } from "../../../components/molecules/card";
 import { PlaceholderImage } from "../../../components/molecules/placeholder-image";
 import { siteContent } from "../../../lib/site-content";
+
+export const metadata: Metadata = {
+  title: "Academics",
+  description: `Academic programs from Reception through Senior Secondary at ${siteContent.schoolName}.`,
+  alternates: { canonical: "/academics" },
+};
 
 const FACILITIES = [
   { icon: FlaskConical, label: "Science Laboratory" },

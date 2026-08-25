@@ -5,6 +5,8 @@ import { ThemeProvider } from "../components/providers/theme-provider";
 import { QueryProvider } from "../components/providers/query-provider";
 import { ApiWarmupBanner } from "../components/organisms/api-warmup-banner";
 import { cn } from "../lib/cn";
+import { siteContent } from "../lib/site-content";
+import { SITE_URL } from "../lib/site-url";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -24,8 +26,30 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "School Management",
-  description: "School management platform",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: siteContent.schoolName,
+    template: `%s | ${siteContent.schoolName}`,
+  },
+  description: siteContent.tagline,
+  icons: { icon: "/favicon.ico" },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: siteContent.schoolName,
+    title: siteContent.schoolName,
+    description: siteContent.tagline,
+    images: [{ url: siteContent.crestLetter }],
+  },
+  twitter: {
+    card: "summary",
+    title: siteContent.schoolName,
+    description: siteContent.tagline,
+    images: [siteContent.crestLetter],
+  },
+  // Private by default — the student/staff portal behind login isn't meant to
+  // be indexed. The public marketing site ((public)/layout.tsx) opts back in.
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

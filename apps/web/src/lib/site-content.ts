@@ -7,8 +7,10 @@
  */
 export const siteContent = {
   schoolName: "Mercylag Schools",
-  crestLetter: "M",
-  tagline: "Where every learner is known, challenged, and prepared to lead.",
+  crestLetter: "/assets/logo.png",
+  crestLetterDark: "/assets/logo-light.png",
+  tagline:
+    "Mercy Leading All to Glory (MERCYLAG) is an educational institution for elementary and high school students.",
   foundedYear: 1998,
   studentCount: "1,200+",
   staffCount: "140+",
@@ -23,10 +25,25 @@ export const siteContent = {
     "Founded in 1998 by a small group of educators who believed Nigerian children deserved a school built around both rigor and warmth, [School Name] has grown from a single classroom block into a full Reception-through-Senior-Secondary campus. Replace this paragraph with the school's real founding story.",
 
   coreValues: [
-    { name: "Excellence", description: "We hold every learner to a high standard and support them in reaching it." },
-    { name: "Integrity", description: "We say what we mean and do what we say, in the classroom and beyond it." },
-    { name: "Community", description: "We treat every family as a partner in the work of raising this child." },
-    { name: "Curiosity", description: "We reward questions as much as answers." },
+    {
+      name: "Excellence",
+      description:
+        "We hold every learner to a high standard and support them in reaching it.",
+    },
+    {
+      name: "Integrity",
+      description:
+        "We say what we mean and do what we say, in the classroom and beyond it.",
+    },
+    {
+      name: "Community",
+      description:
+        "We treat every family as a partner in the work of raising this child.",
+    },
+    {
+      name: "Curiosity",
+      description: "We reward questions as much as answers.",
+    },
   ],
 
   leadership: {
@@ -48,17 +65,53 @@ export const siteContent = {
   },
 
   academicLevels: [
-    { name: "Reception & Nursery", ageRange: "Ages 1 – 4", description: "Play-based early learning that builds language, motor skills, and social confidence." },
-    { name: "Primary", ageRange: "Ages 5 – 10", description: "A structured foundation in literacy, numeracy, and the sciences, alongside creative and physical development." },
-    { name: "Junior Secondary", ageRange: "Ages 11 – 13", description: "Broad subject exposure preparing students for the Basic Education Certificate Examination (BECE)." },
-    { name: "Senior Secondary", ageRange: "Ages 14 – 17", description: "Science, Arts, and Commercial tracks preparing students for WASSCE/NECO and university admission." },
+    {
+      name: "Reception & Nursery",
+      ageRange: "Ages 1 – 4",
+      description:
+        "Play-based early learning that builds language, motor skills, and social confidence.",
+    },
+    {
+      name: "Primary",
+      ageRange: "Ages 5 – 10",
+      description:
+        "A structured foundation in literacy, numeracy, and the sciences, alongside creative and physical development.",
+    },
+    {
+      name: "Junior Secondary",
+      ageRange: "Ages 11 – 13",
+      description:
+        "Broad subject exposure preparing students for the Basic Education Certificate Examination (BECE).",
+    },
+    {
+      name: "Senior Secondary",
+      ageRange: "Ages 14 – 17",
+      description:
+        "Science, Arts, and Commercial tracks preparing students for WASSCE/NECO and university admission.",
+    },
   ],
 
   admissionsSteps: [
-    { name: "Inquiry", description: "Submit the form below or contact our admissions office to request a prospectus." },
-    { name: "Assessment", description: "The prospective student sits a short entrance assessment appropriate to their class level." },
-    { name: "Offer", description: "Families of successful candidates receive an admission offer and fee schedule." },
-    { name: "Enrollment", description: "Complete registration, submit documentation, and resume on the assigned date." },
+    {
+      name: "Inquiry",
+      description:
+        "Submit the form below or contact our admissions office to request a prospectus.",
+    },
+    {
+      name: "Assessment",
+      description:
+        "The prospective student sits a short entrance assessment appropriate to their class level.",
+    },
+    {
+      name: "Offer",
+      description:
+        "Families of successful candidates receive an admission offer and fee schedule.",
+    },
+    {
+      name: "Enrollment",
+      description:
+        "Complete registration, submit documentation, and resume on the assigned date.",
+    },
   ],
 
   admissionRequirements: [

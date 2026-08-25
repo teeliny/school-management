@@ -1,9 +1,16 @@
+import type { Metadata } from "next";
 import { Check } from "lucide-react";
 import { PageHero } from "../../../components/molecules/page-hero";
 import { SectionHeading } from "../../../components/molecules/section-heading";
 import { Card, CardHeader } from "../../../components/molecules/card";
 import { AdmissionInquiryForm } from "../../../components/organisms/admission-inquiry-form";
 import { siteContent } from "../../../lib/site-content";
+
+export const metadata: Metadata = {
+  title: "Admissions",
+  description: `How to apply, requirements, and key dates for admission to ${siteContent.schoolName}.`,
+  alternates: { canonical: "/admissions" },
+};
 
 export default function AdmissionsPage() {
   return (

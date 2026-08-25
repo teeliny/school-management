@@ -25,7 +25,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3.5">
           <Link href="/" className="flex items-center gap-2.5">
-            <CrestBadge letter={siteContent.crestLetter} variant="solid" />
+            <CrestBadge letter={siteContent.crestLetter} darkLetter={siteContent.crestLetterDark} variant="solid" />
             <span className="font-display text-[15px] font-semibold leading-tight">{siteContent.schoolName}</span>
           </Link>
 
@@ -77,7 +77,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
         <div className="mx-auto grid max-w-6xl gap-8 px-5 py-10 sm:grid-cols-3">
           <div>
             <div className="flex items-center gap-2.5">
-              <CrestBadge letter={siteContent.crestLetter} variant="solid" size="sm" />
+              <CrestBadge letter={siteContent.crestLetter} darkLetter={siteContent.crestLetterDark} variant="solid" size="sm" />
               <span className="font-display text-[14px] font-semibold">{siteContent.schoolName}</span>
             </div>
             <p className="mt-3 text-[12.5px] leading-relaxed text-muted">{siteContent.tagline}</p>

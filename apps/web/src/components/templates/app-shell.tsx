@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { CrestBadge } from "../atoms/crest-badge";
 import { ThemeToggle } from "../molecules/theme-toggle";
+import { siteContent } from "../../lib/site-content";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -253,12 +254,16 @@ export function AppShell({
           mid-transition, so no separate width animation is needed on the
           labels themselves. */}
       <aside className="group fixed inset-y-0 left-0 z-40 flex w-[72px] flex-col gap-5 overflow-hidden border-r border-[rgb(var(--primary-foreground)/0.16)] bg-primary px-4 py-6 text-primary-foreground transition-[width] duration-200 ease-out hover:w-[246px] hover:shadow-[4px_0_28px_rgba(0,0,0,0.18)]">
-        <div className="flex items-center gap-2.5">
-          <CrestBadge letter="S" variant="outline" />
+        <Link href="/dashboard" className="flex items-center gap-2.5">
+          {/* bg-primary is inverted here (navy sidebar in light mode, white in
+              dark mode — see --primary in globals.css), so the light/dark
+              logo assignment is swapped relative to every other CrestBadge
+              call site. */}
+          <CrestBadge letter={siteContent.crestLetterDark} darkLetter={siteContent.crestLetter} variant="outline" />
           <div className="font-display whitespace-nowrap text-base font-semibold leading-tight opacity-0 transition-opacity duration-150 group-hover:opacity-100">
             School Management
           </div>
-        </div>
+        </Link>
 
         <nav className="flex flex-col gap-0.5 flex-1 max-h-[calc(100%-100px)] no-scrollbar overflow-y-auto">
           {NAV_SECTIONS.map((section) => {

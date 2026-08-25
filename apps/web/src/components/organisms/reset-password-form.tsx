@@ -7,6 +7,7 @@ import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
 import { CrestBadge } from "../atoms/crest-badge";
+import { siteContent } from "../../lib/site-content";
 
 // No GET peek endpoint exists for a reset token (unlike Invitation's
 // /invitations/:token) — validity is only known at submit time, via
@@ -46,7 +47,13 @@ export function ResetPasswordForm() {
 
   return (
     <div className="w-[380px] max-w-full rounded-card border border-border bg-card px-8 py-8 text-center">
-      <CrestBadge letter="S" variant="solid" size="lg" className="mx-auto mb-3.5" />
+      <CrestBadge
+        letter={siteContent.crestLetter}
+        darkLetter={siteContent.crestLetterDark}
+        variant="solid"
+        size="lg"
+        className="mx-auto mb-3.5"
+      />
       <h1 className="font-display mb-1 text-lg font-semibold">Choose a new password</h1>
       <p className="mb-5 text-[11.5px] text-muted">Enter and confirm your new password</p>
 

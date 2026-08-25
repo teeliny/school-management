@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Mail, Phone, MapPin, Clock } from "lucide-react";
 import { PageHero } from "../../../components/molecules/page-hero";
 import { SectionHeading } from "../../../components/molecules/section-heading";
@@ -5,6 +6,12 @@ import { Card, CardHeader } from "../../../components/molecules/card";
 import { Badge } from "../../../components/atoms/badge";
 import { CareerContactInquiryForm } from "../../../components/organisms/career-contact-inquiry-form";
 import { siteContent } from "../../../lib/site-content";
+
+export const metadata: Metadata = {
+  title: "Careers & Contact",
+  description: `Open roles and how to reach ${siteContent.schoolName}.`,
+  alternates: { canonical: "/careers" },
+};
 
 export default function CareersPage() {
   return (

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CircleCheck, CircleX } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { CrestBadge } from "../atoms/crest-badge";
+import { siteContent } from "../../lib/site-content";
 
 interface VerifyResult {
   valid: boolean;
@@ -36,7 +37,13 @@ export function VerifyReportResult({ token }: { token: string }) {
 
   return (
     <div className="w-[380px] max-w-full rounded-card border border-border bg-card px-8 py-8 text-center">
-      <CrestBadge letter="S" variant="solid" size="lg" className="mx-auto mb-3.5" />
+      <CrestBadge
+        letter={siteContent.crestLetter}
+        darkLetter={siteContent.crestLetterDark}
+        variant="solid"
+        size="lg"
+        className="mx-auto mb-3.5"
+      />
       <h1 className="font-display mb-4 text-lg font-semibold">Report card verification</h1>
 
       {error && <p className="text-sm text-danger">{error}</p>}

@@ -93,6 +93,37 @@ function renderLogoPlaceholder(doc: PDFKit.PDFDocument, x: number, y: number, si
 }
 
 /**
+ * Generic person-silhouette glyph drawn with plain vector primitives — stands
+ * in for the student's photo in the header's top-right corner when the
+ * student has no avatarUrl on file (or it couldn't be fetched), same
+ * degrade-quietly contract as `renderLogoPlaceholder`.
+ */
+function renderPhotoPlaceholder(doc: PDFKit.PDFDocument, x: number, y: number, size: number): void {
+  doc.save();
+  doc.fillColor(BAND).rect(x, y, size, size).fill();
+  doc.lineWidth(1).strokeColor(BORDER).rect(x, y, size, size).stroke();
+
+  const cx = x + size / 2;
+  const headRadius = size * 0.16;
+  const headCy = y + size * 0.36;
+
+  doc.fillColor(BORDER);
+  doc.circle(cx, headCy, headRadius).fill();
+
+  const shoulderTop = y + size * 0.58;
+  const shoulderWidth = size * 0.62;
+  const shoulderBottom = y + size - size * 0.12;
+  doc
+    .moveTo(cx - shoulderWidth / 2, shoulderBottom)
+    .quadraticCurveTo(cx - shoulderWidth / 2, shoulderTop, cx, shoulderTop)
+    .quadraticCurveTo(cx + shoulderWidth / 2, shoulderTop, cx + shoulderWidth / 2, shoulderBottom)
+    .closePath()
+    .fill();
+
+  doc.restore();
+}
+
+/**
  * Compact "label / value" grid for the student's basic info (Student,
  * Gender, Class, Session, Term, Parent/Guardian) — laid out `columns` per
  * row (3, by default) instead of one field per line, so six fields take two
@@ -155,16 +186,19 @@ function renderHeader(doc: PDFKit.PDFDocument, meta: ReportCardMeta, title: stri
     renderLogoPlaceholder(doc, left, headerTop, badge);
   }
 
-  let photoBottom = headerTop;
+  const photoX = left + width - badge;
   if (meta.photoBuffer) {
     try {
-      const photoX = left + width - badge;
       doc.image(meta.photoBuffer, photoX, headerTop, { fit: [badge, badge] });
-      photoBottom = headerTop + badge;
     } catch {
-      // Malformed/unsupported image bytes — skip, same as the logo.
+      // Malformed/unsupported image bytes — fall back to the placeholder
+      // rather than leaving the corner blank.
+      renderPhotoPlaceholder(doc, photoX, headerTop, badge);
     }
+  } else {
+    renderPhotoPlaceholder(doc, photoX, headerTop, badge);
   }
+  const photoBottom = headerTop + badge;
 
   const textGutter = badge + 12;
   const textX = left + textGutter;
