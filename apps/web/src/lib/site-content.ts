@@ -9,8 +9,7 @@ export const siteContent = {
   schoolName: "Mercylag Schools",
   crestLetter: "/assets/logo.png",
   crestLetterDark: "/assets/logo-light.png",
-  tagline:
-    "Mercy Leading All to Glory (MERCYLAG) is an educational institution for elementary and high school students.",
+  tagline: "Where every learner is known, challenged, and prepared to lead.",
   foundedYear: 1998,
   studentCount: "1,200+",
   staffCount: "140+",
