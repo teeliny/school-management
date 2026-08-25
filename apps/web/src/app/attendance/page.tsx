@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { SearchableSelect } from "../../components/molecules/searchable-select";
 import { AttendanceRollCall, type RollCallMode } from "../../components/organisms/attendance-roll-call";
 import { AttendanceTermSummary } from "../../components/organisms/attendance-term-summary";
+import { DailyAbsenteeList } from "../../components/organisms/daily-absentee-list";
 import { SchoolHolidayManager } from "../../components/organisms/school-holiday-manager";
 
 interface ClassArmOption {
@@ -321,6 +322,13 @@ export default function AttendancePage() {
           </Card>
         )}
       </div>
+
+      {(isAdmin || isRegistrar || myClassTeacherAssignments.length > 0) && (
+        <Card className="mt-4">
+          <CardHeader title="Daily absentees" sub="Who's out today, class by class" />
+          <DailyAbsenteeList />
+        </Card>
+      )}
 
       {isAdmin && (
         <Card className="mt-4">

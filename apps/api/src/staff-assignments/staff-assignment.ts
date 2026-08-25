@@ -231,6 +231,25 @@ export class StaffAssignmentService {
   }
 
   /**
+   * All class arms this user actively holds a CLASS_TEACHER assignment for
+   * — a narrower sibling of activeAssignedClassArmIds above (which also
+   * includes SUBJECT_TEACHER) for callers that need to scope to "my own
+   * class(es)" specifically, e.g. AttendanceAnalyticsService.
+   * dailyAttendanceIssues, which a subject teacher (no class of their own)
+   * shouldn't reach.
+   */
+  async activeClassTeacherClassArmIds(userId: string): Promise<string[]> {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
+    if (!staffProfile) return [];
+
+    const assignments = await this.prisma.staffAssignment.findMany({
+      where: { staffId: staffProfile.id, isActive: true, assignmentType: AssignmentType.CLASS_TEACHER, classArmId: { not: null } },
+    });
+
+    return [...new Set(assignments.map((a) => a.classArmId).filter((id): id is string => id !== null))];
+  }
+
+  /**
    * Whether this user holds an active PRINCIPAL/HEADTEACHER assignment —
    * same school-wide carve-out StudentService.scopeWhereForUser inlines
    * privately for its own STAFF branch, duplicated here (not imported) since
