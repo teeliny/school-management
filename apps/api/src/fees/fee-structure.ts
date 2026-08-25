@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Injectable, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -6,27 +7,56 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { Audited } from "../audit/audited.decorator";
 import { CreateFeeStructureDto, UpdateFeeStructureDto } from "./dto/fee-structure.dto";
 
+const FEE_STRUCTURE_INCLUDE = { classLevels: { include: { classLevel: true } } } satisfies Prisma.FeeStructureInclude;
+
 @Injectable()
 export class FeeStructureService {
   constructor(private readonly prisma: PrismaService) {}
 
   create(dto: CreateFeeStructureDto) {
-    return this.prisma.feeStructure.create({ data: dto });
+    const { classLevelIds, ...rest } = dto;
+    return this.prisma.feeStructure.create({
+      data: {
+        ...rest,
+        classLevels: classLevelIds?.length ? { create: classLevelIds.map((classLevelId) => ({ classLevelId })) } : undefined,
+      },
+      include: FEE_STRUCTURE_INCLUDE,
+    });
   }
 
+  // classLevelId filters to fee structures that apply to that class level —
+  // either scoped directly to it, or school-wide (zero classLevels rows).
   findAll(termId?: string, classLevelId?: string) {
     return this.prisma.feeStructure.findMany({
-      where: { termId, classLevelId },
+      where: {
+        termId,
+        ...(classLevelId
+          ? { OR: [{ classLevels: { none: {} } }, { classLevels: { some: { classLevelId } } }] }
+          : {}),
+      },
+      include: FEE_STRUCTURE_INCLUDE,
       orderBy: { name: "asc" },
     });
   }
 
   findOne(id: string) {
-    return this.prisma.feeStructure.findUniqueOrThrow({ where: { id } });
+    return this.prisma.feeStructure.findUniqueOrThrow({ where: { id }, include: FEE_STRUCTURE_INCLUDE });
   }
 
-  update(id: string, dto: UpdateFeeStructureDto) {
-    return this.prisma.feeStructure.update({ where: { id }, data: dto });
+  // classLevelIds, if present in the DTO, fully replaces the existing set
+  // (delete-then-recreate — this join table has no other data on its rows to
+  // preserve, same "just swap the set" shape as StaffAssignment's sync).
+  async update(id: string, dto: UpdateFeeStructureDto) {
+    const { classLevelIds, ...rest } = dto;
+    return this.prisma.$transaction(async (tx) => {
+      if (classLevelIds !== undefined) {
+        await tx.feeStructureClassLevel.deleteMany({ where: { feeStructureId: id } });
+        if (classLevelIds.length) {
+          await tx.feeStructureClassLevel.createMany({ data: classLevelIds.map((classLevelId) => ({ feeStructureId: id, classLevelId })) });
+        }
+      }
+      return tx.feeStructure.update({ where: { id }, data: rest, include: FEE_STRUCTURE_INCLUDE });
+    });
   }
 
   remove(id: string) {

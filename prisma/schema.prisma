@@ -223,8 +223,8 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms     ClassArm[]
-  feeStructures FeeStructure[]
+  classArms          ClassArm[]
+  feeStructureLevels FeeStructureClassLevel[]
 
   @@map("class_levels")
 }
@@ -352,16 +352,17 @@ model StaffProfile {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  assignments             StaffAssignment[]
-  timetableSlots          TimetableSlot[]
-  scoreEntriesEntered     ScoreEntry[]
-  skillRatingsGiven       SkillRating[]
-  reportCommentsGiven     ReportComment[]
-  attendanceSessionsTaken AttendanceSession[]
-  paymentsRecorded        Payment[]
-  discountRequestsRaised  DiscountRequest[]
-  invigilationAssignments InvigilationAssignment[]
-  dutyAssignments         DutyAssignment[]
+  assignments                     StaffAssignment[]
+  timetableSlots                  TimetableSlot[]
+  scoreEntriesEntered             ScoreEntry[]
+  skillRatingsGiven               SkillRating[]
+  reportCommentsGiven             ReportComment[]
+  attendanceSessionsTaken         AttendanceSession[]
+  paymentsRecorded                Payment[]
+  discountRequestsRaised          DiscountRequest[]
+  invigilationAssignments         InvigilationAssignment[]
+  dutyAssignments                 DutyAssignment[]
+  feeStructureAssignmentsRecorded FeeStructureStudentAssignment[]
 
   @@map("staff_profiles")
 }
@@ -408,16 +409,17 @@ model StudentProfile {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  guardians          StudentGuardian[]
-  positions          StudentPosition[]
-  departmentHistory  StudentDepartment[]
-  subjectEnrollments StudentSubjectEnrollment[]
-  scoreEntries       ScoreEntry[]
-  subjectTermResults SubjectTermResult[]
-  skillRatings       SkillRating[]
-  reportComments     ReportComment[]
-  termReportCards    TermReportCard[]
-  invoices           Invoice[]
+  guardians               StudentGuardian[]
+  positions               StudentPosition[]
+  departmentHistory       StudentDepartment[]
+  subjectEnrollments      StudentSubjectEnrollment[]
+  scoreEntries            ScoreEntry[]
+  subjectTermResults      SubjectTermResult[]
+  skillRatings            SkillRating[]
+  reportComments          ReportComment[]
+  termReportCards         TermReportCard[]
+  invoices                Invoice[]
+  feeStructureAssignments FeeStructureStudentAssignment[]
 
   @@map("student_profiles")
 }
@@ -1429,9 +1431,6 @@ enum AttendanceGranularity {
 // model below.
 model FeeStructure {
   id                String          @id @default(uuid())
-  // null = school-wide; set = applies only to that class level.
-  classLevelId      String?
-  classLevel        ClassLevel?     @relation(fields: [classLevelId], references: [id])
   academicSessionId String
   academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id])
   termId            String
@@ -1441,9 +1440,56 @@ model FeeStructure {
   isMandatory       Boolean         @default(true)
   createdAt         DateTime        @default(now())
 
-  invoiceLineItems InvoiceLineItem[]
+  // Zero rows = school-wide; one or more = applies only to those class
+  // levels (generalizes the old single-nullable-classLevelId column to
+  // support a fee shared by e.g. JSS1-3 without three separate rows).
+  classLevels        FeeStructureClassLevel[]
+  invoiceLineItems   InvoiceLineItem[]
+  // isMandatory=false only — per-student opt-in for an optional fee,
+  // recorded by the Bursar/Super-Admin (FeeStructure is never exposed to
+  // parents, see ability.factory.ts).
+  studentAssignments FeeStructureStudentAssignment[]
 
   @@map("fee_structures")
+}
+
+// Explicit many-to-many join between FeeStructure and ClassLevel — see the
+// classLevels field comment above for the "zero rows = school-wide" meaning.
+model FeeStructureClassLevel {
+  feeStructureId String
+  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  classLevelId   String
+  classLevel     ClassLevel   @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+
+  @@id([feeStructureId, classLevelId])
+  @@map("fee_structure_class_levels")
+}
+
+// Per-student opt-in into one optional (isMandatory=false) FeeStructure —
+// the per-student targeting FeeStructure.classLevels can't express (that
+// only scopes to class levels, not individuals). Recorded by the
+// Bursar/Super-Admin (FeeStructureStudentAssignmentService), not
+// self-service by a parent. invoiceId is null until this assignment has
+// actually been billed on some Invoice (REGULAR, if it landed before that
+// term's batch generation ran, or SUPPLEMENTARY otherwise) — set in the same
+// transaction that creates the corresponding InvoiceLineItem, so an
+// assignment is never billed twice.
+model FeeStructureStudentAssignment {
+  id                String         @id @default(uuid())
+  feeStructureId    String
+  feeStructure      FeeStructure   @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  studentId         String
+  student           StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  // The Bursar; null for a Super-Admin override with no StaffProfile — same
+  // nullable-staff pattern as Payment.recordedByStaffId.
+  recordedByStaffId String?
+  recordedByStaff   StaffProfile?  @relation(fields: [recordedByStaffId], references: [id])
+  invoiceId         String?
+  invoice           Invoice?       @relation(fields: [invoiceId], references: [id])
+  createdAt         DateTime       @default(now())
+
+  @@unique([feeStructureId, studentId])
+  @@map("fee_structure_student_assignments")
 }
 
 enum InvoiceStatus {
@@ -1451,6 +1497,27 @@ enum InvoiceStatus {
   PARTIAL
   PAID
   OVERDUE
+}
+
+// A REGULAR invoice is the one Invoice.generate produces per student per
+// term; a SUPPLEMENTARY invoice holds fee items opted into
+// (FeeStructureStudentAssignment) after that REGULAR invoice already exists,
+// so the original is never touched. Unlike a REGULAR invoice, an open (not
+// yet status=PAID) SUPPLEMENTARY invoice's totalAmount can grow — a later
+// opt-in appends its line item to the same still-open SUPPLEMENTARY invoice
+// rather than starting a new one (FeeStructureStudentAssignmentService), so
+// a parent never accumulates several small unpaid invoices from separate
+// opt-in events; once one reaches PAID it's frozen and the next opt-in
+// starts a fresh SUPPLEMENTARY invoice. "At most one REGULAR invoice per
+// student per term" is enforced by a hand-added partial unique index in the
+// migration SQL (WHERE source = 'REGULAR') — same "at most one active row
+// per key" shape as StaffAssignment's WHERE "isActive" = true index, per
+// CLAUDE.md. Any number of SUPPLEMENTARY invoices can coexist (at most one
+// non-PAID at a time per student+term, by construction of the service
+// above, not a DB constraint).
+enum InvoiceSource {
+  REGULAR
+  SUPPLEMENTARY
 }
 
 // Outstanding balance is deliberately NOT a column here (same "avoid a
@@ -1466,11 +1533,18 @@ model Invoice {
   student                 StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
   termId                  String
   term                    Term           @relation(fields: [termId], references: [id])
-  // Snapshot of the sum of FEE-type line items at generation time — never
-  // mutated afterward, even once a DISCOUNT line item is later added
-  // (Slice 2d); the discount reduces outstandingBalance, not totalAmount.
+  // Sum of FEE-type line items. Adding a DISCOUNT line item (Slice 2d) never
+  // changes this — a discount reduces outstandingBalance, not totalAmount.
+  // For a REGULAR invoice this is a snapshot fixed at generation time; for
+  // an open (not yet PAID) SUPPLEMENTARY invoice it can grow as more FEE
+  // lines are appended (see InvoiceSource's comment) — in both cases it
+  // always equals the sum of the invoice's own FEE-type lineItems.
   totalAmount             Decimal        @db.Decimal(12, 2)
   status                  InvoiceStatus  @default(UNPAID)
+  // REGULAR = Invoice.generate's batch run; SUPPLEMENTARY = created for
+  // FeeOptIn items opted into after the REGULAR invoice already existed
+  // (FeeOptInService). See the InvoiceSource enum comment.
+  source                  InvoiceSource  @default(REGULAR)
   dueDate                 DateTime       @db.Date
   generatedAt             DateTime       @default(now())
   // Phase 5 Slice 2b: the merchant reference sent to the active gateway at
@@ -1480,11 +1554,16 @@ model Invoice {
   // gateway echoes it back in every webhook/verify call).
   gatewayPaymentReference String?        @unique
 
-  lineItems        InvoiceLineItem[]
-  payments         Payment[]
-  discountRequests DiscountRequest[]
+  lineItems               InvoiceLineItem[]
+  payments                Payment[]
+  discountRequests        DiscountRequest[]
+  feeStructureAssignments FeeStructureStudentAssignment[]
 
-  @@unique([studentId, termId])
+  // "At most one REGULAR invoice per student per term" is enforced by a
+  // hand-added partial unique index in the migration SQL
+  // (WHERE source = 'REGULAR'), not by this plain index — Prisma's @@unique
+  // can't express the WHERE clause (see InvoiceSource's comment).
+  @@index([studentId, termId])
   @@index([status])
   @@map("invoices")
 }

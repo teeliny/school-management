@@ -41,6 +41,7 @@ export type Subject =
   | "AttendanceRecord"
   | "SchoolHoliday"
   | "FeeStructure"
+  | "FeeStructureStudentAssignment"
   | "Invoice"
   | "InvoiceLineItem"
   | "Payment"
@@ -177,7 +178,7 @@ export class AbilityFactory {
     }
 
     // PRD §3.9/§5: the entire fee/finance domain is invisible to Admin —
-    // deliberately no grant for any of these five Subjects anywhere in the
+    // deliberately no grant for any of these six Subjects anywhere in the
     // ADMIN branch above. Bursar (StaffAssignment.assignmentType = BURSAR)
     // gets an unconditioned domain-wide grant; Super-Admin already has it
     // for free via "manage all". No CASL condition is used here at all —
@@ -185,7 +186,15 @@ export class AbilityFactory {
     // invoice) is done entirely at the service layer, sidestepping the
     // bare-string-vs-conditioned-grant pitfall that pattern hit.
     if (user.assignmentTypes?.includes("BURSAR")) {
-      can("manage", ["FeeStructure", "Invoice", "InvoiceLineItem", "Payment", "Receipt", "DiscountRequest"]);
+      can("manage", [
+        "FeeStructure",
+        "FeeStructureStudentAssignment",
+        "Invoice",
+        "InvoiceLineItem",
+        "Payment",
+        "Receipt",
+        "DiscountRequest",
+      ]);
 
       // PRD FR7.7, Phase 5 Slice 2b: gateway credentials configuration is
       // part of the same Bursar/Super-Admin-only fee/finance domain.

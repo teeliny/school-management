@@ -15,11 +15,13 @@ function buildPrismaMock() {
   const tx = {
     invoice: { create: jest.fn().mockResolvedValue({ id: "invoice-1" }) },
     invoiceLineItem: { createMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    feeStructureStudentAssignment: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
   };
   return {
     term: { findUniqueOrThrow: jest.fn().mockResolvedValue(TERM) },
     studentProfile: { findMany: jest.fn().mockResolvedValue([]) },
     feeStructure: { findMany: jest.fn().mockResolvedValue([]) },
+    feeStructureStudentAssignment: { findMany: jest.fn().mockResolvedValue([]) },
     invoice: {
       findUnique: jest.fn().mockResolvedValue(null),
       findUniqueOrThrow: jest.fn(),
@@ -51,8 +53,8 @@ describe("InvoiceService.generate (PRD FR7.2)", () => {
   it("creates one invoice with FEE line items summing the applicable fee structures", async () => {
     prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
     prisma.feeStructure.findMany.mockResolvedValue([
-      { id: "fs-schoolwide", classLevelId: null, amount: 5000, name: "Tuition" },
-      { id: "fs-level", classLevelId: "level-1", amount: 2000, name: "PTA Levy" },
+      { id: "fs-schoolwide", classLevels: [], amount: 5000, name: "Tuition", isMandatory: true },
+      { id: "fs-level", classLevels: [{ classLevelId: "level-1" }], amount: 2000, name: "PTA Levy", isMandatory: true },
     ]);
 
     const result = await service.generate(buildDto());
@@ -74,8 +76,8 @@ describe("InvoiceService.generate (PRD FR7.2)", () => {
   it("excludes a fee structure scoped to a different class level", async () => {
     prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
     prisma.feeStructure.findMany.mockResolvedValue([
-      { id: "fs-mine", classLevelId: "level-1", amount: 2000, name: "PTA Levy" },
-      { id: "fs-other", classLevelId: "level-2", amount: 9000, name: "Other level fee" },
+      { id: "fs-mine", classLevels: [{ classLevelId: "level-1" }], amount: 2000, name: "PTA Levy", isMandatory: true },
+      { id: "fs-other", classLevels: [{ classLevelId: "level-2" }], amount: 9000, name: "Other level fee", isMandatory: true },
     ]);
 
     await service.generate(buildDto());
@@ -87,7 +89,7 @@ describe("InvoiceService.generate (PRD FR7.2)", () => {
 
   it("skips a student who already has an invoice for the term", async () => {
     prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
-    prisma.feeStructure.findMany.mockResolvedValue([{ id: "fs-1", classLevelId: null, amount: 5000, name: "Tuition" }]);
+    prisma.feeStructure.findMany.mockResolvedValue([{ id: "fs-1", classLevels: [], amount: 5000, name: "Tuition", isMandatory: true }]);
     prisma.invoice.findMany.mockResolvedValue([{ studentId: "student-1" }]);
 
     const result = await service.generate(buildDto());
@@ -98,12 +100,50 @@ describe("InvoiceService.generate (PRD FR7.2)", () => {
 
   it("skips a student with zero applicable fee structures", async () => {
     prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
-    prisma.feeStructure.findMany.mockResolvedValue([{ id: "fs-other", classLevelId: "level-2", amount: 9000, name: "Other level fee" }]);
+    prisma.feeStructure.findMany.mockResolvedValue([
+      { id: "fs-other", classLevels: [{ classLevelId: "level-2" }], amount: 9000, name: "Other level fee", isMandatory: true },
+    ]);
 
     const result = await service.generate(buildDto());
 
     expect(prisma.__tx.invoice.create).not.toHaveBeenCalled();
     expect(result).toEqual({ created: 0, alreadyInvoiced: 0, noApplicableFees: 1 });
+  });
+
+  it("excludes an optional fee structure the student has not opted into", async () => {
+    prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
+    prisma.feeStructure.findMany.mockResolvedValue([
+      { id: "fs-mandatory", classLevels: [], amount: 5000, name: "Tuition", isMandatory: true },
+      { id: "fs-optional", classLevels: [], amount: 10000, name: "Textbooks", isMandatory: false },
+    ]);
+    prisma.feeStructureStudentAssignment.findMany.mockResolvedValue([]);
+
+    await service.generate(buildDto());
+
+    expect(prisma.__tx.invoice.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ totalAmount: 5000 }) }));
+    expect(prisma.__tx.feeStructureStudentAssignment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("includes an optional fee structure the student has opted into, and marks the assignment billed", async () => {
+    prisma.studentProfile.findMany.mockResolvedValue([{ id: "student-1", currentClass: { classLevelId: "level-1" } }]);
+    prisma.feeStructure.findMany.mockResolvedValue([
+      { id: "fs-mandatory", classLevels: [], amount: 5000, name: "Tuition", isMandatory: true },
+      { id: "fs-optional", classLevels: [], amount: 10000, name: "Textbooks", isMandatory: false },
+    ]);
+    prisma.feeStructureStudentAssignment.findMany.mockResolvedValue([{ studentId: "student-1", feeStructureId: "fs-optional" }]);
+
+    await service.generate(buildDto());
+
+    expect(prisma.__tx.invoice.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ totalAmount: 15000 }) }));
+    expect(prisma.__tx.invoiceLineItem.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.arrayContaining([expect.objectContaining({ feeStructureId: "fs-optional", amount: 10000 })]) }),
+    );
+    expect(prisma.__tx.feeStructureStudentAssignment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ studentId: "student-1", feeStructureId: { in: ["fs-optional"] } }),
+        data: { invoiceId: "invoice-1" },
+      }),
+    );
   });
 });
 

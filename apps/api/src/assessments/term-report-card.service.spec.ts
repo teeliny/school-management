@@ -327,7 +327,17 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
 
   it("lets Admin see report cards of any status", async () => {
     const user: RequestUser = { id: "user-1", roles: ["ADMIN"], assignmentTypes: [] };
-    prisma.termReportCard.findMany.mockResolvedValue([{ id: "rc-1", status: TermReportCardStatus.GENERATING }]);
+    prisma.termReportCard.findMany.mockResolvedValue([
+      {
+        id: "rc-1",
+        status: TermReportCardStatus.GENERATING,
+        student: {
+          admissionNumber: "ADM-1",
+          user: { firstName: "Ada", lastName: "Lovelace" },
+          currentClass: { name: "A", classLevel: { name: "JSS 1" } },
+        },
+      },
+    ]);
 
     const result = await service.findForUser(user, {});
 

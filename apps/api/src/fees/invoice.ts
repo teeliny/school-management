@@ -47,19 +47,43 @@ export class InvoiceService {
       select: { id: true, currentClass: { select: { classLevelId: true } } },
     });
 
-    const feeStructures = await this.prisma.feeStructure.findMany({ where: { termId: dto.termId } });
+    // classLevels: zero rows = school-wide, one or more = scoped to those
+    // class levels (FeeStructureClassLevel join, replacing the old single
+    // nullable classLevelId column).
+    const feeStructures = await this.prisma.feeStructure.findMany({
+      where: { termId: dto.termId },
+      include: { classLevels: true },
+    });
 
     // One batch lookup instead of a findUnique per student (BUILD_PLAN.md
     // §8 item 5, N+1 audit) — a school-wide run is one extra query instead
-    // of one per active student.
+    // of one per active student. Scoped to source=REGULAR so a student can
+    // already have SUPPLEMENTARY invoices (from opting into an optional fee
+    // after a term's regular run) without blocking their regular one.
     const alreadyInvoicedStudentIds = new Set(
       (
         await this.prisma.invoice.findMany({
-          where: { termId: dto.termId, studentId: { in: students.map((s) => s.id) } },
+          where: { termId: dto.termId, source: "REGULAR", studentId: { in: students.map((s) => s.id) } },
           select: { studentId: true },
         })
       ).map((invoice) => invoice.studentId),
     );
+
+    // Batch un-invoiced FeeStructureStudentAssignment rows for this term's
+    // optional (isMandatory=false) fee structures, keyed by studentId — same
+    // batching precedent as alreadyInvoicedStudentIds, avoids an N+1.
+    const optionalFeeStructureIds = feeStructures.filter((fs) => !fs.isMandatory).map((fs) => fs.id);
+    const pendingAssignments = optionalFeeStructureIds.length
+      ? await this.prisma.feeStructureStudentAssignment.findMany({
+          where: { feeStructureId: { in: optionalFeeStructureIds }, invoiceId: null, studentId: { in: students.map((s) => s.id) } },
+        })
+      : [];
+    const optedInFeeStructureIdsByStudent = new Map<string, Set<string>>();
+    for (const assignment of pendingAssignments) {
+      const set = optedInFeeStructureIdsByStudent.get(assignment.studentId) ?? new Set<string>();
+      set.add(assignment.feeStructureId);
+      optedInFeeStructureIdsByStudent.set(assignment.studentId, set);
+    }
 
     let created = 0;
     let alreadyInvoiced = 0;
@@ -71,15 +95,23 @@ export class InvoiceService {
         continue;
       }
 
-      const applicable = feeStructures.filter(
-        (fs) => fs.classLevelId === null || fs.classLevelId === student.currentClass?.classLevelId,
-      );
+      const studentClassLevelId = student.currentClass?.classLevelId;
+      const optedInFeeStructureIds = optedInFeeStructureIdsByStudent.get(student.id) ?? new Set<string>();
+      // A mandatory fee structure always applies (once class-scoped); an
+      // optional one applies only if the student has a matching un-invoiced
+      // FeeStructureStudentAssignment (Bursar-recorded opt-in).
+      const applicable = feeStructures.filter((fs) => {
+        const classApplies = fs.classLevels.length === 0 || fs.classLevels.some((cl) => cl.classLevelId === studentClassLevelId);
+        if (!classApplies) return false;
+        return fs.isMandatory || optedInFeeStructureIds.has(fs.id);
+      });
       if (applicable.length === 0) {
         noApplicableFees++;
         continue;
       }
 
       const totalAmount = applicable.reduce((sum, fs) => sum + Number(fs.amount), 0);
+      const applicableOptionalIds = applicable.filter((fs) => !fs.isMandatory).map((fs) => fs.id);
 
       await this.prisma.$transaction(async (tx) => {
         const invoice = await tx.invoice.create({
@@ -94,6 +126,15 @@ export class InvoiceService {
             description: fs.name,
           })),
         });
+        // Mark the opted-in assignments as billed so a later term-wide
+        // generate run (or FeeStructureStudentAssignmentService) never bills
+        // them a second time.
+        if (applicableOptionalIds.length) {
+          await tx.feeStructureStudentAssignment.updateMany({
+            where: { studentId: student.id, feeStructureId: { in: applicableOptionalIds } },
+            data: { invoiceId: invoice.id },
+          });
+        }
       });
       created++;
     }

@@ -164,7 +164,7 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     expect(prisma.staffAssignment.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER] },
+          assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
         }),
       }),
     );

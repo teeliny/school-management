@@ -576,7 +576,11 @@ export class StudentService {
       where: {
         staffId: staffProfile.id,
         isActive: true,
-        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.REGISTRAR] },
+        // BURSAR needs to find any student to attach an invoice/payment/fee
+        // opt-in to (FeeStructureStudentAssignmentService) — same school-wide
+        // remit shape as PRINCIPAL/HEADTEACHER/REGISTRAR, not tied to a
+        // classArmId.
+        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
       },
     });
     return count > 0;

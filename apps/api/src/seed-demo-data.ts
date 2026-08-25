@@ -1506,45 +1506,50 @@ async function main() {
     // -------------------------------------------------------------------
     // Fee structures + invoices — 1st Term only (Xmas Cantata wouldn't
     // recur in 2nd/3rd Term, and the school's 1st Term runs Sept-Dec,
-    // ending right around Christmas). Tuition is level-scoped: since
-    // FeeStructure.classLevelId targets one specific ClassLevel (not a
-    // whole JSS/SSS category), JSS's three levels each get their own
-    // ₦35,000 row and SSS's three get their own ₦50,000 row rather than
-    // one row covering the category. PTA Levy and Xmas Cantata are
-    // school-wide (classLevelId omitted); Extra Classes is scoped to
+    // ending right around Christmas). Tuition is level-scoped: JSS's three
+    // levels each get their own ₦35,000 row and SSS's three get their own
+    // ₦50,000 row rather than one row covering the category (FeeStructure.
+    // classLevels — a FeeStructureClassLevel join — could cover a whole
+    // category in one row, but this seed data predates that generalization
+    // and there's no need to collapse it). PTA Levy and Xmas Cantata are
+    // school-wide (classLevelIds omitted); Extra Classes is scoped to
     // JSS 3 and SSS 3 only. Xmas Cantata is the only isMandatory: false
-    // row — informational today, since InvoiceService.generate() doesn't
-    // actually filter by isMandatory (every applicable FeeStructure row
-    // lands on the invoice regardless of it), but it records the intended
-    // optional/mandatory distinction as data.
+    // row — a student opts into it via FeeStructureStudentAssignmentService
+    // (Bursar-recorded) rather than it landing on every invoice.
     // -------------------------------------------------------------------
     const firstTerm = req(terms[0], "1st term");
     const feeStructureDefs: {
       name: string;
       amount: number;
-      classLevelId?: string;
+      classLevelIds?: string[];
       isMandatory: boolean;
     }[] = [
-      { name: "Tuition", amount: 35000, classLevelId: req(arms["JSS 1"], "class arm for JSS 1").classLevelId, isMandatory: true },
-      { name: "Tuition", amount: 35000, classLevelId: req(arms["JSS 2"], "class arm for JSS 2").classLevelId, isMandatory: true },
-      { name: "Tuition", amount: 35000, classLevelId: req(arms["JSS 3"], "class arm for JSS 3").classLevelId, isMandatory: true },
-      { name: "Tuition", amount: 50000, classLevelId: req(arms["SSS 1"], "class arm for SSS 1").classLevelId, isMandatory: true },
-      { name: "Tuition", amount: 50000, classLevelId: req(arms["SSS 2"], "class arm for SSS 2").classLevelId, isMandatory: true },
-      { name: "Tuition", amount: 50000, classLevelId: req(arms["SSS 3"], "class arm for SSS 3").classLevelId, isMandatory: true },
+      { name: "Tuition", amount: 35000, classLevelIds: [req(arms["JSS 1"], "class arm for JSS 1").classLevelId], isMandatory: true },
+      { name: "Tuition", amount: 35000, classLevelIds: [req(arms["JSS 2"], "class arm for JSS 2").classLevelId], isMandatory: true },
+      { name: "Tuition", amount: 35000, classLevelIds: [req(arms["JSS 3"], "class arm for JSS 3").classLevelId], isMandatory: true },
+      { name: "Tuition", amount: 50000, classLevelIds: [req(arms["SSS 1"], "class arm for SSS 1").classLevelId], isMandatory: true },
+      { name: "Tuition", amount: 50000, classLevelIds: [req(arms["SSS 2"], "class arm for SSS 2").classLevelId], isMandatory: true },
+      { name: "Tuition", amount: 50000, classLevelIds: [req(arms["SSS 3"], "class arm for SSS 3").classLevelId], isMandatory: true },
       { name: "PTA Levy", amount: 5000, isMandatory: true },
-      { name: "Extra Classes", amount: 15000, classLevelId: req(arms["JSS 3"], "class arm for JSS 3").classLevelId, isMandatory: true },
-      { name: "Extra Classes", amount: 15000, classLevelId: req(arms["SSS 3"], "class arm for SSS 3").classLevelId, isMandatory: true },
+      { name: "Extra Classes", amount: 15000, classLevelIds: [req(arms["JSS 3"], "class arm for JSS 3").classLevelId], isMandatory: true },
+      { name: "Extra Classes", amount: 15000, classLevelIds: [req(arms["SSS 3"], "class arm for SSS 3").classLevelId], isMandatory: true },
       { name: "Xmas Cantata", amount: 10000, isMandatory: false },
     ];
     for (const def of feeStructureDefs) {
       const existing = await prisma.feeStructure.findFirst({
-        where: { termId: firstTerm.id, classLevelId: def.classLevelId ?? null, name: def.name },
+        where: {
+          termId: firstTerm.id,
+          name: def.name,
+          classLevels: def.classLevelIds?.length
+            ? { some: { classLevelId: { in: def.classLevelIds } } }
+            : { none: {} },
+        },
       });
       if (existing) continue;
       await feeStructures.create({
         termId: firstTerm.id,
         academicSessionId: session.id,
-        classLevelId: def.classLevelId,
+        classLevelIds: def.classLevelIds,
         name: def.name,
         amount: def.amount,
         isMandatory: def.isMandatory,

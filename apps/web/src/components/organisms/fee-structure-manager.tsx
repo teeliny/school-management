@@ -8,6 +8,8 @@ import { Label } from "../atoms/label";
 import { Checkbox } from "../atoms/checkbox";
 import { FormField } from "../molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { MultiSelect } from "../molecules/multi-select";
+import { FeeStructureAssignmentPanel } from "./fee-structure-assignment-panel";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -36,13 +38,14 @@ interface FeeStructureItem {
   name: string;
   amount: number;
   isMandatory: boolean;
-  classLevelId: string | null;
+  // Zero entries = school-wide; one or more = scoped to just those class
+  // levels (FeeStructureClassLevel join, replacing the old single-nullable
+  // classLevelId column).
+  classLevels: { classLevelId: string }[];
 }
 
-const WHOLE_SCHOOL = "__whole_school__";
-
 // Bursar/Super-Admin only (GET /fee-structures is itself gated to
-// `manage FeeStructure`) — a null classLevelId applies to every class level.
+// `manage FeeStructure`) — zero classLevels rows applies to every class level.
 export function FeeStructureManager() {
   const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
   const [academicSessionId, setAcademicSessionId] = useState("");
@@ -54,7 +57,7 @@ export function FeeStructureManager() {
 
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("");
-  const [classLevelId, setClassLevelId] = useState(WHOLE_SCHOOL);
+  const [classLevelIds, setClassLevelIds] = useState<string[]>([]);
   const [isMandatory, setIsMandatory] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -62,6 +65,9 @@ export function FeeStructureManager() {
   const [editName, setEditName] = useState("");
   const [editAmount, setEditAmount] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
+  // Which optional (isMandatory=false) fee structure's opt-in panel is open —
+  // at most one at a time.
+  const [assignmentPanelId, setAssignmentPanelId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -111,7 +117,7 @@ export function FeeStructureManager() {
         body: {
           academicSessionId,
           termId,
-          classLevelId: classLevelId === WHOLE_SCHOOL ? undefined : classLevelId,
+          classLevelIds: classLevelIds.length ? classLevelIds : undefined,
           name,
           amount: Number(amount),
           isMandatory,
@@ -119,7 +125,7 @@ export function FeeStructureManager() {
       });
       setName("");
       setAmount("");
-      setClassLevelId(WHOLE_SCHOOL);
+      setClassLevelIds([]);
       setIsMandatory(true);
       load();
     } catch (err) {
@@ -164,9 +170,9 @@ export function FeeStructureManager() {
     }
   }
 
-  function classLevelName(id: string | null) {
-    if (!id) return "Whole school";
-    return classLevels.find((c) => c.id === id)?.name ?? "—";
+  function classLevelNames(levels: { classLevelId: string }[]) {
+    if (levels.length === 0) return "Whole school";
+    return levels.map((l) => classLevels.find((c) => c.id === l.classLevelId)?.name ?? "—").join(", ");
   }
 
   return (
@@ -233,36 +239,49 @@ export function FeeStructureManager() {
                   </Button>
                 </div>
               ) : (
-                <div key={structure.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-2.5 text-[12.5px]">
-                  <span>
-                    {structure.name} <span className="text-muted">({classLevelName(structure.classLevelId)})</span>{" "}
-                    <span className="font-mono">{formatCurrency(structure.amount)}</span>
-                    {structure.isMandatory && <span className="text-muted"> · mandatory</span>}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Button type="button" variant="outline" size="sm" onClick={() => startEdit(structure)}>
-                      Edit
-                    </Button>
-                    <AlertDialog open={deletingId === structure.id} onOpenChange={(open) => setDeletingId(open ? structure.id : null)}>
-                      <AlertDialogTrigger asChild>
-                        <Button type="button" variant="outline" size="sm">
-                          Delete
+                <div key={structure.id} className="rounded-lg border border-border p-2.5 text-[12.5px]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      {structure.name} <span className="text-muted">({classLevelNames(structure.classLevels)})</span>{" "}
+                      <span className="font-mono">{formatCurrency(structure.amount)}</span>
+                      {structure.isMandatory && <span className="text-muted"> · mandatory</span>}
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {!structure.isMandatory && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setAssignmentPanelId(assignmentPanelId === structure.id ? null : structure.id)}
+                        >
+                          {assignmentPanelId === structure.id ? "Hide opt-ins" : "Manage opt-ins"}
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogTitle className="text-lg font-semibold">Delete {structure.name}?</AlertDialogTitle>
-                        <AlertDialogDescription className="mt-2 text-sm text-muted">
-                          This does not change any invoice already generated from it. This cannot be undone.
-                        </AlertDialogDescription>
-                        <div className="mt-4 flex justify-end gap-2">
-                          <AlertDialogCancel asChild>
-                            <Button variant="outline">Cancel</Button>
-                          </AlertDialogCancel>
-                          <Button onClick={() => handleDelete(structure.id)}>Confirm delete</Button>
-                        </div>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      )}
+                      <Button type="button" variant="outline" size="sm" onClick={() => startEdit(structure)}>
+                        Edit
+                      </Button>
+                      <AlertDialog open={deletingId === structure.id} onOpenChange={(open) => setDeletingId(open ? structure.id : null)}>
+                        <AlertDialogTrigger asChild>
+                          <Button type="button" variant="outline" size="sm">
+                            Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogTitle className="text-lg font-semibold">Delete {structure.name}?</AlertDialogTitle>
+                          <AlertDialogDescription className="mt-2 text-sm text-muted">
+                            This does not change any invoice already generated from it. This cannot be undone.
+                          </AlertDialogDescription>
+                          <div className="mt-4 flex justify-end gap-2">
+                            <AlertDialogCancel asChild>
+                              <Button variant="outline">Cancel</Button>
+                            </AlertDialogCancel>
+                            <Button onClick={() => handleDelete(structure.id)}>Confirm delete</Button>
+                          </div>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </div>
+                  {assignmentPanelId === structure.id && <FeeStructureAssignmentPanel feeStructureId={structure.id} />}
                 </div>
               ),
             )}
@@ -282,20 +301,15 @@ export function FeeStructureManager() {
               onChange={(e) => setAmount(e.target.value)}
             />
             <div>
-              <Label htmlFor="fs-class-level">Class level</Label>
-              <Select value={classLevelId} onValueChange={setClassLevelId}>
-                <SelectTrigger id="fs-class-level" className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={WHOLE_SCHOOL}>Whole school</SelectItem>
-                  {classLevels.map((level) => (
-                    <SelectItem key={level.id} value={level.id}>
-                      {level.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="fs-class-levels">Class levels (none = whole school)</Label>
+              <MultiSelect
+                id="fs-class-levels"
+                className="mt-1"
+                value={classLevelIds}
+                onValueChange={setClassLevelIds}
+                placeholder="Whole school"
+                options={classLevels.map((level) => ({ value: level.id, label: level.name }))}
+              />
             </div>
             <div className="flex items-center gap-2 self-end pb-2.5">
               <Checkbox id="fs-mandatory" checked={isMandatory} onCheckedChange={(checked) => setIsMandatory(checked === true)} />

@@ -1,10 +1,12 @@
 import { PartialType } from "@nestjs/mapped-types";
-import { IsBoolean, IsNumber, IsOptional, IsString, IsUUID, Min } from "class-validator";
+import { IsArray, IsBoolean, IsNumber, IsOptional, IsString, IsUUID, Min } from "class-validator";
 
 export class CreateFeeStructureDto {
+  // Omitted or empty = school-wide; set = applies only to those class levels.
   @IsOptional()
-  @IsUUID()
-  classLevelId?: string;
+  @IsArray()
+  @IsUUID(undefined, { each: true })
+  classLevelIds?: string[];
 
   @IsUUID()
   academicSessionId!: string;

@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { QUEUE_NAMES } from "@school/types";
 import { MonnifyAdapter, PaystackAdapter, type PaymentGatewayAdapter } from "@school/types/payment-gateways";
 import { FeeStructureController, FeeStructureService } from "./fee-structure";
+import { FeeStructureStudentAssignmentController, FeeStructureStudentAssignmentService } from "./fee-structure-student-assignment";
 import { InvoiceController, InvoiceService } from "./invoice";
 import { PaymentController, PaymentService } from "./payment";
 import { DiscountRequestController, DiscountRequestService } from "./discount-request";
@@ -28,6 +29,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
   imports: [AcademicStructureModule, NotificationsModule, BullModule.registerQueue({ name: QUEUE_NAMES.RECEIPT_GENERATION })],
   controllers: [
     FeeStructureController,
+    FeeStructureStudentAssignmentController,
     InvoiceController,
     PaymentController,
     DiscountRequestController,
@@ -36,6 +38,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
   ],
   providers: [
     FeeStructureService,
+    FeeStructureStudentAssignmentService,
     InvoiceService,
     PaymentService,
     DiscountRequestService,
