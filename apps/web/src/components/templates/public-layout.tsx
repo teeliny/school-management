@@ -3,11 +3,13 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { CrestBadge } from "../atoms/crest-badge";
 import { Button } from "../atoms/button";
 import { ThemeToggle } from "../molecules/theme-toggle";
 import { cn } from "../../lib/cn";
 import { siteContent } from "../../lib/site-content";
+import { apiFetch } from "../../lib/api";
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
@@ -19,6 +21,16 @@ const NAV_LINKS = [
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  // Tokens live in httpOnly cookies, so there's no synchronous client-side
+  // check — probe /auth/me and swap the nav CTA if it resolves. A 401 just
+  // means "not logged in", not an error, so it's fine to swallow silently.
+  useEffect(() => {
+    apiFetch("/auth/me", { auth: true })
+      .then(() => setIsLoggedIn(true))
+      .catch(() => setIsLoggedIn(false));
+  }, []);
 
   return (
     <div className="min-h-screen">
@@ -50,7 +62,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
           <div className="flex items-center gap-2.5">
             <ThemeToggle />
             <Button asChild size="sm" variant="outline">
-              <Link href="/login">Login</Link>
+              <Link href={isLoggedIn ? "/dashboard" : "/login"}>{isLoggedIn ? "Dashboard" : "Login"}</Link>
             </Button>
           </div>
         </div>
