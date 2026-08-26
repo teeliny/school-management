@@ -64,6 +64,8 @@ export function FeeStructureManager() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editAmount, setEditAmount] = useState("");
+  const [editClassLevelIds, setEditClassLevelIds] = useState<string[]>([]);
+  const [editIsMandatory, setEditIsMandatory] = useState(true);
   const [editSubmitting, setEditSubmitting] = useState(false);
   // Which optional (isMandatory=false) fee structure's opt-in panel is open —
   // at most one at a time.
@@ -139,6 +141,8 @@ export function FeeStructureManager() {
     setEditingId(structure.id);
     setEditName(structure.name);
     setEditAmount(String(structure.amount));
+    setEditClassLevelIds(structure.classLevels.map((l) => l.classLevelId));
+    setEditIsMandatory(structure.isMandatory);
   }
 
   async function saveEdit(id: string) {
@@ -148,7 +152,12 @@ export function FeeStructureManager() {
       await apiFetch(`/fee-structures/${id}`, {
         method: "PATCH",
         auth: true,
-        body: { name: editName, amount: Number(editAmount) },
+        body: {
+          name: editName,
+          amount: Number(editAmount),
+          classLevelIds: editClassLevelIds,
+          isMandatory: editIsMandatory,
+        },
       });
       setEditingId(null);
       load();
@@ -217,10 +226,7 @@ export function FeeStructureManager() {
           <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
             {structures?.map((structure) =>
               editingId === structure.id ? (
-                <div
-                  key={structure.id}
-                  className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_1fr_auto_auto]"
-                >
+                <div key={structure.id} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-2">
                   <FormField label="Name" id={`fs-edit-name-${structure.id}`} value={editName} onChange={(e) => setEditName(e.target.value)} />
                   <FormField
                     label="Amount"
@@ -231,12 +237,33 @@ export function FeeStructureManager() {
                     value={editAmount}
                     onChange={(e) => setEditAmount(e.target.value)}
                   />
-                  <Button type="button" size="sm" disabled={editSubmitting} onClick={() => saveEdit(structure.id)}>
-                    Save
-                  </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setEditingId(null)}>
-                    Cancel
-                  </Button>
+                  <div>
+                    <Label htmlFor={`fs-edit-class-levels-${structure.id}`}>Class levels (none = whole school)</Label>
+                    <MultiSelect
+                      id={`fs-edit-class-levels-${structure.id}`}
+                      className="mt-1"
+                      value={editClassLevelIds}
+                      onValueChange={setEditClassLevelIds}
+                      placeholder="Whole school"
+                      options={classLevels.map((level) => ({ value: level.id, label: level.name }))}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 self-end pb-2.5">
+                    <Checkbox
+                      id={`fs-edit-mandatory-${structure.id}`}
+                      checked={editIsMandatory}
+                      onCheckedChange={(checked) => setEditIsMandatory(checked === true)}
+                    />
+                    <Label htmlFor={`fs-edit-mandatory-${structure.id}`}>Mandatory</Label>
+                  </div>
+                  <div className="flex gap-2 sm:col-span-2">
+                    <Button type="button" size="sm" disabled={editSubmitting} onClick={() => saveEdit(structure.id)}>
+                      Save
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setEditingId(null)}>
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div key={structure.id} className="rounded-lg border border-border p-2.5 text-[12.5px]">
