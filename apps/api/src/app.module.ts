@@ -60,6 +60,13 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
             res.setHeader("X-Request-Id", id);
             return id;
           },
+          // Trim the default per-request log to just method/url/status —
+          // the full req/res objects (headers, query, params, etc.) are
+          // noise for local dev and rarely needed once something's wrong.
+          serializers: {
+            req: (req: { method: string; url: string }) => ({ method: req.method, url: req.url }),
+            res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
+          },
         },
       }),
     }),
