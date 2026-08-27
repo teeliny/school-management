@@ -26,14 +26,6 @@ interface AssessmentComponentRow {
   inputClosesAt: string | null;
   status: string;
 }
-interface TimetableSlotItem {
-  id: string;
-  dayOfWeek: string;
-  startTime: string;
-  endTime: string;
-  subject: { name: string };
-  classArm: { displayName: string };
-}
 interface ScoreProgressRow {
   key: string;
   className: string;
@@ -42,9 +34,6 @@ interface ScoreProgressRow {
   totalStudents: number;
   enteredCount: number;
 }
-
-const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"];
-const DAY_LABEL: Record<string, string> = { MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri" };
 
 /**
  * PRD FR9.6 base table — the widget set every teaching StaffAssignment type
@@ -55,7 +44,7 @@ const DAY_LABEL: Record<string, string> = { MONDAY: "Mon", TUESDAY: "Tue", WEDNE
  * MySchedule already established.
  */
 export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
-  const { academicSessionId, termId } = useCurrentTerm();
+  const { termId } = useCurrentTerm();
   const [scoreProgress, setScoreProgress] = useState<ScoreProgressRow[] | null>(null);
   const [backdateWindowDays, setBackdateWindowDays] = useState(3);
 
@@ -76,16 +65,6 @@ export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
   useEffect(() => {
     if (schoolProfile) setBackdateWindowDays(schoolProfile.attendanceBackdateWindowDays);
   }, [schoolProfile]);
-  const { data: timetableSlots } = useQuery({
-    queryKey: ["timetable-slots", { staffId: user.staffProfileId, academicSessionId, termId }],
-    queryFn: () =>
-      apiFetch<TimetableSlotItem[]>(
-        `/timetable-slots?staffId=${user.staffProfileId}&academicSessionId=${academicSessionId}&termId=${termId}`,
-        { auth: true },
-      ),
-    enabled: Boolean(user.staffProfileId && academicSessionId && termId),
-  });
-
   useEffect(() => {
     if (!assignments || !openComponents) return;
     const subjectTeacherAssignments = assignments.filter(
@@ -198,11 +177,6 @@ export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
         </Card>
       )}
 
-      <Card>
-        <CardHeader title="Upcoming timetable" sub="This term's approved teaching slots" />
-        {timetableSlots ? <WeeklyTimetableGrid slots={timetableSlots} /> : <p className="text-sm text-muted">Loading…</p>}
-      </Card>
-
       {classTeacherArms.length > 0 && (
         <Card>
           <CardHeader title="Attendance to mark today" sub="Your class(es)' daily roll call" />
@@ -218,48 +192,6 @@ export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
           </div>
         </Card>
       )}
-    </div>
-  );
-}
-
-function WeeklyTimetableGrid({ slots }: { slots: TimetableSlotItem[] }) {
-  const times = [...new Set(slots.map((s) => s.startTime))].sort();
-  if (times.length === 0) return <p className="text-sm text-muted">No teaching slots this term.</p>;
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-[11.5px]">
-        <thead>
-          <tr>
-            <th className="w-16 p-1" />
-            {DAYS.map((day) => (
-              <th key={day} className="p-1 text-center text-[11px] uppercase tracking-wide text-muted">
-                {DAY_LABEL[day]}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {times.map((time) => (
-            <tr key={time} className="border-t border-border">
-              <td className="p-1 font-mono text-muted">{time}</td>
-              {DAYS.map((day) => {
-                const slot = slots.find((s) => s.dayOfWeek === day && s.startTime === time);
-                return (
-                  <td key={day} className="p-1 text-center">
-                    {slot && (
-                      <div className="rounded bg-card-inset px-1.5 py-1">
-                        <div className="font-medium">{slot.subject.name}</div>
-                        <div className="text-muted">{slot.classArm.displayName}</div>
-                      </div>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

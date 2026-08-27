@@ -13,13 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { StudentCombobox } from "../../components/molecules/student-combobox";
 import { ReportCardList } from "../../components/organisms/report-card-list";
 import { ReportCardFilters, REPORT_CARD_FILTER_ALL as ALL } from "../../components/organisms/report-card-filters";
+import { ParentReportCardSection } from "../../components/organisms/parent-report-card-section";
+import { StaffReportCardSection } from "../../components/organisms/staff-report-card-section";
 
-interface StudentOption {
-  id: string;
-  admissionNumber: string;
-  status: string;
-  user: { firstName: string; lastName: string };
-}
 interface TermOption {
   id: string;
   name: string;
@@ -58,7 +54,6 @@ export default function ReportCardsPage() {
 function ReportCardsPageInner() {
   const { user, loading, logout } = useCurrentUser();
   const searchParams = useSearchParams();
-  const [students, setStudents] = useState<StudentOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   // A student profile's "Report card" quick link arrives as
@@ -82,24 +77,43 @@ function ReportCardsPageInner() {
   const [genError, setGenError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Matches the backend CASL grant (ability.factory.ts): SUPER_ADMIN, ADMIN,
+  // and a STAFF user with an active PRINCIPAL/HEADTEACHER assignment can all
+  // generate/regenerate/publish report cards — deleting stays Super-Admin-only
+  // (term-report-card.ts's `remove` is a hardcoded role check, not CASL).
+  const canManageReports = user
+    ? user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      user.assignmentTypes.includes("PRINCIPAL") ||
+      user.assignmentTypes.includes("HEADTEACHER")
+    : false;
+  const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
+  // The "browse everything, pick any class" card below is reserved for this
+  // admin tier — a regular teacher gets StaffReportCardSection instead
+  // (homeroom-only, no school-wide picker), and a parent gets
+  // ParentReportCardSection (their own wards only). Broader than
+  // canManageReports (REGISTRAR can browse but not generate/publish).
+  const isAdminTier = user
+    ? user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      user.assignmentTypes.includes("REGISTRAR") ||
+      user.assignmentTypes.includes("PRINCIPAL") ||
+      user.assignmentTypes.includes("HEADTEACHER")
+    : false;
+
   useEffect(() => {
     if (!user) return;
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
     // A school-wide student roster can run into the thousands, so it's never
     // fetched wholesale — StudentCombobox (both here and in the Generate
     // panel below) fetches a server-searched, paginated page per chosen
-    // class arm instead. A parent is the one exception: their own ward list
-    // is small by construction (their children), so it's fetched directly
-    // to drive the auto-select/child-picker in ReportCardFilters, and
-    // neither the admin Generate panel nor the class-arm filter render for
-    // that role (skip fetching every class arm in the school for a role
-    // that never renders either).
-    if (user.roles.includes("PARENT")) {
-      apiFetch<StudentOption[]>("/students", { auth: true }).then(setStudents).catch(() => setStudents([]));
-    } else {
+    // class arm instead. Only the admin-tier browse card below needs the
+    // full class-arm list; a regular teacher's/parent's own sections fetch
+    // their own narrower scope independently.
+    if (isAdminTier) {
       apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
     }
-  }, [user]);
+  }, [user, isAdminTier]);
 
   // A different class arm invalidates whichever student was picked for the
   // previous one.
@@ -119,18 +133,6 @@ function ReportCardsPageInner() {
       .then(setProgress)
       .catch(() => setProgress(null));
   }, [classArmFilter, termFilter, refreshKey]);
-
-  // Matches the backend CASL grant (ability.factory.ts): SUPER_ADMIN, ADMIN,
-  // and a STAFF user with an active PRINCIPAL/HEADTEACHER assignment can all
-  // generate/regenerate/publish report cards — deleting stays Super-Admin-only
-  // (term-report-card.ts's `remove` is a hardcoded role check, not CASL).
-  const canManageReports = user
-    ? user.roles.includes("SUPER_ADMIN") ||
-      user.roles.includes("ADMIN") ||
-      user.assignmentTypes.includes("PRINCIPAL") ||
-      user.assignmentTypes.includes("HEADTEACHER")
-    : false;
-  const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
 
   // Driven by the Generate panel's own Class arm/Term (genClassArmId/
   // genTermId), not the Report cards list's filters below — whole-class
@@ -328,36 +330,39 @@ function ReportCardsPageInner() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader title="Report cards" />
-        <ReportCardFilters
-          students={students}
-          classArms={classArms}
-          user={user}
-          classArmFilter={classArmFilter}
-          onClassArmFilterChange={setClassArmFilter}
-          studentFilter={studentFilter}
-          onStudentFilterChange={setStudentFilter}
-          termFilter={termFilter}
-          onTermFilterChange={setTermFilter}
-        />
+      {isAdminTier && (
+        <Card>
+          <CardHeader title="Report cards" />
+          <ReportCardFilters
+            classArms={classArms}
+            classArmFilter={classArmFilter}
+            onClassArmFilterChange={setClassArmFilter}
+            studentFilter={studentFilter}
+            onStudentFilterChange={setStudentFilter}
+            termFilter={termFilter}
+            onTermFilterChange={setTermFilter}
+          />
 
-        {progress && (
-          <p className="mb-4 text-[12.5px] text-muted">
-            Reports generated: {progress.generatedCount}/{progress.totalStudents} students
-          </p>
-        )}
+          {progress && (
+            <p className="mb-4 text-[12.5px] text-muted">
+              Reports generated: {progress.generatedCount}/{progress.totalStudents} students
+            </p>
+          )}
 
-        <ReportCardList
-          studentId={studentFilter === ALL ? "" : studentFilter}
-          termId={termFilter === ALL ? "" : termFilter}
-          classArmId={classArmFilter === ALL ? "" : classArmFilter}
-          terms={terms}
-          canManage={canManageReports}
-          canDelete={isSuperAdmin}
-          refreshKey={refreshKey}
-        />
-      </Card>
+          <ReportCardList
+            studentId={studentFilter === ALL ? "" : studentFilter}
+            termId={termFilter === ALL ? "" : termFilter}
+            classArmId={classArmFilter === ALL ? "" : classArmFilter}
+            terms={terms}
+            canManage={canManageReports}
+            canDelete={isSuperAdmin}
+            refreshKey={refreshKey}
+          />
+        </Card>
+      )}
+
+      {user.parentProfileId && <ParentReportCardSection />}
+      {user.staffProfileId && !isAdminTier && <StaffReportCardSection />}
     </AppShell>
   );
 }

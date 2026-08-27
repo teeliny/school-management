@@ -52,15 +52,30 @@ export function AllClassesTimetableView({
   academicSessionId,
   termId,
   onViewClass,
+  staffId,
+  lockedGroup,
 }: {
   academicSessionId: string;
   termId: string;
   onViewClass: (classArmId: string) => void;
+  // Restricts every row to just this staff member's own periods — a regular
+  // teacher's "all classes" view should still span the whole school's class
+  // list, but only ever reveal her own subject in each class, never other
+  // teachers'/subjects' periods. Omitted entirely for admin-tier callers,
+  // who see the unrestricted whole-school grid as before.
+  staffId?: string;
+  // A Principal/Headteacher's own remit is one group only (JSS/SSS or
+  // Creche/Nursery/Primary respectively) — the backend already silently
+  // scopes their no-classArmId query to it (resolveCategoryGroupScopedClassArmIds,
+  // TimetableSlotService.findAll), so letting them toggle to the other group
+  // in the UI would just show every row blank. Locks the toggle away
+  // entirely instead of leaving that confusing dead end reachable.
+  lockedGroup?: ClassLevelCategoryGroup;
 }) {
   const [rows, setRows] = useState<TimetableSlotItem[] | null>(null);
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [group, setGroup] = useState<ClassLevelCategoryGroup>("JSS_SSS");
+  const [group, setGroup] = useState<ClassLevelCategoryGroup>(lockedGroup ?? "JSS_SSS");
   const structure = usePeriodStructure(group);
   const { specialPeriods, fridayTrailingActivity } = useSpecialPeriods(group);
 
@@ -69,7 +84,7 @@ export function AllClassesTimetableView({
       setRows(null);
       return;
     }
-    const qs = `academicSessionId=${academicSessionId}&termId=${termId}`;
+    const qs = `academicSessionId=${academicSessionId}&termId=${termId}${staffId ? `&staffId=${staffId}` : ""}`;
     Promise.allSettled([
       apiFetch<TimetableSlotItem[]>(`/timetable-slots?${qs}`, { auth: true }),
       apiFetch<TimetableSlotItem[]>(`/timetable-slots?${qs}&approvalStatus=PENDING_REVIEW`, { auth: true }),
@@ -83,7 +98,7 @@ export function AllClassesTimetableView({
       const pending = pendingR.status === "fulfilled" ? pendingR.value : [];
       setRows([...approved, ...pending]);
     });
-  }, [academicSessionId, termId]);
+  }, [academicSessionId, termId, staffId]);
 
   useEffect(() => {
     load();
@@ -136,13 +151,15 @@ export function AllClassesTimetableView({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1.5">
-        {(Object.keys(GROUP_LABEL) as ClassLevelCategoryGroup[]).map((g) => (
-          <Button key={g} type="button" size="sm" variant={group === g ? "primary" : "outline"} onClick={() => setGroup(g)}>
-            {GROUP_LABEL[g]}
-          </Button>
-        ))}
-      </div>
+      {!lockedGroup && (
+        <div className="flex gap-1.5">
+          {(Object.keys(GROUP_LABEL) as ClassLevelCategoryGroup[]).map((g) => (
+            <Button key={g} type="button" size="sm" variant={group === g ? "primary" : "outline"} onClick={() => setGroup(g)}>
+              {GROUP_LABEL[g]}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {classArmsForGroup.length === 0 ? (
         <p className="text-sm text-muted">No class arms in this group for the selected session.</p>

@@ -9,7 +9,7 @@ interface ExamScheduleItem {
   id: string;
   classArmId: string;
   classArm: { displayName: string };
-  subject: { name: string; code: string };
+  subject: { id: string; name: string; code: string };
   date: string;
   startTime: string;
   endTime: string;

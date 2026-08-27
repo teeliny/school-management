@@ -490,6 +490,20 @@ export class StudentService {
     return { data, total };
   }
 
+  // Guardian-scoped students, unconditional on the caller's other roles —
+  // unlike scopeWhereForUser's STAFF-before-PARENT priority (correct for the
+  // generic roster below, wrong for "my own children"), a STAFF+PARENT user
+  // must always get their real wards here regardless of what they teach.
+  async myWards(userId: string) {
+    const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId } });
+    if (!parentProfile) return [];
+    return this.prisma.studentProfile.findMany({
+      where: { guardians: { some: { parentId: parentProfile.id } } },
+      include: STUDENT_LIST_INCLUDE,
+      orderBy: { admissionNumber: "asc" },
+    });
+  }
+
   // Resolves just the role-level `where` scope (no class/search filters, no
   // pagination) — `null` means "no rows visible to this user" so the caller
   // can short-circuit rather than issuing a `where: undefined` query that
@@ -617,6 +631,11 @@ export class StudentController {
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),
     });
+  }
+
+  @Get("wards")
+  findWards(@CurrentUser() user: RequestUser) {
+    return this.service.myWards(user.id);
   }
 
   @Get(":id")

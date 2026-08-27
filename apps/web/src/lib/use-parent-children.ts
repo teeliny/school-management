@@ -25,7 +25,7 @@ export function useParentChildren(parentProfileId: string | null): ParentChild[]
       setChildren(null);
       return;
     }
-    apiFetch<ParentChild[]>("/students", { auth: true })
+    apiFetch<ParentChild[]>("/students/wards", { auth: true })
       .then(setChildren)
       .catch(() => setChildren([]));
   }, [parentProfileId]);

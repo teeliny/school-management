@@ -68,9 +68,14 @@ export class ExamScheduleService {
 
   // Same PARENT-scoping precedent as TimetableSlotService's own copy of this
   // helper (mirrors TermReportCardService.findForUser's StudentGuardian
-  // join) — a parent may only ever see their own wards' exam schedules.
+  // join) — a *pure* parent may only ever see their own wards' exam
+  // schedules. A user who is also STAFF/ADMIN/SUPER_ADMIN (e.g. a class
+  // teacher guardianing their own child) is otherwise fully entitled to view
+  // any class's approved exam schedule and must not be fenced into just
+  // their ward's class.
   private async resolveParentScopedClassArmIds(user: RequestUser): Promise<string[] | null> {
     if (!user.roles.includes("PARENT")) return null;
+    if (user.roles.includes("STAFF") || user.roles.includes("ADMIN") || user.roles.includes("SUPER_ADMIN")) return null;
     const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
     if (!parentProfile) return [];
     const wards = await this.prisma.studentProfile.findMany({

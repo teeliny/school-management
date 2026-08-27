@@ -109,13 +109,17 @@ export class TimetableSlotService {
     return this.prisma.timetableSlot.update({ where: { id }, data: dto });
   }
 
-  // A parent caller may only ever see their own wards' classes — mirrors
-  // TermReportCardService.findForUser's PARENT branch (StudentGuardian join
-  // to the wards' currentClassId). Returns `null` for "no scoping needed"
-  // (any other caller) so findAll can tell "unrestricted" apart from "scoped
-  // to zero classes."
+  // A *pure* parent caller may only ever see their own wards' classes —
+  // mirrors TermReportCardService.findForUser's PARENT branch (StudentGuardian
+  // join to the wards' currentClassId). Returns `null` for "no scoping
+  // needed" (any other caller, including a STAFF/ADMIN/SUPER_ADMIN user who
+  // also happens to be a PARENT — e.g. a class teacher guardianing their own
+  // child — since they're otherwise fully entitled to view any class's
+  // approved timetable and shouldn't be fenced into just their ward's class)
+  // so findAll can tell "unrestricted" apart from "scoped to zero classes."
   private async resolveParentScopedClassArmIds(user: RequestUser): Promise<string[] | null> {
     if (!user.roles.includes("PARENT")) return null;
+    if (user.roles.includes("STAFF") || user.roles.includes("ADMIN") || user.roles.includes("SUPER_ADMIN")) return null;
     const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
     if (!parentProfile) return [];
     const wards = await this.prisma.studentProfile.findMany({

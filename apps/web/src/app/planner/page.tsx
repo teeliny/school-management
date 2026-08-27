@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { ClassLevelCategory } from "@school/types";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
@@ -23,6 +24,17 @@ import { TriggerGenerationForm } from "../../components/organisms/trigger-genera
 import { GenerationRequestsList, type GenerationRequestsListHandle } from "../../components/organisms/generation-requests-list";
 import { SchedulingApprovalsQueue } from "../../components/organisms/scheduling-approvals-queue";
 import { SchedulingConstraintManager } from "../../components/organisms/scheduling-constraint-manager";
+import {
+  MyClassTimetableSection,
+  MySubjectTimetableSection,
+  MyWardTimetableSection,
+  MyClassExamSection,
+  MySubjectExamSection,
+  MyWardExamSection,
+  MyInvigilationSection,
+  MyWeeklyDutySection,
+  type MyWard,
+} from "../../components/organisms/my-planner-sections";
 
 type TabKey = "class-timetable" | "exam-timetable" | "invigilation" | "weekly-duty" | "generate-approve" | "constraints";
 type ClassLevelCategoryGroupValue = "JSS_SSS" | "CRECHE_NURSERY_PRIMARY";
@@ -63,6 +75,14 @@ interface AssessmentComponentOption {
   classLevelCategory: string;
   termId: string;
 }
+interface StaffAssignmentItem {
+  assignmentType: string;
+  isActive: boolean;
+  classArmId: string | null;
+  subjectId: string | null;
+  classArm: { name: string; classLevel: { name: string; category: ClassLevelCategory } } | null;
+  subject: { id: string; name: string } | null;
+}
 
 // PRD §3.8/§5 footnote 5: same JSS/SSS vs. Creche/Nursery/Primary split
 // used server-side (categoryToGroup, @school/types) — reimplemented inline
@@ -93,6 +113,9 @@ function PlannerPageInner() {
   const [sessions, setSessions] = useState<AcademicSessionOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
   const [components, setComponents] = useState<AssessmentComponentOption[]>([]);
+  const [myAssignments, setMyAssignments] = useState<StaffAssignmentItem[]>([]);
+  const [wards, setWards] = useState<MyWard[]>([]);
+  const [selectedWardId, setSelectedWardId] = useState<string | null>(null);
 
   // Class Timetable tab state
   const [ctViewMode, setCtViewMode] = useState<"single" | "all">("single");
@@ -124,7 +147,16 @@ function PlannerPageInner() {
     apiFetch<AssessmentComponentOption[]>("/assessment-components", { auth: true })
       .then((all) => setComponents(all.filter((c) => c.type === "MID_TERM" || c.type === "EXAM")))
       .catch(() => setComponents([]));
+    apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true }).then(setMyAssignments).catch(() => setMyAssignments([]));
+    apiFetch<MyWard[]>("/students/wards", { auth: true }).then(setWards).catch(() => setWards([]));
   }, []);
+
+  // Default to whichever ward is still active, same precedent used
+  // elsewhere (report-card-filters.tsx, dashboard/page.tsx).
+  useEffect(() => {
+    if (selectedWardId || wards.length === 0) return;
+    setSelectedWardId((wards.find((w) => w.status === "ACTIVE") ?? wards[0])!.id);
+  }, [wards, selectedWardId]);
 
   // Default Class Timetable's session/term to whichever is `isCurrent` once
   // nothing else has already set one — same "current unless picked"
@@ -233,6 +265,13 @@ function PlannerPageInner() {
     user.assignmentTypes.includes("REGISTRAR") ||
     ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
 
+  const myClassTeacherAssignments = myAssignments.filter(
+    (a) => a.assignmentType === "CLASS_TEACHER" && a.isActive && a.classArmId && a.classArm,
+  );
+  const mySubjectTeacherAssignments = myAssignments.filter(
+    (a) => a.assignmentType === "SUBJECT_TEACHER" && a.isActive && a.classArmId && a.subjectId && a.classArm && a.subject,
+  );
+
   // PRD FR6.7: invigilation rosters are visible to assigned staff/Registrar/
   // Super-Admin/Admin, never to students or parents — same treatment applied
   // here to the weekly duty roster (also a staff-only rotation, nothing a
@@ -326,7 +365,7 @@ function PlannerPageInner() {
         </TabsList>
 
         <TabsContent value="class-timetable">
-          <CollapsibleCard title="Select class, session, and term" className="mb-4">
+          <CollapsibleCard title="Select academic session and term" className="mb-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <Label htmlFor="ct-session">Academic session</Label>
@@ -358,164 +397,215 @@ function PlannerPageInner() {
                   </SelectContent>
                 </Select>
               </div>
-              {ctViewMode === "single" && (
-                <div>
-                  <Label htmlFor="ct-class-arm">Class arm</Label>
-                  <Select value={ctClassArmId} onValueChange={setCtClassArmId}>
-                    <SelectTrigger id="ct-class-arm" className="mt-1">
-                      <SelectValue placeholder="Select class" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {classArms.map((arm) => (
-                        <SelectItem key={arm.id} value={arm.id}>
-                          {arm.displayName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
             </div>
           </CollapsibleCard>
 
-          <div className="mb-3 flex gap-1.5">
-            <Button type="button" size="sm" variant={ctViewMode === "all" ? "primary" : "outline"} onClick={() => setCtViewMode("all")}>
-              All classes
-            </Button>
-            <Button type="button" size="sm" variant={ctViewMode === "single" ? "primary" : "outline"} onClick={() => setCtViewMode("single")}>
-              Single class
-            </Button>
-          </div>
-
-          {ctViewMode === "all" ? (
-            <CollapsibleCard title="Whole-school timetable">
-              <AllClassesTimetableView
+          {(myClassTeacherAssignments.length > 0 || mySubjectTeacherAssignments.length > 0 || wards.length > 0) && (
+            <div className="mb-4 space-y-4">
+              <MyClassTimetableSection
+                assignments={myClassTeacherAssignments}
                 academicSessionId={ctAcademicSessionId}
                 termId={ctTermId}
-                onViewClass={(id) => {
-                  setCtClassArmId(id);
-                  setCtViewMode("single");
-                }}
               />
-            </CollapsibleCard>
-          ) : (
-            <div className="space-y-4">
-              <CollapsibleCard title="Weekly timetable">
-                <TimetableGrid
-                  classArmId={ctClassArmId}
+              {user.staffProfileId && (
+                <MySubjectTimetableSection
+                  assignments={mySubjectTeacherAssignments}
+                  staffId={user.staffProfileId}
                   academicSessionId={ctAcademicSessionId}
                   termId={ctTermId}
-                  canManage={canManage}
-                  refreshKey={ctRefreshKey}
                 />
-              </CollapsibleCard>
-              {canManage && (
-                <CollapsibleCard title="Add a slot" defaultOpen={false}>
-                  <TimetableSlotForm
-                    classArmId={ctClassArmId}
-                    academicSessionId={ctAcademicSessionId}
-                    termId={ctTermId}
-                    onCreated={() => setCtRefreshKey((k) => k + 1)}
-                  />
+              )}
+              <MyWardTimetableSection
+                wards={wards}
+                selectedWardId={selectedWardId}
+                onSelectWard={setSelectedWardId}
+                academicSessionId={ctAcademicSessionId}
+                termId={ctTermId}
+              />
+            </div>
+          )}
+
+          {canManage && (
+            <>
+              {ctViewMode === "single" && (
+                <CollapsibleCard title="Select class arm" className="mb-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div>
+                      <Label htmlFor="ct-class-arm">Class arm</Label>
+                      <Select value={ctClassArmId} onValueChange={setCtClassArmId}>
+                        <SelectTrigger id="ct-class-arm" className="mt-1">
+                          <SelectValue placeholder="Select class" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {classArms.map((arm) => (
+                            <SelectItem key={arm.id} value={arm.id}>
+                              {arm.displayName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 </CollapsibleCard>
               )}
-            </div>
+
+              <div className="mb-3 flex gap-1.5">
+                <Button type="button" size="sm" variant={ctViewMode === "all" ? "primary" : "outline"} onClick={() => setCtViewMode("all")}>
+                  All classes
+                </Button>
+                <Button type="button" size="sm" variant={ctViewMode === "single" ? "primary" : "outline"} onClick={() => setCtViewMode("single")}>
+                  Single class
+                </Button>
+              </div>
+
+              {ctViewMode === "all" ? (
+                <CollapsibleCard title="Whole-school timetable">
+                  <AllClassesTimetableView
+                    academicSessionId={ctAcademicSessionId}
+                    termId={ctTermId}
+                    onViewClass={(id) => {
+                      setCtClassArmId(id);
+                      setCtViewMode("single");
+                    }}
+                    lockedGroup={scopedGroup ?? undefined}
+                  />
+                </CollapsibleCard>
+              ) : (
+                <div className="space-y-4">
+                  <CollapsibleCard title="Weekly timetable">
+                    <TimetableGrid
+                      classArmId={ctClassArmId}
+                      academicSessionId={ctAcademicSessionId}
+                      termId={ctTermId}
+                      canManage={canManage}
+                      refreshKey={ctRefreshKey}
+                    />
+                  </CollapsibleCard>
+                  <CollapsibleCard title="Add a slot" defaultOpen={false}>
+                    <TimetableSlotForm
+                      classArmId={ctClassArmId}
+                      academicSessionId={ctAcademicSessionId}
+                      termId={ctTermId}
+                      onCreated={() => setCtRefreshKey((k) => k + 1)}
+                    />
+                  </CollapsibleCard>
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
 
         <TabsContent value="exam-timetable">
-          <CollapsibleCard title="Select term, assessment component, and class arm" className="mb-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div>
-                <Label htmlFor="et-term">Term</Label>
-                <Select
-                  value={etTermId}
-                  onValueChange={(v) => {
-                    setEtTermId(v);
-                    // Same-named components repeat once per term — a
-                    // component picked under the old term filter is no
-                    // longer meaningful once the filter itself changes.
-                    setEtComponentId("");
-                  }}
-                >
-                  <SelectTrigger id="et-term" className="mt-1">
-                    <SelectValue placeholder="Select term" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {terms.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="et-component">Assessment component</Label>
-                <Select
-                  value={etComponentId}
-                  onValueChange={(v) => {
-                    setEtComponentId(v);
-                    // A class arm from a different classLevelCategory than
-                    // the newly-picked component can never have exam rows
-                    // for it.
-                    setEtClassArmId("");
-                  }}
-                >
-                  <SelectTrigger id="et-component" className="mt-1">
-                    <SelectValue placeholder={etTermId ? "Select a component for this term" : "Select a term first"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <GroupedComponentOptions termId={etTermId} />
-                  </SelectContent>
-                </Select>
-              </div>
-              {etViewMode === "single" && (
-                <div>
-                  <Label htmlFor="et-class-arm">Class arm</Label>
-                  <Select value={etClassArmId} onValueChange={setEtClassArmId}>
-                    <SelectTrigger id="et-class-arm" className="mt-1">
-                      <SelectValue placeholder={etComponentId ? "Select class" : "Select a component first"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {etClassArmOptions.map((arm) => (
-                        <SelectItem key={arm.id} value={arm.id}>
-                          {arm.displayName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+          {(myClassTeacherAssignments.length > 0 || mySubjectTeacherAssignments.length > 0 || wards.length > 0) && (
+            <div className="mb-4 space-y-4">
+              <MyClassExamSection assignments={myClassTeacherAssignments} />
+              {user.staffProfileId && <MySubjectExamSection assignments={mySubjectTeacherAssignments} />}
+              <MyWardExamSection wards={wards} selectedWardId={selectedWardId} onSelectWard={setSelectedWardId} />
             </div>
-          </CollapsibleCard>
+          )}
 
-          <div className="mb-3 flex gap-1.5">
-            <Button type="button" size="sm" variant={etViewMode === "all" ? "primary" : "outline"} onClick={() => setEtViewMode("all")}>
-              All classes
-            </Button>
-            <Button type="button" size="sm" variant={etViewMode === "single" ? "primary" : "outline"} onClick={() => setEtViewMode("single")}>
-              Single class
-            </Button>
-          </div>
+          {canManage && (
+            <>
+              <CollapsibleCard title="Select term, assessment component, and class arm" className="mb-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <Label htmlFor="et-term">Term</Label>
+                    <Select
+                      value={etTermId}
+                      onValueChange={(v) => {
+                        setEtTermId(v);
+                        // Same-named components repeat once per term — a
+                        // component picked under the old term filter is no
+                        // longer meaningful once the filter itself changes.
+                        setEtComponentId("");
+                      }}
+                    >
+                      <SelectTrigger id="et-term" className="mt-1">
+                        <SelectValue placeholder="Select term" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {terms.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="et-component">Assessment component</Label>
+                    <Select
+                      value={etComponentId}
+                      onValueChange={(v) => {
+                        setEtComponentId(v);
+                        // A class arm from a different classLevelCategory than
+                        // the newly-picked component can never have exam rows
+                        // for it.
+                        setEtClassArmId("");
+                      }}
+                    >
+                      <SelectTrigger id="et-component" className="mt-1">
+                        <SelectValue placeholder={etTermId ? "Select a component for this term" : "Select a term first"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <GroupedComponentOptions termId={etTermId} />
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {etViewMode === "single" && (
+                    <div>
+                      <Label htmlFor="et-class-arm">Class arm</Label>
+                      <Select value={etClassArmId} onValueChange={setEtClassArmId}>
+                        <SelectTrigger id="et-class-arm" className="mt-1">
+                          <SelectValue placeholder={etComponentId ? "Select class" : "Select a component first"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {etClassArmOptions.map((arm) => (
+                            <SelectItem key={arm.id} value={arm.id}>
+                              {arm.displayName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleCard>
 
-          <CollapsibleCard title="Exam timetable">
-            {etViewMode === "all" ? (
-              <AllClassesExamTimetableView
-                assessmentComponentId={etComponentId}
-                onViewClass={(id) => {
-                  setEtClassArmId(id);
-                  setEtViewMode("single");
-                }}
-              />
-            ) : (
-              <ExamTimetableGrid classArmId={etClassArmId} assessmentComponentId={etComponentId} canManage={canManage} />
-            )}
-          </CollapsibleCard>
+              <div className="mb-3 flex gap-1.5">
+                <Button type="button" size="sm" variant={etViewMode === "all" ? "primary" : "outline"} onClick={() => setEtViewMode("all")}>
+                  All classes
+                </Button>
+                <Button type="button" size="sm" variant={etViewMode === "single" ? "primary" : "outline"} onClick={() => setEtViewMode("single")}>
+                  Single class
+                </Button>
+              </div>
+
+              <CollapsibleCard title="Exam timetable">
+                {etViewMode === "all" ? (
+                  <AllClassesExamTimetableView
+                    assessmentComponentId={etComponentId}
+                    onViewClass={(id) => {
+                      setEtClassArmId(id);
+                      setEtViewMode("single");
+                    }}
+                  />
+                ) : (
+                  <ExamTimetableGrid classArmId={etClassArmId} assessmentComponentId={etComponentId} canManage={canManage} />
+                )}
+              </CollapsibleCard>
+            </>
+          )}
         </TabsContent>
 
         {canSeeStaffRosters && (
           <TabsContent value="invigilation">
+            {user.staffProfileId && (
+              <div className="mb-4">
+                <MyInvigilationSection staffId={user.staffProfileId} />
+              </div>
+            )}
+
             <CollapsibleCard title="Select term and assessment component" className="mb-4">
               <div className="grid max-w-lg grid-cols-2 gap-3">
                 <div>
@@ -561,6 +651,12 @@ function PlannerPageInner() {
 
         {canSeeStaffRosters && (
           <TabsContent value="weekly-duty">
+            {user.staffProfileId && (
+              <div className="mb-4">
+                <MyWeeklyDutySection staffId={user.staffProfileId} />
+              </div>
+            )}
+
             <CollapsibleCard title="Select group and term" className="mb-4">
               <div className="grid max-w-lg grid-cols-2 gap-3">
                 <div>

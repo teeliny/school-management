@@ -20,9 +20,10 @@ import { StudentDashboard } from "../../components/organisms/student-dashboard";
 
 export default function DashboardPage() {
   const { user, loading, logout } = useCurrentUser();
-  // Lifted up here (rather than fetched independently by ParentDashboard and
-  // MySchedule) so both sections agree on which one child a multi-ward
-  // parent is currently viewing.
+  // Shared by ParentDashboard's child tabs (fees/report-card-preview/
+  // attendance) and MySchedule's ward "today" section below, so both agree
+  // on which one child a multi-ward parent is currently viewing. The full
+  // weekly grid for any ward lives on Planner's Class Timetable tab instead.
   const children = useParentChildren(user?.parentProfileId ?? null);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const hasAutoSelected = useRef(false);
@@ -85,9 +86,7 @@ export default function DashboardPage() {
       )}
       {user.studentProfileId && <StudentDashboard user={user} />}
 
-      {(user.studentProfileId || user.parentProfileId || user.staffProfileId) && (
-        <MySchedule user={user} selectedChild={children?.find((c) => c.id === selectedChildId) ?? children?.[0] ?? null} />
-      )}
+      <MySchedule user={user} selectedChild={children?.find((c) => c.id === selectedChildId) ?? children?.[0] ?? null} />
     </AppShell>
   );
 }

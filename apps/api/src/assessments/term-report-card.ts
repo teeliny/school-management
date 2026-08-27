@@ -18,6 +18,7 @@ import type { Queue } from "bullmq";
 import {
   EnrollmentStatus,
   NotificationType,
+  Prisma,
   ReportCommentType,
   TermReportCardStatus,
   TermReportCardType,
@@ -322,6 +323,15 @@ export class TermReportCardService {
    * students see only their own, both published-only — same row-level
    * scoping shape as StudentService.findAllForUser (identity/students/
    * student.ts), applied here to TermReportCard instead of StudentProfile.
+   *
+   * Non-admin roles compose an `OR` of whichever access paths this caller
+   * actually holds, rather than an early-return priority chain — a
+   * STAFF+PARENT user (e.g. a class teacher who also guardians a child) must
+   * see their own child's card via the PARENT clause even though the STAFF
+   * clause also runs (and typically doesn't cover that child's class), and
+   * their homeroom's cards via the STAFF clause regardless of also being a
+   * parent. Each clause keeps its own status filter (STAFF: any status;
+   * PARENT/STUDENT: published-only).
    */
   async findForUser(user: RequestUser, filters: { studentId?: string; termId?: string; classArmId?: string }) {
     const { classArmId, ...scalarFilters } = filters;
@@ -340,70 +350,59 @@ export class TermReportCardService {
       return cards.map(withStudentClassArmDisplayName);
     }
 
+    const orConditions: Prisma.TermReportCardWhereInput[] = [];
+
     if (user.roles.includes("STAFF")) {
       // PRD §5: Principal/Headteacher hold a school-wide assignment, not a
       // per-class one — same carve-out StudentService.scopeWhereForUser
       // applies, otherwise they'd see zero report cards (no CLASS_TEACHER/
       // SUBJECT_TEACHER assignment to scope by).
       if (await this.staffAssignments.hasActiveSchoolWideAssignment(user.id)) {
-        const cards = await this.prisma.termReportCard.findMany({
-          where: { ...scalarFilters, ...(classArmId ? { student: { currentClassId: classArmId } } : {}) },
-          include: { student: { select: studentSelect } },
-          orderBy: { createdAt: "desc" },
-        });
-        return cards.map(withStudentClassArmDisplayName);
+        orConditions.push(classArmId ? { student: { currentClassId: classArmId } } : {});
+      } else {
+        // PRD §5: class/subject teacher see report cards for their own
+        // class(es) — not published-only, unlike parent/student, since staff
+        // may need to review a card before it's published. A requested
+        // classArmId narrows within that assigned set (intersected, not
+        // substituted) rather than trusting an arbitrary caller-supplied id.
+        const assignedClassArmIds = await this.staffAssignments.activeAssignedClassArmIds(user.id);
+        const scopedClassArmIds = classArmId
+          ? assignedClassArmIds.filter((id) => id === classArmId)
+          : assignedClassArmIds;
+        if (scopedClassArmIds.length > 0) {
+          orConditions.push({ student: { currentClassId: { in: scopedClassArmIds } } });
+        }
       }
-
-      // PRD §5: class/subject teacher see report cards for their own
-      // class(es) — not published-only, unlike parent/student, since staff
-      // may need to review a card before it's published. A requested
-      // classArmId narrows within that assigned set (intersected, not
-      // substituted) rather than trusting an arbitrary caller-supplied id.
-      const assignedClassArmIds = await this.staffAssignments.activeAssignedClassArmIds(user.id);
-      if (assignedClassArmIds.length === 0) return [];
-      const scopedClassArmIds = classArmId
-        ? assignedClassArmIds.filter((id) => id === classArmId)
-        : assignedClassArmIds;
-      if (scopedClassArmIds.length === 0) return [];
-      const cards = await this.prisma.termReportCard.findMany({
-        where: { ...scalarFilters, student: { currentClassId: { in: scopedClassArmIds } } },
-        include: { student: { select: studentSelect } },
-        orderBy: { createdAt: "desc" },
-      });
-      return cards.map(withStudentClassArmDisplayName);
     }
 
     if (user.roles.includes("PARENT")) {
       const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
-      if (!parentProfile) return [];
-      const cards = await this.prisma.termReportCard.findMany({
-        where: {
-          ...scalarFilters,
+      if (parentProfile) {
+        orConditions.push({
           status: TermReportCardStatus.PUBLISHED,
           student: {
             guardians: { some: { parentId: parentProfile.id } },
             ...(classArmId ? { currentClassId: classArmId } : {}),
           },
-        },
-        include: { student: { select: studentSelect } },
-        orderBy: { createdAt: "desc" },
-      });
-      return cards.map(withStudentClassArmDisplayName);
+        });
+      }
     }
 
     if (user.roles.includes("STUDENT")) {
       const studentProfile = await this.prisma.studentProfile.findUnique({ where: { userId: user.id } });
-      if (!studentProfile) return [];
-      if (classArmId && studentProfile.currentClassId !== classArmId) return [];
-      const cards = await this.prisma.termReportCard.findMany({
-        where: { ...scalarFilters, studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED },
-        include: { student: { select: studentSelect } },
-        orderBy: { createdAt: "desc" },
-      });
-      return cards.map(withStudentClassArmDisplayName);
+      if (studentProfile && (!classArmId || studentProfile.currentClassId === classArmId)) {
+        orConditions.push({ studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED });
+      }
     }
 
-    return [];
+    if (orConditions.length === 0) return [];
+
+    const cards = await this.prisma.termReportCard.findMany({
+      where: { ...scalarFilters, OR: orConditions },
+      include: { student: { select: studentSelect } },
+      orderBy: { createdAt: "desc" },
+    });
+    return cards.map(withStudentClassArmDisplayName);
   }
 
   async remove(id: string) {

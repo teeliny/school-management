@@ -34,7 +34,7 @@ A school management platform serving Nigerian-model schools (Creche/Nursery → 
 ### 1.3 Target Users
 
 | Role | Description |
-|---|---|
+| --- | --- |
 | Super-Admin (Proprietor) | The school's owner — singleton per school. Everything Admin can do, plus owner-only powers: appointing/removing Admins, billing/subscription, ownership transfer |
 | Admin | School-level administrator (principal's office / management, full day-to-day control within their school) |
 | Staff — Teaching | Subject/class teachers, can hold additional role assignments |
@@ -51,7 +51,7 @@ These five roles are the only personas the application itself models. Deploying 
 ### 2.1 Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Frontend | Next.js (App Router), TypeScript, React Query/TanStack Query, Tailwind CSS |
 | Backend | NestJS, TypeScript, REST (+ WebSocket Gateway) |
 | Database | PostgreSQL — one dedicated database per school deployment. Connection details come from environment configuration, not hardcoded to any specific vendor's SDK, so the database can be hosted anywhere Postgres runs and moved later by changing config and redeploying — see §2.2 |
@@ -101,7 +101,7 @@ These five roles are the only personas the application itself models. Deploying 
 **`User`** (central table — one row per human, regardless of role)
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | id | uuid PK | |
 | email | citext, unique | login identifier |
 | phone | string, nullable | |
@@ -117,7 +117,7 @@ These five roles are the only personas the application itself models. Deploying 
 **`UserRole`** (many-to-many; a user can hold multiple base roles over time, though typically one)
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | id | uuid PK | |
 | userId | uuid FK → User | |
 | role | enum: `SUPER_ADMIN`, `ADMIN`, `STAFF`, `PARENT`, `STUDENT` | exactly one active `SUPER_ADMIN` row at a time, enforced via a partial unique index (`WHERE role = 'SUPER_ADMIN' AND "isActive"`) — this is the school's Proprietor, see §1.3 |
@@ -137,7 +137,7 @@ These five roles are the only personas the application itself models. Deploying 
 **`StudentGuardian`** (join table — enforces the "no student without a parent" rule)
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | id | uuid PK | |
 | studentId | uuid FK → StudentProfile | |
 | parentId | uuid FK → ParentProfile | |
@@ -154,7 +154,7 @@ All account creation other than direct Student record creation goes through this
 **`Invitation`**
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | id | uuid PK | |
 | email | citext | recipient |
 | invitedRole | enum: `SUPER_ADMIN`, `ADMIN`, `STAFF`, `PARENT` | `SUPER_ADMIN` is only ever used once — the very first invite for this deployment, created by the one-time setup step (§6.1) for the school's Proprietor. Student accounts are never invited directly — see §6.1 |
@@ -189,6 +189,7 @@ All account creation other than direct Student record creation goes through this
 - **`SubjectGroupWeight`** — id, groupSubjectId, childSubjectId, weight (decimal, e.g. 25.00 for equal 4-way split, or custom weights) — defines how child scores aggregate into the parent's reported grade.
 
 **Applicability rules (enforced in service layer at enrollment/assessment time):**
+
 - `COMPULSORY`: auto-applies to every student in the assigned class.
 - `GENERAL`: available to any student in the assigned class; student/admin opts in via `StudentSubjectEnrollment`.
 - `DEPARTMENT`: only students whose `StudentDepartment` matches `Subject.departmentId` may enroll; only valid for `ClassLevel.category = SSS`.
@@ -202,7 +203,7 @@ Distinct from the base `UserRole = STAFF`, a staff member holds one or more **fu
 **`StaffAssignment`**
 
 | Column | Type | Notes |
-|---|---|---|
+| --- | --- | --- |
 | id | uuid PK | |
 | staffId | uuid FK → StaffProfile | |
 | assignmentType | enum: `SUBJECT_TEACHER`, `CLASS_TEACHER`, `BURSAR`, `REGISTRAR`, `PRINCIPAL`, `VICE_PRINCIPAL`, `HEADTEACHER`, `OTHER` | |
@@ -231,10 +232,12 @@ Scoring structure is **configurable per class group, per term** — different cl
 - **`GradeScale`** — id, minScore, maxScore, grade (A1, B2, ... or A-F), remark, gradePoint (nullable, for GPA-style schools). **Admin/Super-Admin configures grade + remark together, per row** — a subject's (or the report's overall) remark is never entered separately; it's always whatever remark the matching `GradeScale` row for that score carries.
 
 **Psychomotor & Affective/Cognitive Skills** (class-teacher-completed, per student per term — two separate, admin-configurable lists, not graded subjects):
+
 - **`SkillAssessmentItem`** — id, academicSessionId, category (enum: `PSYCHOMOTOR`, `AFFECTIVE_COGNITIVE`), name (e.g. "Handwriting", "Sports/Games" under Psychomotor; "Punctuality", "Neatness", "Leadership" under Affective/Cognitive), order (int), isActive. Unique per (academicSessionId, category, name). **Admin/Super-Admin configures this list once per academic session.** When Admin first opens the config screen for a session with no items yet, the system defaults it from the most recent prior session's list (copied, not referenced — the new session gets its own editable rows); if there is no prior session with any items (first-ever session), Admin must build the list from scratch before it can be used.
 - **`SkillRating`** — id, studentId, termId, skillAssessmentItemId, rating (enum: `EXCELLENT`, `VERY_GOOD`, `GOOD`, `FAIR`, `POOR`), ratedByStaffId, createdAt/updatedAt. Unique per (studentId, termId, skillAssessmentItemId). Write permission: the `CLASS_TEACHER` of the student's class only (or Admin override), and only while the relevant `ReportWindow` (below) is `OPEN`.
 
 **Report input scheduling:**
+
 - **`ReportWindow`** — id, termId, classLevelCategory (enum, same as `AssessmentComponent.classLevelCategory`), inputOpensAt, inputClosesAt, status (enum: `DRAFT`, `OPEN`, `CLOSED`), createdByUserId. Unique per (termId, classLevelCategory). Governs **both** `SkillRating` entry and the `CLASS_TEACHER` `ReportComment` for that term+class group — both are end-of-term class-teacher tasks and share one schedule. Same auto-transition-with-override behavior as `AssessmentComponent`. `PRINCIPAL`/`HEADTEACHER` comments are **not** window-gated — they're role-scoped only, expected to happen after the class-teacher window closes as a matter of workflow, not enforced by a date.
 - **`ReportComment`** — id, studentId, termId, commentType (enum: `SUBJECT` [per subject, by subject teacher — not window-gated, follows the relevant `AssessmentComponent`'s own status instead], `CLASS_TEACHER` [gated by `ReportWindow`, see above], `PRINCIPAL`/`HEADTEACHER`), subjectId (nullable, required when `SUBJECT`), authorStaffId, comment, createdAt/updatedAt. Only the assigned staff for the relevant scope may write.
 
@@ -350,7 +353,7 @@ User 1—* Notification
 ## 5. Roles & Permissions Matrix
 
 | Capability | Super-Admin | Admin | Class Teacher | Subject Teacher | Bursar/Registrar | Parent | Student |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | Appoint/remove Admin accounts¹ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Appoint/revoke Bursar or Registrar assignment¹ ³ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | View/manage billing & subscription¹ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -408,6 +411,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 ## 6. Functional Requirements
 
 ### 6.1 Identity & Access
+
 - FR1.1: The school's initial Super-Admin (Proprietor) account is created via a **one-time setup step run at deployment time** — not an in-app screen or role, and never reachable by a logged-in user — that seeds default data (grade scale, scheduling constraints, notification templates) and creates a `SUPER_ADMIN` `Invitation` for the Proprietor's email. No Super-Admin account or login exists until that invite is accepted. Whoever runs the deployment (the school itself, or a vendor/consultant setting it up) never sets a password on the Proprietor's behalf — they only trigger the invite. Two equivalent ways to trigger it, both backed by the same `SetupService` (ARCHITECTURE.md §6.1): the `pnpm setup:school` CLI script (default), or the unauthenticated `POST /setup/super-admin` HTTP endpoint for infra without shell/exec access — gated by an infra-set `SETUP_ALLOWED_EMAILS` allowlist checked before any read or write, and hard-disabled once any Super-Admin is active.
 - FR1.2: Super-Admin invites Admin accounts (appointing an Admin is an owner-only action); Super-Admin and Admin can both invite Staff and Parent accounts. Each invite creates a `User` (status `invited`) + `Invitation` row and sends a single-use, expiring accept link via Resend. There is no self-service sign-up screen anywhere in the product.
 - FR1.3: Admin, Super-Admin, or Staff (with permission) creates Student records **directly** (not via invite, since many students are minors without independent email). Creation requires linking ≥1 existing Parent, or inline-creating a new Parent — which itself sends that Parent an `Invitation` — all within the same atomic transaction; a `StudentProfile` is never persisted without a valid `StudentGuardian` row.
@@ -419,6 +423,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR1.9: Super-Admin can transfer ownership to another existing user (e.g. promoting an Admin) in a single atomic action — the outgoing Super-Admin is demoted to `ADMIN`, the target user is promoted to `SUPER_ADMIN`. The partial unique index on active `SUPER_ADMIN` rows (§3.1) guarantees the school is never without exactly one owner mid-transfer, and the action is recorded in `AuditLog`.
 
 ### 6.2 Subjects
+
 - FR2.1: Admin CRUDs `Subject` records including type (COMPULSORY/GENERAL/DEPARTMENT) and department linkage.
 - FR2.2: Admin defines subject groups (parent + children) and per-child aggregation weights.
 - FR2.3: Admin assigns subjects to class levels per session via `ClassSubject`; system auto-enrolls students in COMPULSORY subjects on class assignment.
@@ -426,11 +431,13 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR2.5: Students/Admin manage GENERAL subject opt-in within an enrollment window set by Admin.
 
 ### 6.3 Staff & Assignments
+
 - FR3.1: Super-Admin or Admin assigns/revokes most `StaffAssignment` types (class teacher, subject teacher, principal, vice principal, headteacher), scoped per academic session. `BURSAR` and `REGISTRAR` assignments are the exception — only Super-Admin can create or revoke them, reflecting that these two positions report directly to the Proprietor rather than Admin (§5).
 - FR3.2: A staff member's effective permissions are computed from their active assignments at request time (no permission caching beyond request scope, to reflect same-day reassignment).
 - FR3.3: System prevents assigning two active class teachers to the same `ClassArm` in the same session (validation, not hard DB constraint, to allow deliberate co-teaching overrides by Admin).
 
 ### 6.4 Assessment & Reporting
+
 - FR4.1: Admin defines `AssessmentComponent`s per term per class level (type, name, sequence, maxScore, input-open/close, publish date); the full set for a given term+class level must sum to 100 before any component in it can open. Score entry is rejected outside an `OPEN` component (except Admin override).
 - FR4.2: Subject teacher enters scores only for students in their assigned class+subject, only while the relevant component is open; system validates assignment and component status on every write.
 - FR4.3: For grouped subjects, each child subject is scored independently; a background job recomputes the parent subject's aggregate whenever a child score changes.
@@ -445,11 +452,13 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR4.11 (added post-Phase-4): Super-Admin or a staff member holding an active `PRINCIPAL`/`HEADTEACHER` assignment (not plain Admin, §5) can view a **broadsheet** — every student in scope × every subject the class group is offered, one grid. Scoped to a `ClassLevel` by default (every arm combined) or a single `ClassArm`; and to one `Term` or a whole `AcademicSession` ("Overall," each cell averaged across whichever terms actually have a result, missing terms excluded rather than treated as zero — same rule as the annual-average report card grading in §3.6). Sortable by any subject, overall average, or overall position, and paginated — both computed server-side, with position always ranked over the full scope before any page is sliced out of it.
 
 ### 6.5 Attendance
+
 - FR5.1: Class teacher records daily attendance for her class; subject teachers may record per-period attendance for their subject/class slot.
 - FR5.2: Attendance cannot be back-dated beyond a configurable admin-set window (default 3 days) without Admin override.
 - FR5.3: Admin/Registrar view attendance analytics (per student, per class, per staff).
 
 ### 6.6 Timetable, Exam Scheduling & Invigilation
+
 - FR6.1: Admin/Registrar can build timetable slots manually per class arm; system flags teacher/venue double-booking conflicts before save.
 - FR6.2: Super-Admin, Registrar, or a staff member holding an active `PRINCIPAL` or `HEADTEACHER` `StaffAssignment` (not Admin generally — §5, footnote 5) can trigger **AI-assisted class timetable generation**. Super-Admin and Registrar are unscoped and can generate for the whole school in one run, or narrow a run to a single `classLevelCategoryGroup` (`JSS_SSS`/`CRECHE_NURSERY_PRIMARY`) — same "combined or either alone" choice as FR6.11 — e.g. to retry just one group after the other already succeeded; Principal is scoped to `JSS`/`SSS` class arms only, Headteacher to `CRECHE`/`NURSERY`/`PRIMARY` arms only. A generation run always covers every class arm within its target scope at once — never a single arm in isolation — so a subject teacher who teaches across multiple arms/levels doesn't end up with conflicting slots the solve never saw together. The engine assigns subjects to day/period slots subject to active `SchedulingConstraint` rules, including — by default — placing `requiresCalculation` subjects in the earliest morning periods and, independently, capping each individual subject to at most one period/day (which is what spreads it across the week — there is no additional rule capping how many *different* calculation subjects a class arm can be taught in one day, since a level like SSS routinely carries five calculation-heavy subjects at once and a school week only has five days to spread across). Triggering generation creates a `ScheduleGenerationRequest` (status `QUEUED`) and returns immediately — the solve runs **asynchronously** (ARCHITECTURE.md §9), so the requester is not left waiting on a held-open request for however long the solve takes.
 - FR6.3: Super-Admin, Registrar, or a staff member holding an active `PRINCIPAL` or `HEADTEACHER` `StaffAssignment` (not Admin generally — §5, footnote 5) can trigger **AI-assisted exam timetable generation** per `AssessmentComponent` — either the `EXAM`-type component (the full terminal exam) or the `MID_TERM`-type component, for the relevant class level+term — asynchronously (same pattern as FR6.2). Super-Admin and Registrar are unscoped; Principal may only trigger this for a `JSS`/`SSS` `AssessmentComponent`, Headteacher only for `CRECHE`/`NURSERY`/`PRIMARY`. Calculation subjects are scheduled first (earliest slots each exam day) and spread across the exam period with a minimum gap (configurable via `SchedulingConstraint`, default 1 day) between two calculation-subject exams for the same class, so students aren't hit with back-to-back demanding papers.
@@ -465,6 +474,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR6.12: Weekly duty rosters follow the same review lifecycle as exam timetables/invigilation — generated in `PENDING_REVIEW`, **approved by Super-Admin only** (§5, footnote 4), not visible to the assigned staff until approved. Once approved, an assigned staff member sees their own upcoming duty weeks; Super-Admin, Admin, Registrar, and the scoped Principal/Headteacher see the full roster for their group.
 
 ### 6.7 Fees & Billing
+
 - FR7.1: Super-Admin/Bursar defines `FeeStructure` per class level/term (not Admin — Bursar reports directly to Super-Admin and the entire fee/finance domain is invisible to Admin, §5).
 - FR7.2: System generates `Invoice`s per student per term based on applicable fee structures (auto, or triggered as a batch job by Super-Admin/Bursar).
 - FR7.3: Parent pays an invoice online via the school's **active payment gateway** — hosted checkout (card, bank transfer, USSD) or a reserved/virtual account, if the school has one provisioned per student. The active gateway is **Monnify by default**, selected via the `PAYMENT_GATEWAY_PROVIDER` environment variable; **Paystack** is also supported behind the same integration, so a school can switch its default gateway with a config change and redeploy rather than an application change (ARCHITECTURE.md §5, §10). Bursar can additionally record manual `CASH` payments for offline collection, which take effect immediately.
@@ -479,6 +489,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR7.9: A student's/invoice's **outstanding balance** (amount still owed after successful payments and any approved discount) is always visible to the parent, Bursar, and Super-Admin — computed live from `Invoice.totalAmount`, `SUCCESSFUL` `Payment`s, and approved `DiscountRequest`s (§3.9), never a value that can silently drift out of sync with the underlying records.
 
 ### 6.8 Notifications
+
 - FR8.1: WebSocket gateway authenticates connections via JWT; delivers real-time in-app notifications scoped to `recipientUserId`.
 - FR8.2: Notification events are published to Redis pub/sub so any Nest instance can deliver to a connected socket regardless of which instance the socket lives on (horizontal scaling support, if this school's deployment runs more than one API instance).
 - FR8.3: Every notification type has a `NotificationTemplate`; email dispatch goes through a BullMQ queue with retry (exponential backoff, max 3 attempts) via Resend.
@@ -497,7 +508,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 **FR9.4 — Super-Admin**
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Outstanding fees school-wide | Stat card (large number + trend arrow vs. last term) | Single headline KPI |
 | Payment reconciliation queue | Stat card with count, links to list on click | Actionable count, not detail-heavy |
 | Discount requests pending | List (requester, student, amount, reason) | Needs enough detail to act, but low volume |
@@ -513,7 +524,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 *No finance/fee data anywhere on this dashboard — Bursar/Super-Admin only, per FR9.1.*
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Total enrolled students (by level/dept) | Stacked bar chart or donut | Composition across categories |
 | Staff headcount + unfilled assignments | Stat card + list of gaps (e.g. "JSS2B: no class teacher") | Count up top, actionable list below |
 | Assessment window status | List/table (component, class level, close date, countdown) | Multiple concurrent windows across class levels |
@@ -527,7 +538,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 **FR9.6 — Staff, teaching (base, all `assignmentType`s)**
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | My classes/subjects this term | List or small card grid | Small, fixed set per teacher |
 | Assessment components open | List with countdown badges | Time-sensitive, few items |
 | Score entry progress | Table (student rows) or progress bar per class+subject if summarized | Detail table if entering scores here; summary bar if just a status check |
@@ -537,7 +548,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 *`CLASS_TEACHER` additions:*
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Class roster (headcount, gender split) | Stat card + small donut for gender split | Quick composition view |
 | Skill/report window progress | Progress bar (students rated / total) | Single completion metric |
 | Comments outstanding | List of student names missing a comment | Actionable, low volume |
@@ -546,7 +557,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 *`PRINCIPAL`/`HEADTEACHER` additions:*
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Broadsheet snapshot (cached, last-viewed) | Compact table (top 5 / bottom 5 students, subject avg columns) with "last updated" timestamp + "View full broadsheet" link | Shows cached data plainly rather than implying it's live (FR9.3) |
 | Schedule generation/approval queue (scoped per §5 footnote 5) | Card grid, same as Admin's | Consistency |
 | Duty roster upcoming | List (week, date range) | Simple chronological list |
@@ -554,7 +565,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 *`REGISTRAR` additions:*
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Whole-school attendance analytics | Bar chart by class + trend line over term | Comparison + trend together |
 | Timetable overview | Grid (by-day or by-class toggle, §5 footnote 6) | Matches product's existing overview pattern |
 | Schedule generation triggers | Button row / action cards | Action, not data display |
@@ -562,7 +573,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 **FR9.7 — Staff, non-teaching (`BURSAR`)**
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Outstanding balance (school-wide/by class) | Stat card + bar chart by class | Headline number + where the gap concentrates |
 | Invoices generated vs. paid | Donut or stacked bar (paid/partial/unpaid) | Composition of one whole |
 | Pending manual payments submitted | Table (student, amount, submitted date, status) | Needs status tracking per row |
@@ -573,7 +584,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 **FR9.8 — Parent/Guardian**
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Outstanding balance per ward | Stat card per child, with "Pay now" CTA | One number, one action |
 | Next invoice due date | Inline text/badge on the balance card | Doesn't need its own widget |
 | Latest report card summary | Card (grade, average, "View full report" link) | Snapshot, not the full document |
@@ -585,7 +596,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 **FR9.9 — Student**
 
 | Stat | Format | Why |
-|---|---|---|
+| --- | --- | --- |
 | Today's timetable | List (chronological periods) | Simple, linear — no need for a full grid on a personal dashboard |
 | Latest scores per subject | Table or small bar chart per subject | Table if precise scores matter; bar chart if visual comparison across subjects is the goal |
 | Attendance record | Ring/gauge (% this term) | Quick self-check metric |
@@ -599,7 +610,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 ## 7. Non-Functional Requirements
 
 | Category | Requirement |
-|---|---|
+| --- | --- |
 | Security | Argon2 password hashing; JWT RS256 or HS256 with rotated secrets; rate-limiting on auth and invitation-accept endpoints (NestJS Throttler); input validation via `class-validator` DTOs on every endpoint; parameterized queries only (ORM-enforced); isolation is by deployment — each school runs its own separate application instance and database, so there is no shared runtime or code path that could reach another school's data, by construction rather than by a filter that could be forgotten; Monnify webhook signatures are verified before any payload is trusted; `PaymentGatewayConfig` secrets are encrypted at rest via application-level envelope encryption (a single master key held in the hosting platform's secret store) rather than a paid cloud KMS or a self-hosted Vault server — kept low-cost, revisited only if secret volume/rotation needs outgrow it (§10) |
 | Data integrity | Student-guardian relationship enforced transactionally + DB trigger; soft deletes for auditability on User, StudentProfile, ScoreEntry |
 | Availability | Target 99.5% uptime per deployment; stateless Nest instances behind a load balancer; WebSocket sticky sessions or Redis adapter for multi-instance fanout if this deployment scales beyond one API instance |
@@ -624,7 +635,7 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 ## 9. Milestones (Suggested Phasing)
 
 | Phase | Scope |
-|---|---|
+| --- | --- |
 | Phase 1 — Foundation | Application schema and migrations, standard single-connection Prisma client, invitation-based auth core (`Invitation` model, accept-invite flow, JWT), one-time deployment setup step (seeds defaults, creates the first `SUPER_ADMIN` invitation), Session/Term/Class/Department CRUD, Super-Admin (Proprietor) & Admin dashboard shell |
 | Phase 2 — People | Admin invitation flow (by Super-Admin), Staff/Parent invitation flows (invite, accept, resend, revoke), Student record creation with inline parent invite, StaffAssignment, StudentGuardian enforcement, ownership transfer, role-scoped list views |
 | Phase 3 — Academics | Subject management (incl. groups, department rules, calculation flag), enrollment, manual class timetable |
