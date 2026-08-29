@@ -53,5 +53,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
       inject: [ConfigService, MONNIFY_ADAPTER, PAYSTACK_ADAPTER],
     },
   ],
+  // InvoiceService: needed by the legacy-import module (identity/students/
+  // legacy-import) to create a migrated student's opening-balance invoice.
+  exports: [InvoiceService],
 })
 export class FeesModule {}

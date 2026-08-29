@@ -12,9 +12,11 @@ import { Audited } from "../audit/audited.decorator";
 import { NotificationService } from "../notifications/notification";
 import { RaiseDiscountRequestDto } from "./dto/raise-discount-request.dto";
 import { RejectDiscountRequestDto } from "./dto/reject-discount-request.dto";
+import { BulkWaiveFeeDto } from "./dto/bulk-waive-fee.dto";
 
 const DISCOUNT_REQUEST_DETAIL_INCLUDE = {
   invoice: { include: { student: { include: { user: true } } } },
+  feeStructure: true,
 } satisfies Prisma.DiscountRequestInclude;
 
 @Injectable()
@@ -80,6 +82,69 @@ export class DiscountRequestService {
   }
 
   /**
+   * A mandatory fee (e.g. "Party") is billed to every in-scope student at
+   * `InvoiceService.generate()` time with no per-student exception — this is
+   * the after-the-fact removal path for students who opted out later.
+   * Unlike `raise()`, the amount is never typed in: it's copied straight off
+   * the FEE line item this FeeStructure actually produced on that student's
+   * invoice, so it can't be wrong or over-discount. Each student is
+   * resolved independently (own try/skip, not a shared transaction) — one
+   * student having no matching invoice must never block the rest of a
+   * multi-student submission.
+   */
+  async bulkRaiseFeeWaiver(dto: BulkWaiveFeeDto, user: RequestUser) {
+    const feeStructure = await this.prisma.feeStructure.findUniqueOrThrow({ where: { id: dto.feeStructureId } });
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
+
+    let requested = 0;
+    const skipped: { studentId: string; reason: string }[] = [];
+
+    for (const studentId of dto.studentIds) {
+      const invoice = await this.prisma.invoice.findFirst({
+        where: {
+          studentId,
+          termId: feeStructure.termId,
+          lineItems: { some: { type: "FEE", feeStructureId: feeStructure.id } },
+        },
+        include: { lineItems: true },
+      });
+      if (!invoice) {
+        skipped.push({ studentId, reason: "Not billed for this fee" });
+        continue;
+      }
+
+      const feeLine = invoice.lineItems.find((li) => li.type === "FEE" && li.feeStructureId === feeStructure.id);
+      if (!feeLine) {
+        skipped.push({ studentId, reason: "Not billed for this fee" });
+        continue;
+      }
+
+      const existing = await this.prisma.discountRequest.findFirst({
+        where: { invoiceId: invoice.id, feeStructureId: feeStructure.id, status: { in: ["PENDING", "APPROVED"] } },
+      });
+      if (existing) {
+        skipped.push({ studentId, reason: existing.status === "APPROVED" ? "Already waived" : "Already pending approval" });
+        continue;
+      }
+
+      await this.prisma.discountRequest.create({
+        data: {
+          invoiceId: invoice.id,
+          feeStructureId: feeStructure.id,
+          requestedByStaffId: staffProfile?.id ?? null,
+          type: DiscountRequestType.FIXED_AMOUNT,
+          value: feeLine.amount,
+          reason: dto.reason,
+          status: DiscountRequestStatus.PENDING,
+        },
+      });
+      requested++;
+    }
+
+    return { requested, skipped };
+  }
+
+  /**
    * PRD FR7.8: Super-Admin only (enforced in the controller). Applies the
    * discount as a negative DISCOUNT InvoiceLineItem, computed against the
    * invoice's live totalAmount, then recomputes the invoice's balance/status
@@ -93,6 +158,7 @@ export class DiscountRequestService {
       include: {
         invoice: { include: { lineItems: true, payments: true, student: { include: { user: true } } } },
         requestedByStaff: true,
+        feeStructure: true,
       },
     });
     if (discountRequest.status !== DiscountRequestStatus.PENDING) {
@@ -107,9 +173,14 @@ export class DiscountRequestService {
         ? (Number(discountRequest.value) / 100) * Number(invoice.totalAmount)
         : Number(discountRequest.value);
     const discountLineAmount = -Math.round(rawAmount * 100) / 100;
-    const description = `${
-      discountRequest.type === DiscountRequestType.PERCENTAGE ? `${Number(discountRequest.value)}% discount` : "Fixed discount"
-    } — ${discountRequest.reason}`;
+    // A fee-waiver request (feeStructureId set) gets a description naming
+    // the actual fee rather than the generic "Fixed discount" phrasing —
+    // matches how bulkRaiseFeeWaiver always uses FIXED_AMOUNT.
+    const description = discountRequest.feeStructure
+      ? `${discountRequest.feeStructure.name} fee waived — ${discountRequest.reason}`
+      : `${
+          discountRequest.type === DiscountRequestType.PERCENTAGE ? `${Number(discountRequest.value)}% discount` : "Fixed discount"
+        } — ${discountRequest.reason}`;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updatedDiscountRequest = await tx.discountRequest.update({
@@ -117,8 +188,18 @@ export class DiscountRequestService {
         data: { status: DiscountRequestStatus.APPROVED, reviewedByUserId: reviewerUserId, reviewedAt },
       });
 
+      // feeStructureId set here too (deviating from the usual "null for
+      // DISCOUNT" convention) only for a fee-waiver line — it's what
+      // bulkRaiseFeeWaiver's duplicate check queries against, and lets the
+      // invoice UI attribute the waiver to the right fee.
       await tx.invoiceLineItem.create({
-        data: { invoiceId: invoice.id, type: "DISCOUNT", amount: discountLineAmount, description },
+        data: {
+          invoiceId: invoice.id,
+          type: "DISCOUNT",
+          amount: discountLineAmount,
+          description,
+          feeStructureId: discountRequest.feeStructureId,
+        },
       });
 
       const discountAmounts = [...invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount)), discountLineAmount];
@@ -221,6 +302,16 @@ export class DiscountRequestController {
   @Audited("DiscountRequest", "discountRequest")
   raise(@Body() dto: RaiseDiscountRequestDto, @CurrentUser() user: RequestUser) {
     return this.service.raise(dto, user);
+  }
+
+  // No model given — bulk write across many students, response is a
+  // {requested, skipped} summary rather than a single entity to snapshot,
+  // same shape as InvoiceController.generate().
+  @Post("bulk-waive-fee")
+  @CheckPolicies((ability) => ability.can("manage", "DiscountRequest"))
+  @Audited("DiscountRequest")
+  bulkWaiveFee(@Body() dto: BulkWaiveFeeDto, @CurrentUser() user: RequestUser) {
+    return this.service.bulkRaiseFeeWaiver(dto, user);
   }
 
   /** Super-Admin-only carve-out — same manual role-check pattern as PaymentController.approveManualBankTransfer (Bursar's own "manage DiscountRequest" grant would otherwise satisfy any CASL check on this same subject). */

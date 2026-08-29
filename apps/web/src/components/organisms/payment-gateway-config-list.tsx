@@ -39,33 +39,35 @@ export function PaymentGatewayConfigList() {
   if (configs.length === 0) return <p className="text-sm text-muted">No payment gateways configured yet.</p>;
 
   return (
-    <table className="w-full text-left text-[12.5px]">
-      <thead>
-        <tr className="border-b border-border text-muted">
-          <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Provider</th>
-          <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Environment</th>
-          <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
-          <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Monnify settings</th>
-        </tr>
-      </thead>
-      <tbody>
-        {configs.map((config) => (
-          <tr key={config.id} className="border-b border-border/60 last:border-none">
-            <td className="py-2.5 pr-4 font-medium">{config.provider}</td>
-            <td className="py-2.5 pr-4">
-              <Badge variant={ENV_VARIANT[config.environment]}>{config.environment}</Badge>
-            </td>
-            <td className="py-2.5 pr-4">
-              <Badge variant={config.isActive ? "success" : "muted"}>{config.isActive ? "Configured" : "Not configured"}</Badge>
-            </td>
-            <td className="py-2.5 text-muted">
-              {config.provider === "MONNIFY"
-                ? `${config.contractCode ?? "no contract code"} · reserved accounts ${config.reservedAccountEnabled ? "on" : "off"}`
-                : "—"}
-            </td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-[12.5px]">
+        <thead>
+          <tr className="border-b border-border text-muted">
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Provider</th>
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Environment</th>
+            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
+            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Monnify settings</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {configs.map((config) => (
+            <tr key={config.id} className="border-b border-border/60 last:border-none">
+              <td className="py-2.5 pr-4 font-medium">{config.provider}</td>
+              <td className="py-2.5 pr-4">
+                <Badge variant={ENV_VARIANT[config.environment]}>{config.environment}</Badge>
+              </td>
+              <td className="py-2.5 pr-4">
+                <Badge variant={config.isActive ? "success" : "muted"}>{config.isActive ? "Configured" : "Not configured"}</Badge>
+              </td>
+              <td className="py-2.5 text-muted">
+                {config.provider === "MONNIFY"
+                  ? `${config.contractCode ?? "no contract code"} · reserved accounts ${config.reservedAccountEnabled ? "on" : "off"}`
+                  : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

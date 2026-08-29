@@ -115,24 +115,26 @@ export function InvoiceDetail({
         <Badge variant={STATUS_VARIANT[invoice.status]}>{invoice.status}</Badge>
       </div>
 
-      <table className="w-full text-left text-[12.5px]">
-        <thead>
-          <tr className="border-b border-border text-muted">
-            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Line item</th>
-            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {invoice.lineItems.map((line) => (
-            <tr key={line.id} className="border-b border-border/60 last:border-none">
-              <td className="py-2 pr-4">{line.description}</td>
-              <td className={`py-2 font-mono ${line.type === "DISCOUNT" ? "text-success" : ""}`}>
-                {formatCurrency(line.amount)}
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[12.5px]">
+          <thead>
+            <tr className="border-b border-border text-muted">
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Line item</th>
+              <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Amount</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {invoice.lineItems.map((line) => (
+              <tr key={line.id} className="border-b border-border/60 last:border-none">
+                <td className="py-2 pr-4">{line.description}</td>
+                <td className={`py-2 font-mono whitespace-nowrap ${line.type === "DISCOUNT" ? "text-success" : ""}`}>
+                  {formatCurrency(line.amount)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="space-y-1 border-t border-border pt-3 text-[12.5px]">
         <div className="flex items-center justify-between">

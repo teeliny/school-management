@@ -36,6 +36,15 @@ type Tx = Prisma.TransactionClient;
 const STUDENT_LIST_INCLUDE = {
   user: true,
   currentClass: { include: { classLevel: true } },
+  // Just enough to show a parent contact column on the listing page — the
+  // full guardian relation (findOneForUser) already includes everything
+  // else. Scoped to the primary contact only, matching one call site's
+  // worth of need rather than every guardian.
+  guardians: {
+    where: { isPrimaryContact: true },
+    take: 1,
+    select: { parent: { select: { user: { select: { phone: true } } } } },
+  },
 } satisfies Prisma.StudentProfileInclude;
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -74,11 +83,15 @@ export class StudentService {
    * StudentGuardian FK has something to point at before the invite is ever
    * accepted.
    */
-  async create(dto: CreateStudentDto) {
+  // `admissionYearOverride` is never exposed on CreateStudentDto/POST
+  // /students — only the legacy CSV importer (legacy-import.service.ts)
+  // passes it, for a migrated student whose real original admission year
+  // predates the class arm's current academic session.
+  async create(dto: CreateStudentDto, options?: { admissionYearOverride?: number }) {
     const pendingInvites: { email: string; rawToken: string }[] = [];
 
     const student = await this.prisma.$transaction(async (tx) => {
-      const admissionNumber = await this.generateAdmissionNumber(tx, dto.classArmId);
+      const admissionNumber = await this.generateAdmissionNumber(tx, dto.classArmId, options?.admissionYearOverride);
 
       // Students are created directly, never invited (PRD FR1.3), and are
       // frequently minors with no independent email. A synthetic,
@@ -158,7 +171,7 @@ export class StudentService {
    * both read the same "last" admission number and collide on the same
    * NNNN, which the admissionNumber @unique constraint would then reject.
    */
-  private async generateAdmissionNumber(tx: Tx, classArmId: string): Promise<string> {
+  private async generateAdmissionNumber(tx: Tx, classArmId: string, yearOverride?: number): Promise<string> {
     const classArm = await tx.classArm.findUnique({
       where: { id: classArmId },
       include: { classLevel: true, academicSession: true },
@@ -167,7 +180,7 @@ export class StudentService {
       throw new BadRequestException(`No ClassArm found for id ${classArmId}`);
     }
 
-    const year = classArm.academicSession.startDate.getFullYear();
+    const year = yearOverride ?? classArm.academicSession.startDate.getFullYear();
     const code = CLASS_LEVEL_CATEGORY_CODE[classArm.classLevel.category];
     const prefix = `${year}/${code}/`;
 
@@ -227,6 +240,13 @@ export class StudentService {
       invitedRole: Role.PARENT,
     });
     pendingInvites.push({ email: invitation.email, rawToken });
+
+    if (guardian.phone || guardian.address) {
+      if (guardian.phone) await tx.user.update({ where: { id: userId }, data: { phone: guardian.phone } });
+      if (guardian.address) {
+        await tx.parentProfile.update({ where: { userId }, data: { address: guardian.address } });
+      }
+    }
 
     const parentProfile = await tx.parentProfile.findUniqueOrThrow({ where: { userId } });
     return parentProfile.id;

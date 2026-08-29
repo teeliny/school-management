@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
@@ -10,6 +11,7 @@ import { Label } from "../../components/atoms/label";
 import { FormField } from "../../components/molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/molecules/select";
 import { SearchableSelect } from "../../components/molecules/searchable-select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/molecules/tabs";
 import { AttendanceRollCall, type RollCallMode } from "../../components/organisms/attendance-roll-call";
 import { AttendanceTermSummary } from "../../components/organisms/attendance-term-summary";
 import { DailyAbsenteeList } from "../../components/organisms/daily-absentee-list";
@@ -48,17 +50,39 @@ const MODE_LABEL: Record<RollCallMode, string> = {
   STAFF_DAILY: "Staff register",
 };
 
+type TabKey = "roll-call" | "term-summary" | "absentees" | "holidays";
+const TAB_KEYS: TabKey[] = ["roll-call", "term-summary", "absentees", "holidays"];
+const TAB_LABEL: Record<TabKey, string> = {
+  "roll-call": "Roll Call",
+  "term-summary": "Term Attendance",
+  absentees: "Daily Absentees",
+  holidays: "School Holidays",
+};
+
 function todayInput() {
   return new Date().toISOString().slice(0, 10);
 }
 
 export default function AttendancePage() {
+  return (
+    <Suspense fallback={null}>
+      <AttendancePageInner />
+    </Suspense>
+  );
+}
+
+function AttendancePageInner() {
   const { user, loading, logout } = useCurrentUser();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   const [subjects, setSubjects] = useState<SubjectOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
   const [myAssignments, setMyAssignments] = useState<StaffAssignmentItem[]>([]);
   const [schoolProfile, setSchoolProfile] = useState<SchoolProfile | null>(null);
+
+  const initialTab = (searchParams.get("tab") as TabKey | null) ?? "roll-call";
+  const [tab, setTab] = useState<TabKey>(TAB_KEYS.includes(initialTab) ? initialTab : "roll-call");
 
   const [mode, setMode] = useState<RollCallMode | "">("");
   const [classArmId, setClassArmId] = useState("");
@@ -195,147 +219,175 @@ export default function AttendancePage() {
           : false;
 
   const showTermSummarySection = (isAdmin || isRegistrar) && (mode === "STUDENT_DAILY" || mode === "STUDENT_PERIOD");
+  const showAbsenteesSection = isAdmin || isRegistrar || myClassTeacherAssignments.length > 0;
+  const showHolidaysSection = isAdmin;
+
+  function changeTab(next: TabKey) {
+    setTab(next);
+    router.replace(`/attendance?tab=${next}`);
+  }
 
   return (
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="Operations · Attendance" title="Attendance" />
 
-      <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="Roll call" sub="Mark or correct a register" />
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
+        <TabsList>
+          {TAB_KEYS.filter(
+            (key) =>
+              (key !== "term-summary" || showTermSummarySection) &&
+              (key !== "absentees" || showAbsenteesSection) &&
+              (key !== "holidays" || showHolidaysSection),
+          ).map((key) => (
+            <TabsTrigger key={key} value={key}>
+              {TAB_LABEL[key]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-          <div className="mb-4 space-y-3">
-            {availableModes.length > 1 && (
-              <div>
-                <Label htmlFor="att-mode">Type</Label>
-                <Select value={mode} onValueChange={(v) => setMode(v as RollCallMode)}>
-                  <SelectTrigger id="att-mode" className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableModes.map((m) => (
-                      <SelectItem key={m} value={m}>
-                        {MODE_LABEL[m]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+        <TabsContent value="roll-call">
+          <Card>
+            <CardHeader title="Roll call" sub="Mark or correct a register" />
 
-            <div className="grid grid-cols-2 gap-3">
-              {mode !== "STAFF_DAILY" && (
+            <div className="mb-4 space-y-3">
+              {availableModes.length > 1 && (
                 <div>
-                  <Label htmlFor="att-class-arm">Class arm</Label>
-                  <Select value={classArmId} onValueChange={setClassArmId}>
-                    <SelectTrigger id="att-class-arm" className="mt-1">
-                      <SelectValue placeholder="Select class" />
+                  <Label htmlFor="att-mode">Type</Label>
+                  <Select value={mode} onValueChange={(v) => setMode(v as RollCallMode)}>
+                    <SelectTrigger id="att-mode" className="mt-1">
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {classArmOptions.map((arm) => (
-                        <SelectItem key={arm.id} value={arm.id}>
-                          {arm.displayName}
+                      {availableModes.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {MODE_LABEL[m]}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               )}
-              {mode === "STUDENT_PERIOD" && (
-                <div>
-                  <Label htmlFor="att-subject">Subject</Label>
-                  <SearchableSelect
-                    id="att-subject"
-                    value={subjectId}
-                    onValueChange={setSubjectId}
-                    options={subjectOptions.map((s) => ({ value: s.id, label: s.name }))}
-                    placeholder={classArmId ? "Select subject" : "Select a class arm first"}
-                    className="mt-1"
+
+              <div className="grid grid-cols-2 gap-3">
+                {mode !== "STAFF_DAILY" && (
+                  <div>
+                    <Label htmlFor="att-class-arm">Class arm</Label>
+                    <Select value={classArmId} onValueChange={setClassArmId}>
+                      <SelectTrigger id="att-class-arm" className="mt-1">
+                        <SelectValue placeholder="Select class" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {classArmOptions.map((arm) => (
+                          <SelectItem key={arm.id} value={arm.id}>
+                            {arm.displayName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {mode === "STUDENT_PERIOD" && (
+                  <div>
+                    <Label htmlFor="att-subject">Subject</Label>
+                    <SearchableSelect
+                      id="att-subject"
+                      value={subjectId}
+                      onValueChange={setSubjectId}
+                      options={subjectOptions.map((s) => ({ value: s.id, label: s.name }))}
+                      placeholder={classArmId ? "Select subject" : "Select a class arm first"}
+                      className="mt-1"
+                    />
+                  </div>
+                )}
+                <FormField label="Date" id="att-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                {mode === "STUDENT_PERIOD" && (
+                  <FormField
+                    label="Period"
+                    id="att-period"
+                    placeholder="e.g. Period 4"
+                    required
+                    value={periodLabel}
+                    onChange={(e) => setPeriodLabel(e.target.value)}
                   />
-                </div>
-              )}
-              <FormField label="Date" id="att-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-              {mode === "STUDENT_PERIOD" && (
-                <FormField
-                  label="Period"
-                  id="att-period"
-                  placeholder="e.g. Period 4"
-                  required
-                  value={periodLabel}
-                  onChange={(e) => setPeriodLabel(e.target.value)}
-                />
-              )}
-              {needsGranularityPeriod && (
-                <div>
-                  <Label htmlFor="att-daily-period">Session</Label>
-                  <Select value={dailyPeriod} onValueChange={setDailyPeriod}>
-                    <SelectTrigger id="att-daily-period" className="mt-1">
-                      <SelectValue placeholder="Select session" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="MORNING">Morning</SelectItem>
-                      <SelectItem value="AFTERNOON">Afternoon</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                )}
+                {needsGranularityPeriod && (
+                  <div>
+                    <Label htmlFor="att-daily-period">Session</Label>
+                    <Select value={dailyPeriod} onValueChange={setDailyPeriod}>
+                      <SelectTrigger id="att-daily-period" className="mt-1">
+                        <SelectValue placeholder="Select session" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="MORNING">Morning</SelectItem>
+                        <SelectItem value="AFTERNOON">Afternoon</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          {rollCallReady && mode ? (
-            <AttendanceRollCall
-              mode={mode}
-              classArmId={mode === "STAFF_DAILY" ? undefined : classArmId}
-              subjectId={mode === "STUDENT_PERIOD" ? subjectId : undefined}
-              date={date}
-              period={effectivePeriod || undefined}
-              backdateWindowDays={schoolProfile?.attendanceBackdateWindowDays ?? 3}
-            />
-          ) : (
-            <p className="text-sm text-muted">Select the fields above to begin.</p>
-          )}
-        </Card>
-
-        {showTermSummarySection && (
-          <Card>
-            <CardHeader title="Term attendance" sub="Attendance trend for the selected class" />
-            <div className="mb-3">
-              <Label htmlFor="att-summary-term">Term</Label>
-              <Select value={summaryTermId} onValueChange={setSummaryTermId}>
-                <SelectTrigger id="att-summary-term" className="mt-1">
-                  <SelectValue placeholder="Select term" />
-                </SelectTrigger>
-                <SelectContent>
-                  {terms.map((term) => (
-                    <SelectItem key={term.id} value={term.id}>
-                      {term.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {classArmId && summaryTermId ? (
-              <AttendanceTermSummary classArmId={classArmId} termId={summaryTermId} />
+            {rollCallReady && mode ? (
+              <AttendanceRollCall
+                mode={mode}
+                classArmId={mode === "STAFF_DAILY" ? undefined : classArmId}
+                subjectId={mode === "STUDENT_PERIOD" ? subjectId : undefined}
+                date={date}
+                period={effectivePeriod || undefined}
+                backdateWindowDays={schoolProfile?.attendanceBackdateWindowDays ?? 3}
+              />
             ) : (
-              <p className="text-sm text-muted">Select a class arm on the left and a term above.</p>
+              <p className="text-sm text-muted">Select the fields above to begin.</p>
             )}
           </Card>
+        </TabsContent>
+
+        {showTermSummarySection && (
+          <TabsContent value="term-summary">
+            <Card>
+              <CardHeader title="Term attendance" sub="Attendance trend for the selected class" />
+              <div className="mb-3">
+                <Label htmlFor="att-summary-term">Term</Label>
+                <Select value={summaryTermId} onValueChange={setSummaryTermId}>
+                  <SelectTrigger id="att-summary-term" className="mt-1">
+                    <SelectValue placeholder="Select term" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {terms.map((term) => (
+                      <SelectItem key={term.id} value={term.id}>
+                        {term.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {classArmId && summaryTermId ? (
+                <AttendanceTermSummary classArmId={classArmId} termId={summaryTermId} />
+              ) : (
+                <p className="text-sm text-muted">Select a class arm on the Roll Call tab and a term above.</p>
+              )}
+            </Card>
+          </TabsContent>
         )}
-      </div>
 
-      {(isAdmin || isRegistrar || myClassTeacherAssignments.length > 0) && (
-        <Card className="mt-4">
-          <CardHeader title="Daily absentees" sub="Who's out today, class by class" />
-          <DailyAbsenteeList />
-        </Card>
-      )}
+        {showAbsenteesSection && (
+          <TabsContent value="absentees">
+            <Card>
+              <CardHeader title="Daily absentees" sub="Who's out today, class by class" />
+              <DailyAbsenteeList />
+            </Card>
+          </TabsContent>
+        )}
 
-      {isAdmin && (
-        <Card className="mt-4">
-          <CardHeader title="School holidays" sub="Subtracted from school-days-opened for attendance and report cards" />
-          <SchoolHolidayManager />
-        </Card>
-      )}
+        {showHolidaysSection && (
+          <TabsContent value="holidays">
+            <Card>
+              <CardHeader title="School holidays" sub="Subtracted from school-days-opened for attendance and report cards" />
+              <SchoolHolidayManager />
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
     </AppShell>
   );
 }

@@ -16,6 +16,7 @@ interface StudentListItem {
   currentClassId: string | null;
   currentClass: { name: string; classLevel: { name: string } } | null;
   user: { firstName: string; lastName: string; avatarUrl: string | null };
+  guardians: { parent: { user: { phone: string | null } } }[];
 }
 
 const STATUS_VARIANT: Record<string, BadgeVariant> = {
@@ -91,6 +92,7 @@ export function PeopleList({
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Admission #</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Name</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Class</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Parent phone</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
               <th className="py-2 text-[10px] font-medium uppercase tracking-wide" />
             </tr>
@@ -98,7 +100,7 @@ export function PeopleList({
           <tbody>
             {filteredStudents?.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-3 text-muted">
+                <td colSpan={6} className="py-3 text-muted">
                   No students match &ldquo;{search}&rdquo;.
                 </td>
               </tr>
@@ -133,6 +135,7 @@ export function PeopleList({
                     ? `${student.currentClass.classLevel.name} ${student.currentClass.name}`
                     : "—"}
                 </td>
+                <td className="py-2.5 pr-4 font-mono text-muted">{student.guardians[0]?.parent.user.phone ?? "—"}</td>
                 <td className="py-2.5 pr-4">
                   <Badge variant={STATUS_VARIANT[student.status] ?? "muted"}>{student.status}</Badge>
                 </td>

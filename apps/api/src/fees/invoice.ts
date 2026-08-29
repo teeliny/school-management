@@ -143,6 +143,43 @@ export class InvoiceService {
   }
 
   /**
+   * Legacy pre-launch debt migration (legacy-import.service.ts): one
+   * Invoice + a single FEE-type InvoiceLineItem representing a student's
+   * outstanding balance carried over from the school's previous system.
+   * `feeStructureId` is deliberately null (same precedent as a DISCOUNT
+   * line item, DiscountRequestService.approve) — there's no real
+   * FeeStructure behind this charge.
+   *
+   * Must use `source: SUPPLEMENTARY`, never REGULAR: `invoices_regular_
+   * per_student_term` enforces at most one REGULAR invoice per student per
+   * term, and this same term still needs a normal `generate()` batch run
+   * later without colliding with it.
+   */
+  async createLegacyOpeningBalance(input: { studentId: string; termId: string; amount: number; description?: string }) {
+    return this.prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.create({
+        data: {
+          studentId: input.studentId,
+          termId: input.termId,
+          totalAmount: input.amount,
+          dueDate: new Date(),
+          source: "SUPPLEMENTARY",
+        },
+      });
+      await tx.invoiceLineItem.create({
+        data: {
+          invoiceId: invoice.id,
+          feeStructureId: null,
+          type: "FEE",
+          amount: input.amount,
+          description: input.description ?? "Opening balance – migrated from previous system",
+        },
+      });
+      return invoice;
+    });
+  }
+
+  /**
    * Bursar/Super-Admin see every invoice (school-wide, filterable,
    * paginated); a parent sees only her own wards' invoices (empty array
    * with no ParentProfile); anyone else gets nothing — the controller's

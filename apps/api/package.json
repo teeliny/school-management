@@ -38,6 +38,7 @@
     "argon2": "^0.41.0",
     "bullmq": "^5.81.3",
     "class-transformer": "^0.5.1",
+    "csv-parse": "^5.6.0",
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.0",

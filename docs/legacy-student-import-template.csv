@@ -1,0 +1,3 @@
+studentFirstName,studentLastName,studentMiddleName,gender,classLevel,classArm,admissionYear,parentFirstName,parentLastName,parentEmail,parentPhone,parentAddress,relationship,outstanding
+Chinedu,Okafor,,MALE,JSS 1,SILVER,2022,Ngozi,Okafor,ngozi.okafor@example.com,08012345678,12 Freedom Way Lekki Lagos,MOTHER,15000
+Amaka,Okafor,,FEMALE,NURSERY 1,GOLD,2023,Ngozi,Okafor,ngozi.okafor@example.com,08012345678,12 Freedom Way Lekki Lagos,MOTHER,0

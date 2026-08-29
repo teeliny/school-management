@@ -1,11 +1,12 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/molecules/tabs";
 import { FeeStructureManager } from "../../components/organisms/fee-structure-manager";
 import { GenerateInvoicesForm } from "../../components/organisms/generate-invoices-form";
 import { InvoiceList } from "../../components/organisms/invoice-list";
@@ -13,6 +14,17 @@ import { InvoiceDetail } from "../../components/organisms/invoice-detail";
 import { PendingApprovalsQueue } from "../../components/organisms/pending-approvals-queue";
 import { PaymentGatewayConfigList } from "../../components/organisms/payment-gateway-config-list";
 import { PaymentLedger } from "../../components/organisms/payment-ledger";
+
+type TabKey = "generate" | "structures" | "approvals" | "gateway" | "invoices" | "history";
+const TAB_KEYS: TabKey[] = ["generate", "structures", "approvals", "gateway", "invoices", "history"];
+const TAB_LABEL: Record<TabKey, string> = {
+  generate: "Generate Invoices",
+  structures: "Fee Structures",
+  approvals: "Pending Approvals",
+  gateway: "Payment Gateway",
+  invoices: "Invoices",
+  history: "Payment History",
+};
 
 export default function FeesPage() {
   return (
@@ -24,13 +36,20 @@ export default function FeesPage() {
 
 function FeesPageInner() {
   const { user, loading, logout } = useCurrentUser();
+  const router = useRouter();
   const searchParams = useSearchParams();
   // A student profile's "Fees" quick link arrives as `?studentId=...`,
   // narrowing the invoice list to that one student — same pattern as the
-  // report-cards page's own studentId deep link.
+  // report-cards page's own studentId deep link. Since Invoices now lives
+  // behind a tab, a bare `?tab=` default would strand that link on whatever
+  // tab happens to be first — default straight to the Invoices tab instead
+  // whenever studentId is present (an explicit `?tab=` still wins).
   const studentId = searchParams.get("studentId") ?? undefined;
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+
+  const initialTab = (searchParams.get("tab") as TabKey | null) ?? (studentId ? "invoices" : "generate");
+  const [tab, setTab] = useState<TabKey>(TAB_KEYS.includes(initialTab) ? initialTab : "generate");
 
   if (loading) {
     return (
@@ -61,54 +80,91 @@ function FeesPageInner() {
     );
   }
 
+  function changeTab(next: TabKey) {
+    setTab(next);
+    router.replace(`/fees?tab=${next}`);
+  }
+
   return (
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="Operations · Fees" title="Fees" />
 
-      {canManageFees && (
-        <div className="mb-4 grid gap-4 [&>*]:min-w-0 lg:grid-cols-2">
-          <Card>
-            <CardHeader title="Generate invoices" sub="One invoice per active student in scope" />
-            <GenerateInvoicesForm onGenerated={() => setRefreshKey((k) => k + 1)} />
-          </Card>
-          <Card>
-            <CardHeader title="Fee structures" />
-            <FeeStructureManager />
-          </Card>
-        </div>
-      )}
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
+        <TabsList>
+          {TAB_KEYS.filter(
+            (key) =>
+              (!["generate", "structures", "gateway"].includes(key) || canManageFees) &&
+              (key !== "approvals" || isSuperAdmin) &&
+              (!["invoices", "history"].includes(key) || canManageFees || isParent),
+          ).map((key) => (
+            <TabsTrigger key={key} value={key}>
+              {TAB_LABEL[key]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      {isSuperAdmin && (
-        <Card className="mb-4">
-          <CardHeader title="Pending approvals" sub="Manual bank-transfer payments and discount requests awaiting review" />
-          <PendingApprovalsQueue />
-        </Card>
-      )}
-
-      {canManageFees && (
-        <Card className="mb-4">
-          <CardHeader title="Payment gateway" sub="Read-only — credentials are set via env var + redeploy" />
-          <PaymentGatewayConfigList />
-        </Card>
-      )}
-
-      <div className="mb-4 grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
-        <Card>
-          <CardHeader title="Invoices" sub={canManageFees ? "School-wide" : "Your children"} />
-          <InvoiceList canManageFees={canManageFees} studentId={studentId} refreshKey={refreshKey} onSelect={setSelectedInvoiceId} />
-        </Card>
-        {selectedInvoiceId && (
-          <Card>
-            <CardHeader title="Invoice detail" />
-            <InvoiceDetail invoiceId={selectedInvoiceId} isParent={isParent} canManageFees={canManageFees} />
-          </Card>
+        {canManageFees && (
+          <TabsContent value="generate">
+            <Card>
+              <CardHeader title="Generate invoices" sub="One invoice per active student in scope" />
+              <GenerateInvoicesForm onGenerated={() => setRefreshKey((k) => k + 1)} />
+            </Card>
+          </TabsContent>
         )}
-      </div>
 
-      <Card>
-        <CardHeader title="Payment history" sub={canManageFees ? "School-wide" : "Your children"} />
-        <PaymentLedger canManageFees={canManageFees} />
-      </Card>
+        {canManageFees && (
+          <TabsContent value="structures">
+            <Card>
+              <CardHeader title="Fee structures" />
+              <FeeStructureManager />
+            </Card>
+          </TabsContent>
+        )}
+
+        {isSuperAdmin && (
+          <TabsContent value="approvals">
+            <Card>
+              <CardHeader title="Pending approvals" sub="Manual bank-transfer payments and discount requests awaiting review" />
+              <PendingApprovalsQueue />
+            </Card>
+          </TabsContent>
+        )}
+
+        {canManageFees && (
+          <TabsContent value="gateway">
+            <Card>
+              <CardHeader title="Payment gateway" sub="Read-only — credentials are set via env var + redeploy" />
+              <PaymentGatewayConfigList />
+            </Card>
+          </TabsContent>
+        )}
+
+        {(canManageFees || isParent) && (
+          <TabsContent value="invoices">
+            <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
+              <Card>
+                <CardHeader title="Invoices" sub={canManageFees ? "School-wide" : "Your children"} />
+                <InvoiceList canManageFees={canManageFees} studentId={studentId} refreshKey={refreshKey} onSelect={setSelectedInvoiceId} />
+              </Card>
+              {selectedInvoiceId && (
+                <Card>
+                  <CardHeader title="Invoice detail" />
+                  <InvoiceDetail invoiceId={selectedInvoiceId} isParent={isParent} canManageFees={canManageFees} />
+                </Card>
+              )}
+            </div>
+          </TabsContent>
+        )}
+
+        {(canManageFees || isParent) && (
+          <TabsContent value="history">
+            <Card>
+              <CardHeader title="Payment history" sub={canManageFees ? "School-wide" : "Your children"} />
+              <PaymentLedger canManageFees={canManageFees} />
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
     </AppShell>
   );
 }

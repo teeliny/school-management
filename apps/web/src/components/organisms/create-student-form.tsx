@@ -22,6 +22,8 @@ interface GuardianRow {
   email: string;
   firstName: string;
   lastName: string;
+  phone: string;
+  address: string;
   relationship: Relationship;
   isPrimaryContact: boolean;
 }
@@ -33,7 +35,7 @@ interface ClassArm {
 }
 
 function emptyGuardian(): GuardianRow {
-  return { email: "", firstName: "", lastName: "", relationship: "FATHER", isPrimaryContact: false };
+  return { email: "", firstName: "", lastName: "", phone: "", address: "", relationship: "FATHER", isPrimaryContact: false };
 }
 
 export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
@@ -100,7 +102,11 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
           gender: gender || undefined,
           admissionDate,
           classArmId,
-          guardians,
+          guardians: guardians.map((g) => ({
+            ...g,
+            phone: g.phone.trim() || undefined,
+            address: g.address.trim() || undefined,
+          })),
         },
       });
       setSuccess(`${firstName} ${lastName} was created — admission number ${created.admissionNumber}.`);
@@ -257,6 +263,20 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
               If this email already belongs to someone in the system, they&apos;ll simply gain a
               Parent role on their existing account (PRD FR1.5) — otherwise they&apos;ll be invited.
             </p>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField
+                label="Guardian phone"
+                id={`guardian-${index}-phone`}
+                value={guardian.phone}
+                onChange={(e) => updateGuardian(index, { phone: e.target.value })}
+              />
+              <FormField
+                label="Guardian address"
+                id={`guardian-${index}-address`}
+                value={guardian.address}
+                onChange={(e) => updateGuardian(index, { address: e.target.value })}
+              />
+            </div>
             <div className="flex items-center justify-between gap-3">
               <div className="flex-1">
                 <Label htmlFor={`guardian-${index}-relationship`}>Relationship</Label>

@@ -15,6 +15,7 @@ interface IssueEntry {
   admissionNumber: string | null;
   firstName: string | null;
   lastName: string | null;
+  guardianPhone: string | null;
   status: IssueStatus;
   remark: string | null;
 }
@@ -164,6 +165,7 @@ export function DailyAbsenteeList() {
               <tr className="border-b border-border text-muted">
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Student</th>
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Class</th>
+                <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Parent phone</th>
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
                 <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Remark</th>
               </tr>
@@ -171,7 +173,7 @@ export function DailyAbsenteeList() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-3 text-muted">
+                  <td colSpan={5} className="py-3 text-muted">
                     No matching students for this date.
                   </td>
                 </tr>
@@ -186,6 +188,7 @@ export function DailyAbsenteeList() {
                     {row.className}
                     {row.period ? ` · ${row.period}` : ""}
                   </td>
+                  <td className="py-2.5 pr-4 font-mono text-muted">{row.guardianPhone ?? "—"}</td>
                   <td className="py-2.5 pr-4">
                     <Badge variant={STATUS_BADGE_VARIANT[row.status]}>{STATUS_LABEL[row.status]}</Badge>
                   </td>

@@ -166,7 +166,16 @@ export class AttendanceAnalyticsService {
         classLevel: { select: { name: true, order: true } },
         students: {
           where: { status: StudentStatus.ACTIVE },
-          select: { id: true, admissionNumber: true, user: { select: { firstName: true, lastName: true } } },
+          select: {
+            id: true,
+            admissionNumber: true,
+            user: { select: { firstName: true, lastName: true } },
+            guardians: {
+              where: { isPrimaryContact: true },
+              take: 1,
+              select: { parent: { select: { user: { select: { phone: true } } } } },
+            },
+          },
           orderBy: { user: { lastName: "asc" } },
         },
       },
@@ -209,6 +218,7 @@ export class AttendanceAnalyticsService {
                   admissionNumber: student.admissionNumber,
                   firstName: student.user.firstName,
                   lastName: student.user.lastName,
+                  guardianPhone: student.guardians[0]?.parent.user.phone ?? null,
                   status: "NOT_MARKED" as DailyAttendanceIssueStatus,
                   remark: null as string | null,
                 })),
@@ -229,6 +239,7 @@ export class AttendanceAnalyticsService {
                     admissionNumber: student.admissionNumber,
                     firstName: student.user.firstName,
                     lastName: student.user.lastName,
+                    guardianPhone: student.guardians[0]?.parent.user.phone ?? null,
                     status,
                     remark: record?.remark ?? null,
                   };

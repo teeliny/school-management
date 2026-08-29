@@ -1,5 +1,5 @@
 import { GuardianRelationship } from "@prisma/client";
-import { IsEnum, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsEnum, IsOptional, IsString } from "class-validator";
 
 export class UpdateParentProfileDto {
   @IsOptional()
@@ -13,4 +13,14 @@ export class UpdateParentProfileDto {
   @IsOptional()
   @IsEnum(GuardianRelationship)
   relationshipToStudentDefault?: GuardianRelationship;
+
+  // Lives on User, not ParentProfile — see ParentProfileService.update.
+  @IsOptional()
+  @IsString()
+  phone?: string;
+}
+
+export class UpdateParentEmailDto {
+  @IsEmail()
+  email!: string;
 }

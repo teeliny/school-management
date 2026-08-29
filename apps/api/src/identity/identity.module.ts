@@ -31,6 +31,6 @@ import { SetupController, SetupService } from "./setup/setup";
     OwnershipTransferService,
     SetupService,
   ],
-  exports: [UserService, InvitationService, StaffProfileService, ParentProfileService],
+  exports: [UserService, InvitationService, StaffProfileService, ParentProfileService, StudentService],
 })
 export class IdentityModule {}

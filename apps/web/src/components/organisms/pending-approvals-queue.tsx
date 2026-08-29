@@ -6,6 +6,7 @@ import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
+import { Checkbox } from "../atoms/checkbox";
 import { Input } from "../atoms/input";
 
 interface PendingPaymentItem {
@@ -21,6 +22,7 @@ interface PendingDiscountRequestItem {
   value: number;
   reason: string;
   createdAt: string;
+  feeStructure: { name: string } | null;
   invoice: { student: { admissionNumber: string; user: { firstName: string; lastName: string } } };
 }
 
@@ -61,6 +63,12 @@ export function PendingApprovalsQueue() {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
+  // Discount-request rows only (id-keyed, since PAYMENT and DISCOUNT ids
+  // don't collide across kinds) — bulk approval is scoped to discount
+  // requests specifically (e.g. many students' fee-waiver requests at once)
+  // rather than generalized across both kinds.
+  const [selectedDiscountIds, setSelectedDiscountIds] = useState<Set<string>>(new Set());
+  const [bulkApproving, setBulkApproving] = useState(false);
 
   const { data: rows, error: queryError } = useQuery({
     queryKey: ["pending-approvals"],
@@ -86,7 +94,11 @@ export function PendingApprovalsQueue() {
           createdAt: d.createdAt,
           studentName: `${d.invoice.student.user.firstName} ${d.invoice.student.user.lastName}`,
           admissionNumber: d.invoice.student.admissionNumber,
-          amountLabel: d.type === "PERCENTAGE" ? `${d.value}% discount` : `${formatCurrency(d.value)} discount`,
+          amountLabel: d.feeStructure
+            ? `Waive ${d.feeStructure.name} (${formatCurrency(d.value)})`
+            : d.type === "PERCENTAGE"
+              ? `${d.value}% discount`
+              : `${formatCurrency(d.value)} discount`,
           proofUrl: null,
           reason: d.reason,
         })),
@@ -110,6 +122,23 @@ export function PendingApprovalsQueue() {
     }
   }
 
+  async function handleBulkApproveDiscounts() {
+    setActionError(null);
+    setBulkApproving(true);
+    try {
+      for (const id of selectedDiscountIds) {
+        await apiFetch(`/discount-requests/${id}/approve`, { method: "PATCH", auth: true });
+      }
+      setSelectedDiscountIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["pending-approvals"] });
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Failed to approve one or more selected discount requests");
+      queryClient.invalidateQueries({ queryKey: ["pending-approvals"] });
+    } finally {
+      setBulkApproving(false);
+    }
+  }
+
   async function handleReject(row: QueueRow) {
     setActionError(null);
     setPendingActionId(row.id);
@@ -129,12 +158,47 @@ export function PendingApprovalsQueue() {
   if (!rows) return <p className="text-sm text-muted">Loading…</p>;
   if (rows.length === 0) return <p className="text-sm text-muted">Nothing awaiting review.</p>;
 
+  const discountRowIds = rows.filter((r) => r.kind === "DISCOUNT").map((r) => r.id);
+  const allDiscountsSelected = discountRowIds.length > 0 && selectedDiscountIds.size === discountRowIds.length;
+
   return (
     <div className="space-y-2">
+      {discountRowIds.length > 0 && (
+        <div className="flex items-center justify-between gap-2 text-[12.5px]">
+          <label className="flex items-center gap-1.5 text-muted">
+            <Checkbox
+              checked={allDiscountsSelected}
+              onCheckedChange={(checked) => setSelectedDiscountIds(checked ? new Set(discountRowIds) : new Set())}
+            />
+            Select all discount requests
+          </label>
+          <Button
+            type="button"
+            size="sm"
+            disabled={selectedDiscountIds.size === 0 || bulkApproving}
+            onClick={handleBulkApproveDiscounts}
+          >
+            {bulkApproving ? "Approving…" : `Approve selected (${selectedDiscountIds.size})`}
+          </Button>
+        </div>
+      )}
       {rows.map((row) => (
         <div key={`${row.kind}-${row.id}`} className="rounded-lg border border-border p-2.5 text-[12.5px]">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span>
+            <span className="flex items-center gap-2">
+              {row.kind === "DISCOUNT" && (
+                <Checkbox
+                  checked={selectedDiscountIds.has(row.id)}
+                  onCheckedChange={(checked) =>
+                    setSelectedDiscountIds((prev) => {
+                      const next = new Set(prev);
+                      if (checked) next.add(row.id);
+                      else next.delete(row.id);
+                      return next;
+                    })
+                  }
+                />
+              )}
               <Badge variant={KIND_VARIANT[row.kind]}>{KIND_LABEL[row.kind]}</Badge>{" "}
               {row.studentName} <span className="font-mono text-muted">({row.admissionNumber})</span>{" "}
               <span className="font-mono">{row.amountLabel}</span>

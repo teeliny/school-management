@@ -46,7 +46,7 @@ export function RequestDiscountForm({ invoiceId, onRequested }: { invoiceId: str
       {error && <p className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-success">{success}</p>}
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>
           <Label htmlFor="rd-type">Type</Label>
           <Select value={type} onValueChange={(v) => setType(v as DiscountType)}>

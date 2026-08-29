@@ -10,6 +10,7 @@ import { FormField } from "../molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { MultiSelect } from "../molecules/multi-select";
 import { FeeStructureAssignmentPanel } from "./fee-structure-assignment-panel";
+import { FeeStructureWaiverPanel } from "./fee-structure-waiver-panel";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -70,6 +71,9 @@ export function FeeStructureManager() {
   // Which optional (isMandatory=false) fee structure's opt-in panel is open —
   // at most one at a time.
   const [assignmentPanelId, setAssignmentPanelId] = useState<string | null>(null);
+  // Which mandatory fee structure's waiver panel is open — separate from
+  // assignmentPanelId since the two are mutually exclusive by isMandatory.
+  const [waiverPanelId, setWaiverPanelId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -188,7 +192,7 @@ export function FeeStructureManager() {
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <Label htmlFor="fs-session">Academic session</Label>
           <Select value={academicSessionId} onValueChange={setAcademicSessionId}>
@@ -284,6 +288,16 @@ export function FeeStructureManager() {
                           {assignmentPanelId === structure.id ? "Hide opt-ins" : "Manage opt-ins"}
                         </Button>
                       )}
+                      {structure.isMandatory && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setWaiverPanelId(waiverPanelId === structure.id ? null : structure.id)}
+                        >
+                          {waiverPanelId === structure.id ? "Hide waivers" : "Waive for students…"}
+                        </Button>
+                      )}
                       <Button type="button" variant="outline" size="sm" onClick={() => startEdit(structure)}>
                         Edit
                       </Button>
@@ -309,6 +323,7 @@ export function FeeStructureManager() {
                     </div>
                   </div>
                   {assignmentPanelId === structure.id && <FeeStructureAssignmentPanel feeStructureId={structure.id} />}
+                  {waiverPanelId === structure.id && <FeeStructureWaiverPanel feeStructureId={structure.id} />}
                 </div>
               ),
             )}

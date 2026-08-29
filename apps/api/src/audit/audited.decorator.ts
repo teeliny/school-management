@@ -18,7 +18,8 @@ export type AuditModelKey =
   | "examSchedule"
   | "invigilationAssignment"
   | "dutyAssignment"
-  | "scheduleGenerationRequest";
+  | "scheduleGenerationRequest"
+  | "parentProfile";
 
 export interface AuditOptions {
   entityType: string;

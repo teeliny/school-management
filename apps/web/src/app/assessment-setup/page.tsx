@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/molecules/tabs";
 import { AssessmentComponentManager } from "../../components/organisms/assessment-component-manager";
 import { GradeScaleManager } from "../../components/organisms/grade-scale-manager";
 import { SkillAssessmentItemManager } from "../../components/organisms/skill-assessment-item-manager";
@@ -16,9 +18,31 @@ interface TermOption {
   name: string;
 }
 
+type TabKey = "components" | "grade-scale" | "skills" | "windows";
+const TAB_KEYS: TabKey[] = ["components", "grade-scale", "skills", "windows"];
+const TAB_LABEL: Record<TabKey, string> = {
+  components: "Assessment Components",
+  "grade-scale": "Grade Scale",
+  skills: "Skill Assessment Items",
+  windows: "Report Windows",
+};
+
 export default function AssessmentSetupPage() {
+  return (
+    <Suspense fallback={null}>
+      <AssessmentSetupPageInner />
+    </Suspense>
+  );
+}
+
+function AssessmentSetupPageInner() {
   const { user, loading, logout } = useCurrentUser();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [terms, setTerms] = useState<TermOption[]>([]);
+
+  const initialTab = (searchParams.get("tab") as TabKey | null) ?? "components";
+  const [tab, setTab] = useState<TabKey>(TAB_KEYS.includes(initialTab) ? initialTab : "components");
 
   useEffect(() => {
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
@@ -52,34 +76,55 @@ export default function AssessmentSetupPage() {
     );
   }
 
+  function changeTab(next: TabKey) {
+    setTab(next);
+    router.replace(`/assessment-setup?tab=${next}`);
+  }
+
   return (
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="Assessment · Setup" title="Assessment setup" />
 
-      <div className="space-y-4">
-        <Card>
-          <CardHeader
-            title="Assessment components"
-            sub="Must sum to 100 per term + class group before any component can open (PRD §3.6)"
-          />
-          <AssessmentComponentManager terms={terms} />
-        </Card>
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
+        <TabsList>
+          {TAB_KEYS.map((key) => (
+            <TabsTrigger key={key} value={key}>
+              {TAB_LABEL[key]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-        <Card>
-          <CardHeader title="Grade scale" sub="Grade + remark are configured together — reports show whichever remark matches a subject's score" />
-          <GradeScaleManager />
-        </Card>
+        <TabsContent value="components">
+          <Card>
+            <CardHeader
+              title="Assessment components"
+              sub="Must sum to 100 per term + class group before any component can open (PRD §3.6)"
+            />
+            <AssessmentComponentManager terms={terms} />
+          </Card>
+        </TabsContent>
 
-        <Card>
-          <CardHeader title="Skill assessment items" sub="Psychomotor + Affective/Cognitive lists, once per academic session (PRD FR4.5)" />
-          <SkillAssessmentItemManager />
-        </Card>
+        <TabsContent value="grade-scale">
+          <Card>
+            <CardHeader title="Grade scale" sub="Grade + remark are configured together — reports show whichever remark matches a subject's score" />
+            <GradeScaleManager />
+          </Card>
+        </TabsContent>
 
-        <Card>
-          <CardHeader title="Report windows" sub="Gates skill ratings and the class-teacher comment (PRD §3.6)" />
-          <ReportWindowManager terms={terms} />
-        </Card>
-      </div>
+        <TabsContent value="skills">
+          <Card>
+            <CardHeader title="Skill assessment items" sub="Psychomotor + Affective/Cognitive lists, once per academic session (PRD FR4.5)" />
+            <SkillAssessmentItemManager />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="windows">
+          <Card>
+            <CardHeader title="Report windows" sub="Gates skill ratings and the class-teacher comment (PRD §3.6)" />
+            <ReportWindowManager terms={terms} />
+          </Card>
+        </TabsContent>
+      </Tabs>
     </AppShell>
   );
 }

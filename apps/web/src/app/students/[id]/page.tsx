@@ -30,10 +30,19 @@ export default function StudentDetailPage() {
   // is her own ward, same reasoning as StudentProfile's own doc comment).
   const canViewFees = user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("BURSAR") || user.roles.includes("PARENT");
 
+  // Mirrors ability.factory.ts's "updateEmail" ParentProfile grant:
+  // Super-Admin (via "manage all") and Registrar only.
+  const canEditGuardianEmail = user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("REGISTRAR");
+
   return (
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="People · Students" title="Student profile" />
-      <StudentProfile studentId={id} canUploadPhoto={canUploadPhoto} canViewFees={canViewFees} />
+      <StudentProfile
+        studentId={id}
+        canUploadPhoto={canUploadPhoto}
+        canViewFees={canViewFees}
+        canEditGuardianEmail={canEditGuardianEmail}
+      />
     </AppShell>
   );
 }

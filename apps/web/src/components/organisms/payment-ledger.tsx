@@ -96,42 +96,44 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
         </div>
       )}
 
-      <table className="w-full text-left text-[12.5px]">
-        <thead>
-          <tr className="border-b border-border text-muted">
-            {canManageFees && <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Student</th>}
-            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Method</th>
-            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Amount</th>
-            <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
-            <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {payments.length === 0 && (
-            <tr>
-              <td colSpan={canManageFees ? 5 : 4} className="py-3 text-muted">
-                No payments to show.
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-[12.5px]">
+          <thead>
+            <tr className="border-b border-border text-muted">
+              {canManageFees && <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Student</th>}
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Method</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Amount</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
+              <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Date</th>
             </tr>
-          )}
-          {payments.map((payment) => (
-            <tr key={payment.id} className="border-b border-border/60 last:border-none">
-              {canManageFees && (
-                <td className="py-2.5 pr-4 font-medium">
-                  {payment.invoice.student.user.firstName} {payment.invoice.student.user.lastName}{" "}
-                  <span className="font-mono text-muted">({payment.invoice.student.admissionNumber})</span>
+          </thead>
+          <tbody>
+            {payments.length === 0 && (
+              <tr>
+                <td colSpan={canManageFees ? 5 : 4} className="py-3 text-muted">
+                  No payments to show.
                 </td>
-              )}
-              <td className="py-2.5 pr-4">{METHOD_LABEL[payment.method]}</td>
-              <td className="py-2.5 pr-4 font-mono">{formatCurrency(payment.amount)}</td>
-              <td className="py-2.5 pr-4">
-                <Badge variant={STATUS_VARIANT[payment.status]}>{payment.status}</Badge>
-              </td>
-              <td className="py-2.5 font-mono text-muted">{payment.createdAt.slice(0, 10)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </tr>
+            )}
+            {payments.map((payment) => (
+              <tr key={payment.id} className="border-b border-border/60 last:border-none">
+                {canManageFees && (
+                  <td className="py-2.5 pr-4 font-medium">
+                    {payment.invoice.student.user.firstName} {payment.invoice.student.user.lastName}{" "}
+                    <span className="font-mono text-muted">({payment.invoice.student.admissionNumber})</span>
+                  </td>
+                )}
+                <td className="py-2.5 pr-4">{METHOD_LABEL[payment.method]}</td>
+                <td className="py-2.5 pr-4 font-mono">{formatCurrency(payment.amount)}</td>
+                <td className="py-2.5 pr-4">
+                  <Badge variant={STATUS_VARIANT[payment.status]}>{payment.status}</Badge>
+                </td>
+                <td className="py-2.5 font-mono text-muted">{payment.createdAt.slice(0, 10)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <div className="flex items-center justify-between text-[12px] text-muted">
         <span>

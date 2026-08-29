@@ -379,6 +379,15 @@ model ParentProfile {
   // list (no new endpoint needed, the field is just part of the row).
   emailBounced                 Boolean               @default(false)
   emailBouncedAt               DateTime?
+  // Set the first time a Super-Admin/Registrar corrects/confirms this
+  // parent's email from the student details page (e.g. after a CSV-driven
+  // legacy import that couldn't collect a reliable address for everyone) —
+  // a null value gates the one-time "change email" action; once set, that
+  // action is refused. Setting it is also what triggers the password-reset
+  // email that lets the parent actually pick a password (AuthService.
+  // forgotPassword), since an imported parent's User is already `active`
+  // with an unknown randomly-generated password.
+  emailChangedByStaffAt        DateTime?
   createdAt                    DateTime              @default(now())
   updatedAt                    DateTime              @updatedAt
 
@@ -1449,6 +1458,9 @@ model FeeStructure {
   // recorded by the Bursar/Super-Admin (FeeStructure is never exposed to
   // parents, see ability.factory.ts).
   studentAssignments FeeStructureStudentAssignment[]
+  // Fee-waiver-shaped DiscountRequests (mandatory fee removed for specific
+  // already-billed students) — see DiscountRequest.feeStructureId.
+  discountRequests   DiscountRequest[]
 
   @@map("fee_structures")
 }
@@ -1599,6 +1611,12 @@ model DiscountRequest {
   // StaffProfile (same reasoning as Payment.recordedByStaffId).
   requestedByStaffId String?
   requestedByStaff   StaffProfile?         @relation(fields: [requestedByStaffId], references: [id])
+  // Set only for a targeted fee waiver (bulkRaiseFeeWaiver) — null for a
+  // generic whole-invoice discount raised via the plain raise() path. When
+  // set, `value` is server-computed from that FeeStructure's own billed
+  // line on the invoice, never user-entered.
+  feeStructureId     String?
+  feeStructure       FeeStructure?         @relation(fields: [feeStructureId], references: [id])
   type               DiscountRequestType
   // The raw requested number (a 0-100 percentage, or a currency amount) —
   // the applied discount is computed at approval time against the

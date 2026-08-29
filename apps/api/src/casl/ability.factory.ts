@@ -12,7 +12,12 @@ import type { RequestUser } from "../auth/jwt.strategy";
  * Academic Structure need); every later phase adds rules here rather than
  * inventing its own ad-hoc auth pattern.
  */
-export type Action = "manage" | "invite" | "read";
+// "updateEmail" is deliberately its own Action rather than folded into
+// "manage" — Registrar gets this one narrow ParentProfile capability
+// (correcting/confirming a guardian's email, one-time) without the broader
+// "manage ParentProfile" grant Admin/Super-Admin have (which would also let
+// them edit occupation/address/relationship via PATCH /parent-profiles/:id).
+export type Action = "manage" | "invite" | "read" | "updateEmail";
 export type Subject =
   | "all"
   | "AcademicStructure"
@@ -149,6 +154,11 @@ export class AbilityFactory {
       // StudentService.resolveGuardian (which never checks the "invite"
       // ability) keeps working exactly as it does for Admin.
       can("manage", "StudentProfile");
+      // Narrow, purpose-built grant (not full "manage ParentProfile") —
+      // lets Registrar correct/confirm a migrated guardian's email exactly
+      // once from the student details page (ParentProfileController's
+      // PATCH .../email), nothing else about ParentProfile.
+      can("updateEmail", "ParentProfile");
       can("manage", "TimetableSlot");
       // Needed to pick a staff member for a TimetableSlot and to build the
       // roster for a STAFF-type attendance register below — StaffProfile

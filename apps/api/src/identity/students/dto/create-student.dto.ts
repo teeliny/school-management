@@ -37,6 +37,18 @@ export class GuardianInputDto {
   @IsString()
   lastName?: string;
 
+  // Only meaningful on the brand-new-guardian path (existingParentProfileId
+  // not set) — see StudentService.resolveGuardian. Both optional: neither
+  // is required to create a guardian, matching User.phone/ParentProfile.
+  // address's own nullability.
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  address?: string;
+
   @IsEnum(GuardianRelationship)
   relationship!: GuardianRelationship;
 

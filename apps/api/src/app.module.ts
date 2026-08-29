@@ -14,6 +14,7 @@ import { RedisModule } from "./redis/redis.module";
 import { MailerModule } from "./mailer/mailer.module";
 import { CaslModule } from "./casl/casl.module";
 import { IdentityModule } from "./identity/identity.module";
+import { LegacyImportModule } from "./identity/students/legacy-import/legacy-import.module";
 import { AuthModule } from "./auth/auth.module";
 import { AcademicStructureModule } from "./academic-structure/academic-structure.module";
 import { StaffAssignmentsModule } from "./staff-assignments/staff-assignments.module";
@@ -89,6 +90,7 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
     MailerModule,
     CaslModule,
     IdentityModule,
+    LegacyImportModule,
     AuthModule,
     AcademicStructureModule,
     StaffAssignmentsModule,
