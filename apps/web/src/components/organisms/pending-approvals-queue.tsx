@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2 } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { Checkbox } from "../atoms/checkbox";
 import { Input } from "../atoms/input";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 
 interface PendingPaymentItem {
   id: string;
@@ -155,8 +158,8 @@ export function PendingApprovalsQueue() {
   }
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!rows) return <p className="text-sm text-muted">Loading…</p>;
-  if (rows.length === 0) return <p className="text-sm text-muted">Nothing awaiting review.</p>;
+  if (!rows) return <SkeletonList rows={3} />;
+  if (rows.length === 0) return <EmptyState icon={CheckCircle2} title="Nothing awaiting review" />;
 
   const discountRowIds = rows.filter((r) => r.kind === "DISCOUNT").map((r) => r.id);
   const allDiscountsSelected = discountRowIds.length > 0 && selectedDiscountIds.size === discountRowIds.length;

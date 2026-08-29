@@ -6,6 +6,7 @@ import { useCurrentUser } from "../../../lib/use-current-user";
 import { apiFetch, ApiError } from "../../../lib/api";
 import { formatCurrency } from "../../../lib/currency";
 import { AppShell } from "../../../components/templates/app-shell";
+import { PageLoadingSkeleton } from "../../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../../components/molecules/letterhead";
 import { Card } from "../../../components/molecules/card";
 import { Badge, type BadgeVariant } from "../../../components/atoms/badge";
@@ -58,11 +59,7 @@ export default function PaymentsCompletePage() {
   }, [invoiceId]);
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted">Loading…</p>
-      </main>
-    );
+    return <PageLoadingSkeleton />;
   }
   if (!user) return null;
 

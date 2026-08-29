@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from "../../lib/api";
 import { useDebouncedValue } from "../../lib/use-debounced-value";
 import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
+import { Skeleton } from "../atoms/skeleton";
 
 interface StudentSearchResult {
   id: string;
@@ -109,7 +110,10 @@ export function FeeStructureAssignmentPanel({ feeStructureId }: { feeStructureId
       <div>
         <p className="text-muted">Currently opted in:</p>
         {assignments === null ? (
-          <p className="text-muted">Loading…</p>
+          <div className="space-y-1 pt-1">
+            <Skeleton className="h-3.5 w-40" />
+            <Skeleton className="h-3.5 w-32" />
+          </div>
         ) : assignments.length === 0 ? (
           <p className="text-muted">No students opted in yet.</p>
         ) : (

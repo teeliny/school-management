@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { UserCheck } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { MultiSelect } from "../molecules/multi-select";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 type IssueStatus = "ABSENT" | "LATE" | "EXCUSED" | "NOT_MARKED";
 
@@ -154,9 +157,9 @@ export function DailyAbsenteeList() {
       </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}
-      {!error && !data && <p className="text-sm text-muted">Loading…</p>}
+      {!error && !data && <SkeletonTable rows={4} columns={5} />}
 
-      {data && data.classArms.length === 0 && <p className="text-sm text-muted">No class arms in scope.</p>}
+      {data && data.classArms.length === 0 && <EmptyState icon={UserCheck} title="No class arms in scope" />}
 
       {data && data.classArms.length > 0 && (
         <div className="max-h-[420px] overflow-auto">
@@ -173,8 +176,8 @@ export function DailyAbsenteeList() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="py-3 text-muted">
-                    No matching students for this date.
+                  <td colSpan={5}>
+                    <EmptyState icon={UserCheck} title="No matching students for this date" />
                   </td>
                 </tr>
               )}

@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CreditCard } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 type Provider = "MONNIFY" | "PAYSTACK";
 type Environment = "SANDBOX" | "LIVE";
@@ -35,8 +38,8 @@ export function PaymentGatewayConfigList() {
   }, []);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!configs) return <p className="text-sm text-muted">Loading…</p>;
-  if (configs.length === 0) return <p className="text-sm text-muted">No payment gateways configured yet.</p>;
+  if (!configs) return <SkeletonTable rows={2} columns={4} />;
+  if (configs.length === 0) return <EmptyState icon={CreditCard} title="No payment gateways configured yet" />;
 
   return (
     <div className="overflow-x-auto">

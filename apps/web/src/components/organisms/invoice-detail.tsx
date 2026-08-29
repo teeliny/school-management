@@ -5,6 +5,7 @@ import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
+import { Skeleton } from "../atoms/skeleton";
 import { InvoicePaymentsList } from "./invoice-payments-list";
 import { RecordPaymentForm } from "./record-payment-form";
 import { RequestDiscountForm } from "./request-discount-form";
@@ -98,7 +99,28 @@ export function InvoiceDetail({
   }
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!invoice) return <p className="text-sm text-muted">Loading…</p>;
+  if (!invoice) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="space-y-1.5">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+          <Skeleton className="h-5 w-16 rounded-full" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+        <div className="space-y-1.5 border-t border-border pt-3">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">

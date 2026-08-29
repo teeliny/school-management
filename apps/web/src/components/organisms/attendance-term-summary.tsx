@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Users } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 interface ClassArmAttendanceAnalytics {
   classArmId: string;
@@ -40,7 +43,7 @@ export function AttendanceTermSummary({ classArmId, termId }: { classArmId: stri
   }, [classArmId, termId]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!data) return <p className="text-sm text-muted">Loading…</p>;
+  if (!data) return <SkeletonTable rows={4} columns={6} />;
 
   return (
     <div className="space-y-2.5">
@@ -63,8 +66,8 @@ export function AttendanceTermSummary({ classArmId, termId }: { classArmId: stri
           <tbody>
             {data.students.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-3 text-muted">
-                  No students in this class arm.
+                <td colSpan={6}>
+                  <EmptyState icon={Users} title="No students in this class arm" />
                 </td>
               </tr>
             )}

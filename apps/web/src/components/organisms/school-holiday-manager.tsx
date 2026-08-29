@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CalendarOff } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -139,6 +142,7 @@ export function SchoolHolidayManager() {
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+        {holidays === null && <SkeletonList rows={2} />}
         {holidays?.map((holiday) =>
           editingId === holiday.id ? (
             <div
@@ -193,7 +197,7 @@ export function SchoolHolidayManager() {
             </div>
           ),
         )}
-        {holidays?.length === 0 && <p className="text-sm text-muted">No school holidays declared yet.</p>}
+        {holidays?.length === 0 && <EmptyState icon={CalendarOff} title="No school holidays declared yet" className="py-6" />}
       </div>
 
       <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">

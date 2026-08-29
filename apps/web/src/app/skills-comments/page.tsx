@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
+import { PageLoadingSkeleton } from "../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card } from "../../components/molecules/card";
 import { CollapsibleCard } from "../../components/molecules/collapsible-card";
@@ -98,11 +99,7 @@ function SkillsCommentsPageInner() {
     : classArms.filter((arm) => mySubjectTeacherAssignments.some((a) => a.classArmId === arm.id));
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted">Loading…</p>
-      </main>
-    );
+    return <PageLoadingSkeleton />;
   }
   if (!user) return null;
 

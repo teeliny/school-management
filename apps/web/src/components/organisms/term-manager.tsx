@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarRange } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge } from "../atoms/badge";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 import {
   Select,
   SelectContent,
@@ -164,6 +167,8 @@ export function TermManager() {
         </Select>
       </div>
 
+      {!terms && academicSessionId && <SkeletonList rows={2} />}
+
       {terms && (
         <>
           <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
@@ -219,7 +224,7 @@ export function TermManager() {
                 </div>
               ),
             )}
-            {terms.length === 0 && <p className="text-sm text-muted">No terms in this session yet.</p>}
+            {terms.length === 0 && <EmptyState icon={CalendarRange} title="No terms in this session yet" className="py-6" />}
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-3">

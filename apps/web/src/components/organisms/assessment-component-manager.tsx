@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ClipboardList } from "lucide-react";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { toDatetimeLocalInputValue, fromDatetimeLocalInputValue } from "../../lib/datetime";
@@ -8,6 +9,7 @@ import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
+import { EmptyState } from "../molecules/empty-state";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 
 type ComponentType = "CA" | "MID_TERM" | "EXAM";
@@ -310,7 +312,7 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
                 ))}
               </tbody>
             </table>
-            {components.length === 0 && <p className="mt-2 text-sm text-muted">No assessment components yet.</p>}
+            {components.length === 0 && <EmptyState icon={ClipboardList} title="No assessment components yet" className="py-6" />}
           </div>
 
           {copyableStructures.length > 0 && (

@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Percent } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 
 type DiscountType = "PERCENTAGE" | "FIXED_AMOUNT";
 type DiscountRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
@@ -38,8 +41,8 @@ export function InvoiceDiscountRequestsList({ invoiceId, refreshKey }: { invoice
   }, [invoiceId, refreshKey]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!requests) return <p className="text-sm text-muted">Loading…</p>;
-  if (requests.length === 0) return <p className="text-sm text-muted">No discount requests against this invoice yet.</p>;
+  if (!requests) return <SkeletonList rows={2} />;
+  if (requests.length === 0) return <EmptyState icon={Percent} title="No discount requests against this invoice yet" />;
 
   return (
     <div className="space-y-1.5">

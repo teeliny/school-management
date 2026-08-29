@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ClipboardCheck } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { cn } from "../../lib/cn";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 export type AttendanceStatus = "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
 export type RollCallMode = "STUDENT_DAILY" | "STUDENT_PERIOD" | "STAFF_DAILY";
@@ -197,7 +200,7 @@ export function AttendanceRollCall({
     return <p className="text-sm text-muted">Select a class and date above to begin.</p>;
   }
   if (loading && !roster) {
-    return <p className="text-sm text-muted">Loading…</p>;
+    return <SkeletonTable rows={5} columns={2} />;
   }
 
   const markedCount = Object.keys(statusByPerson).length;
@@ -236,8 +239,8 @@ export function AttendanceRollCall({
           <tbody>
             {roster?.length === 0 && (
               <tr>
-                <td colSpan={2} className="py-3 text-muted">
-                  No one to mark for this selection.
+                <td colSpan={2}>
+                  <EmptyState icon={ClipboardCheck} title="No one to mark for this selection" />
                 </td>
               </tr>
             )}

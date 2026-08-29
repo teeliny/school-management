@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { GraduationCap } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { FormField } from "../molecules/form-field";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -112,6 +115,7 @@ export function GradeScaleManager() {
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+        {scales === null && <SkeletonList rows={3} />}
         {scales
           ?.slice()
           .sort((a, b) => b.minScore - a.minScore)
@@ -149,7 +153,7 @@ export function GradeScaleManager() {
               </div>
             </div>
           ))}
-        {scales?.length === 0 && <p className="text-sm text-muted">No grade scale rows yet.</p>}
+        {scales?.length === 0 && <EmptyState icon={GraduationCap} title="No grade scale rows yet" />}
       </div>
 
       <form onSubmit={handleSubmit} className="grid grid-cols-5 gap-3">

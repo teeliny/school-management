@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { School } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 import {
   Select,
   SelectContent,
@@ -132,6 +135,7 @@ export function ClassArmManager() {
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+        {arms === undefined && <SkeletonList rows={3} />}
         {arms?.map((arm) =>
           editingId === arm.id ? (
             <div key={arm.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_120px_auto_auto]">
@@ -181,7 +185,7 @@ export function ClassArmManager() {
             </div>
           ),
         )}
-        {arms?.length === 0 && <p className="text-sm text-muted">No class arms yet.</p>}
+        {arms?.length === 0 && <EmptyState icon={School} title="No class arms yet" className="py-6" />}
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">

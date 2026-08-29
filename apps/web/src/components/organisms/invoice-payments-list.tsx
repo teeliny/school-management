@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Wallet } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 type PaymentMethod = "CASH" | "GATEWAY_CARD" | "GATEWAY_TRANSFER" | "GATEWAY_USSD" | "GATEWAY_RESERVED_ACCOUNT" | "BANK_TRANSFER_MANUAL";
 type PaymentStatus = "PENDING" | "PENDING_APPROVAL" | "SUCCESSFUL" | "FAILED" | "REVERSED" | "REJECTED";
@@ -46,8 +49,8 @@ export function InvoicePaymentsList({ invoiceId, refreshKey }: { invoiceId: stri
   }, [invoiceId, refreshKey]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!payments) return <p className="text-sm text-muted">Loading…</p>;
-  if (payments.length === 0) return <p className="text-sm text-muted">No payments recorded against this invoice yet.</p>;
+  if (!payments) return <SkeletonTable rows={2} columns={5} />;
+  if (payments.length === 0) return <EmptyState icon={Wallet} title="No payments recorded against this invoice yet" />;
 
   return (
     <table className="w-full text-left text-[12.5px]">

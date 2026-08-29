@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Wallet } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 type PaymentMethod = "CASH" | "GATEWAY_CARD" | "GATEWAY_TRANSFER" | "GATEWAY_USSD" | "GATEWAY_RESERVED_ACCOUNT" | "BANK_TRANSFER_MANUAL";
 type PaymentStatus = "PENDING" | "PENDING_APPROVAL" | "SUCCESSFUL" | "FAILED" | "REVERSED" | "REJECTED";
@@ -64,7 +67,7 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
   }, [canManageFees, status, page]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!payments) return <p className="text-sm text-muted">Loading…</p>;
+  if (!payments) return <SkeletonTable rows={5} columns={5} />;
 
   const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const to = Math.min(total, (page + 1) * PAGE_SIZE);
@@ -110,8 +113,8 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
           <tbody>
             {payments.length === 0 && (
               <tr>
-                <td colSpan={canManageFees ? 5 : 4} className="py-3 text-muted">
-                  No payments to show.
+                <td colSpan={canManageFees ? 5 : 4}>
+                  <EmptyState icon={Wallet} title="No payments to show" />
                 </td>
               </tr>
             )}

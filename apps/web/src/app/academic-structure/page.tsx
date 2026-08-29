@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
+import { PageLoadingSkeleton } from "../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card } from "../../components/molecules/card";
 import { CollapsibleCard } from "../../components/molecules/collapsible-card";
@@ -40,11 +41,7 @@ function AcademicStructurePageInner() {
   const [tab, setTab] = useState<TabKey>(TAB_KEYS.includes(initialTab) ? initialTab : "sessions");
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted">Loading…</p>
-      </main>
-    );
+    return <PageLoadingSkeleton />;
   }
   if (!user) return null;
 

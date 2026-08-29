@@ -6,6 +6,7 @@ import type { ClassLevelCategory } from "@school/types";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
+import { PageLoadingSkeleton } from "../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
 import { CollapsibleCard } from "../../components/molecules/collapsible-card";
@@ -245,11 +246,7 @@ function PlannerPageInner() {
   }, [components, ivComponentId, ivTermId]);
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted">Loading…</p>
-      </main>
-    );
+    return <PageLoadingSkeleton />;
   }
   if (!user) return null;
 

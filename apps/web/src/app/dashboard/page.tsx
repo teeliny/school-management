@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { useParentChildren } from "../../lib/use-parent-children";
 import { AppShell } from "../../components/templates/app-shell";
+import { PageLoadingSkeleton } from "../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card, CardHeader } from "../../components/molecules/card";
 import { MySchedule } from "../../components/organisms/my-schedule";
@@ -39,11 +40,7 @@ export default function DashboardPage() {
   }, [children]);
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted">Loading…</p>
-      </main>
-    );
+    return <PageLoadingSkeleton />;
   }
   if (!user) return null;
 

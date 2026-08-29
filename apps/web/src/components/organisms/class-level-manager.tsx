@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Layers } from "lucide-react";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 import {
   Select,
   SelectContent,
@@ -110,6 +113,7 @@ export function ClassLevelManager() {
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+        {levels === undefined && <SkeletonList rows={3} />}
         {levels?.map((level) =>
           editingId === level.id ? (
             <div key={level.id} className="grid grid-cols-1 items-end gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-[1fr_90px_1fr_auto_auto]">
@@ -170,7 +174,7 @@ export function ClassLevelManager() {
             </div>
           ),
         )}
-        {levels?.length === 0 && <p className="text-sm text-muted">No class levels yet.</p>}
+        {levels?.length === 0 && <EmptyState icon={Layers} title="No class levels yet" className="py-6" />}
       </div>
 
       <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-3">

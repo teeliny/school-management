@@ -2,6 +2,7 @@
 
 import { useCurrentUser } from "../../lib/use-current-user";
 import { AppShell } from "../../components/templates/app-shell";
+import { PageLoadingSkeleton } from "../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../components/molecules/letterhead";
 import { Card } from "../../components/molecules/card";
 import { ParentProfileForm } from "../../components/organisms/parent-profile-form";
@@ -10,11 +11,7 @@ export default function ProfilePage() {
   const { user, loading, logout } = useCurrentUser();
 
   if (loading) {
-    return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-muted">Loading…</p>
-      </main>
-    );
+    return <PageLoadingSkeleton />;
   }
   if (!user) return null;
 

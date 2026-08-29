@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Wallet } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Button } from "../atoms/button";
@@ -9,6 +10,8 @@ import { Checkbox } from "../atoms/checkbox";
 import { FormField } from "../molecules/form-field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { MultiSelect } from "../molecules/multi-select";
+import { SkeletonList } from "../molecules/skeleton-list";
+import { EmptyState } from "../molecules/empty-state";
 import { FeeStructureAssignmentPanel } from "./fee-structure-assignment-panel";
 import { FeeStructureWaiverPanel } from "./fee-structure-waiver-panel";
 import {
@@ -228,6 +231,7 @@ export function FeeStructureManager() {
       {termId && (
         <>
           <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
+            {structures === null && <SkeletonList rows={3} />}
             {structures?.map((structure) =>
               editingId === structure.id ? (
                 <div key={structure.id} className="grid grid-cols-1 gap-2 rounded-lg border border-border p-2.5 sm:grid-cols-2">
@@ -327,7 +331,7 @@ export function FeeStructureManager() {
                 </div>
               ),
             )}
-            {structures?.length === 0 && <p className="text-sm text-muted">No fee structures for this term yet.</p>}
+            {structures?.length === 0 && <EmptyState icon={Wallet} title="No fee structures for this term yet" />}
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">

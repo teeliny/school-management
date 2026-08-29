@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Receipt } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Input } from "../atoms/input";
 import { Label } from "../atoms/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { SkeletonTable } from "../molecules/skeleton-table";
+import { EmptyState } from "../molecules/empty-state";
 
 interface TermOption {
   id: string;
@@ -94,7 +97,7 @@ export function InvoiceList({
   }, [invoices, search, canManageFees]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
-  if (!invoices) return <p className="text-sm text-muted">Loading…</p>;
+  if (!invoices) return <SkeletonTable rows={4} columns={4} />;
 
   return (
     <div className="space-y-3">
@@ -160,8 +163,8 @@ export function InvoiceList({
           <tbody>
             {filteredInvoices?.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-3 text-muted">
-                  No invoices to show.
+                <td colSpan={4}>
+                  <EmptyState icon={Receipt} title="No invoices to show" />
                 </td>
               </tr>
             )}

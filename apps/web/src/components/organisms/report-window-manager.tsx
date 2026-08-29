@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CalendarClock } from "lucide-react";
 import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { toDatetimeLocalInputValue, fromDatetimeLocalInputValue } from "../../lib/datetime";
@@ -8,6 +9,7 @@ import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Label } from "../atoms/label";
 import { FormField } from "../molecules/form-field";
+import { EmptyState } from "../molecules/empty-state";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 
 type WindowStatus = "DRAFT" | "OPEN" | "CLOSED";
@@ -164,7 +166,7 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
                 </div>
               </div>
             ))}
-            {windows.length === 0 && <p className="text-sm text-muted">No report window for this term/class group yet.</p>}
+            {windows.length === 0 && <EmptyState icon={CalendarClock} title="No report window for this term/class group yet" className="py-6" />}
           </div>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
