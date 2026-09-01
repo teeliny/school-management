@@ -207,7 +207,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>
-              <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+              <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Reception / Nursery / Primary</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -224,7 +224,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>
-              <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+              <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Reception / Nursery / Primary</SelectItem>
             </SelectContent>
           </Select>
         </div>

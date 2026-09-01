@@ -262,7 +262,10 @@ export class AttendanceAnalyticsService {
     }
     if (user.assignmentTypes.includes("PRINCIPAL")) return { type: "categories", categories: [ClassLevelCategory.JSS, ClassLevelCategory.SSS] };
     if (user.assignmentTypes.includes("HEADTEACHER")) {
-      return { type: "categories", categories: [ClassLevelCategory.CRECHE, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY] };
+      return {
+        type: "categories",
+        categories: [ClassLevelCategory.CRECHE, ClassLevelCategory.RECEPTION, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY],
+      };
     }
 
     const classArmIds = await this.staffAssignments.activeClassTeacherClassArmIds(user.id);

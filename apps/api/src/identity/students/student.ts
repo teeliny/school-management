@@ -53,12 +53,18 @@ const ALLOWED_PHOTO_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 // Maps ClassLevelCategory to the 2-digit admission-number code (see
 // generateAdmissionNumber): creche=01, nursery=02, primary=03, jss=04, sss=05.
+// RECEPTION was added after the other five were already issuing admission
+// numbers, so it gets a fresh, previously-unused code (06) rather than a
+// renumber — the per-(session, code) sequence in generateAdmissionNumber
+// means reassigning any existing code would silently start a new NNNN
+// sequence under a category that already has issued admission numbers.
 const CLASS_LEVEL_CATEGORY_CODE: Record<ClassLevelCategory, string> = {
   CRECHE: "01",
   NURSERY: "02",
   PRIMARY: "03",
   JSS: "04",
   SSS: "05",
+  RECEPTION: "06",
 };
 
 @Injectable()

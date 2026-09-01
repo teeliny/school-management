@@ -286,7 +286,7 @@ export class ScheduleGenerationRequestService {
       return [...CLASS_LEVEL_CATEGORIES];
     }
     if (user.assignmentTypes.includes("PRINCIPAL")) return ["JSS", "SSS"];
-    if (user.assignmentTypes.includes("HEADTEACHER")) return ["CRECHE", "NURSERY", "PRIMARY"];
+    if (user.assignmentTypes.includes("HEADTEACHER")) return ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
     return [];
   }
 

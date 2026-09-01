@@ -3,7 +3,7 @@ import { Processor, WorkerHost } from "@nestjs/bullmq";
 import { ConfigService } from "@nestjs/config";
 import type { Job } from "bullmq";
 import { Resend } from "resend";
-import { QUEUE_NAMES, type EmailDispatchJob } from "@school/types";
+import { formatFromAddress, QUEUE_NAMES, renderEmailHtml, renderEmailText, textToBodyHtml, type EmailDispatchJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 
 /**
@@ -34,6 +34,19 @@ export class EmailProcessor extends WorkerHost {
   async process(job: Job<EmailDispatchJob>): Promise<void> {
     const { emailLogId, recipientEmail, subject, body } = job.data;
 
+    const school = await this.prisma.schoolProfile.findFirst();
+    const schoolName = school?.name ?? "Your School";
+    const templateParams = {
+      schoolName,
+      logoUrl: school?.logoUrl,
+      heading: subject,
+      bodyHtml: textToBodyHtml(body),
+      footerNote: school?.contactEmail ? `Questions? Contact ${school.contactEmail}.` : undefined,
+    };
+    const html = renderEmailHtml(templateParams);
+    const text = renderEmailText(templateParams);
+    const from = formatFromAddress(schoolName, this.fromEmail);
+
     if (!this.resend) {
       this.logger.warn(
         `RESEND_API_KEY not set — logging email instead of sending.\nTo: ${recipientEmail}\nSubject: ${subject}\n${body}`,
@@ -47,10 +60,11 @@ export class EmailProcessor extends WorkerHost {
 
     try {
       await this.resend.emails.send({
-        from: this.fromEmail,
+        from,
         to: recipientEmail,
         subject,
-        html: body,
+        html,
+        text,
       });
 
       await this.prisma.emailLog.update({

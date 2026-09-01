@@ -396,7 +396,7 @@ export class DashboardService {
 
     const categories: ClassLevelCategory[] = isPrincipal
       ? [ClassLevelCategory.JSS, ClassLevelCategory.SSS]
-      : [ClassLevelCategory.CRECHE, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY];
+      : [ClassLevelCategory.CRECHE, ClassLevelCategory.RECEPTION, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY];
     const classLevels = await this.prisma.classLevel.findMany({ where: { category: { in: categories } } });
 
     const allRows = (

@@ -670,7 +670,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * classArm's ClassLevel.category, minus EXCLUDED_DUTY_ASSIGNMENT_TYPES.
    */
   private async resolveEligibleDutyStaffIds(group: ClassLevelCategoryGroup, excludedTypes: string[]): Promise<string[]> {
-    const categories: ClassLevelCategory[] = group === "JSS_SSS" ? ["JSS", "SSS"] : ["CRECHE", "NURSERY", "PRIMARY"];
+    const categories: ClassLevelCategory[] =
+      group === "JSS_SSS" ? ["JSS", "SSS"] : ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
 
     const excludedStaffIds = new Set(
       (
@@ -773,7 +774,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
 
     if (types.has("REGISTRAR")) return [...CLASS_LEVEL_CATEGORIES];
     if (types.has("PRINCIPAL")) return ["JSS", "SSS"];
-    if (types.has("HEADTEACHER")) return ["CRECHE", "NURSERY", "PRIMARY"];
+    if (types.has("HEADTEACHER")) return ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
 
     // The API's assertCanTrigger already rejected this case at trigger time
     // — reaching here means the user's assignment changed between trigger

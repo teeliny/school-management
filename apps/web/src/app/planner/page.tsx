@@ -321,7 +321,7 @@ function PlannerPageInner() {
         )}
         {primary.length > 0 && (
           <SelectGroup>
-            <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted">Primary (Creche / Nursery / Primary)</div>
+            <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted">Primary (Creche / Reception / Nursery / Primary)</div>
             {primary.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.classLevelCategory} · {c.name}
@@ -665,7 +665,7 @@ function PlannerPageInner() {
                     <SelectContent>
                       {(!scopedGroup || scopedGroup === "JSS_SSS") && <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>}
                       {(!scopedGroup || scopedGroup === "CRECHE_NURSERY_PRIMARY") && (
-                        <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+                        <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Reception / Nursery / Primary</SelectItem>
                       )}
                     </SelectContent>
                   </Select>

@@ -31,7 +31,7 @@ const SCOPE_LABEL: Record<ScheduleScope, string> = {
 const GROUP_LABEL: Record<ClassLevelCategoryGroup | "GLOBAL", string> = {
   GLOBAL: "Global",
   JSS_SSS: "JSS / SSS",
-  CRECHE_NURSERY_PRIMARY: "Creche / Nursery / Primary",
+  CRECHE_NURSERY_PRIMARY: "Creche / Reception / Nursery / Primary",
 };
 
 // The worker (apps/worker/src/scheduling-solve-dispatch) only ever queries
@@ -272,7 +272,7 @@ export function SchedulingConstraintManager() {
               <SelectContent>
                 <SelectItem value="GLOBAL">Global (applies to whole scope)</SelectItem>
                 <SelectItem value="JSS_SSS">JSS / SSS</SelectItem>
-                <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Nursery / Primary</SelectItem>
+                <SelectItem value="CRECHE_NURSERY_PRIMARY">Creche / Reception / Nursery / Primary</SelectItem>
               </SelectContent>
             </Select>
           </div>

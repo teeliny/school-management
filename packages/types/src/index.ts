@@ -7,6 +7,7 @@ export * from "./attendance-rules";
 export * from "./fees-rules";
 export * from "./notifications";
 export * from "./scheduling";
+export * from "./email-template";
 
 // Deliberately NOT re-exported here: ./payment-gateways imports node:crypto
 // (HMAC webhook verification) at module scope, which breaks any client

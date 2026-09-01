@@ -22,7 +22,7 @@ interface TimetableSlotItem {
 interface ClassArmOption {
   id: string;
   displayName: string;
-  classLevel: { category: "CRECHE" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
+  classLevel: { category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
 }
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
@@ -34,7 +34,7 @@ const DAY_LABELS: Record<DayOfWeek, string> = {
 };
 const GROUP_LABEL: Record<ClassLevelCategoryGroup, string> = {
   JSS_SSS: "JSS / SSS",
-  CRECHE_NURSERY_PRIMARY: "Creche / Nursery / Primary",
+  CRECHE_NURSERY_PRIMARY: "Creche / Reception / Nursery / Primary",
 };
 
 /**

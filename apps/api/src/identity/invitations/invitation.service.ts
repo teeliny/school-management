@@ -278,7 +278,9 @@ export class InvitationService {
     await this.mailer.send({
       to: email,
       subject: "You've been invited",
-      html: `<p>You've been invited to join your school's account.</p><p><a href="${acceptUrl}">Accept your invitation</a></p><p>This link expires in ${DEFAULT_EXPIRY_DAYS} days.</p>`,
+      html: `<p style="margin:0 0 16px;">You've been invited to join your school's account. This link expires in ${DEFAULT_EXPIRY_DAYS} days.</p>`,
+      ctaLabel: "Accept your invitation",
+      ctaUrl: acceptUrl,
     });
   }
 }

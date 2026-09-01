@@ -39,7 +39,7 @@ interface StaffOption {
 }
 interface ClassArmDetail {
   id: string;
-  classLevel: { category: "CRECHE" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
+  classLevel: { category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
 }
 
 const DAY_LABELS: Record<DayOfWeek, string> = {

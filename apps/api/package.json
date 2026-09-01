@@ -13,7 +13,9 @@
     "presetup:school": "pnpm --filter=@school/types build && nest build",
     "setup:school": "node dist/setup-school.js",
     "preseed:demo": "pnpm --filter=@school/types build && nest build",
-    "seed:demo": "node dist/seed-demo-data.js"
+    "seed:demo": "node dist/seed-demo-data.js",
+    "preseed:demo:lite": "pnpm --filter=@school/types build && nest build",
+    "seed:demo:lite": "node dist/seed-demo-data-lite.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",
