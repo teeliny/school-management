@@ -10,6 +10,7 @@ const ADMIN: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [
 const PARENT: RequestUser = { id: "parent-user-1", roles: ["PARENT"], assignmentTypes: [] };
 
 const FUTURE_DUE_DATE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+const CURRENT_TERM_START_DATE = new Date("2026-01-05");
 
 function buildInvoice(
   overrides: Partial<{
@@ -17,11 +18,15 @@ function buildInvoice(
     lineItems: unknown[];
     payments: unknown[];
     student: unknown;
+    studentId: string;
+    term: unknown;
     gatewayPaymentReference: string | null;
   }> = {},
 ) {
   return {
     id: "invoice-1",
+    studentId: "student-1",
+    term: { startDate: CURRENT_TERM_START_DATE },
     totalAmount: 5000,
     dueDate: FUTURE_DUE_DATE,
     lineItems: [],
@@ -46,6 +51,7 @@ function buildPrismaMock() {
       findUniqueOrThrow: jest.fn().mockResolvedValue(buildInvoice()),
       update: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     staffProfile: { findUnique: jest.fn().mockResolvedValue(null) },
     payment: {
@@ -234,6 +240,29 @@ describe("PaymentService.recordCash (PRD §3.9 — CASH takes effect immediately
     expect(queue.add).toHaveBeenCalledWith("generate", { receiptId: "receipt-1" });
     expect(result.receipt.id).toBe("receipt-1");
   });
+
+  it("rejects recordCash when the student has an unsettled invoice from an earlier term", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { totalAmount: 3000, lineItems: [], payments: [{ amount: 1000, status: "SUCCESSFUL" }] },
+    ]);
+
+    await expect(service.recordCash({ invoiceId: "invoice-1", amount: 5000 }, BURSAR)).rejects.toThrow(
+      /unsettled invoice from an earlier term/,
+    );
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith({
+      where: { studentId: "student-1", term: { startDate: { lt: CURRENT_TERM_START_DATE } } },
+      include: { lineItems: true, payments: true },
+    });
+    expect(prisma.__tx.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("allows recordCash when every earlier-term invoice is fully settled", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { totalAmount: 3000, lineItems: [], payments: [{ amount: 3000, status: "SUCCESSFUL" }] },
+    ]);
+
+    await expect(service.recordCash({ invoiceId: "invoice-1", amount: 5000 }, BURSAR)).resolves.toBeDefined();
+  });
 });
 
 describe("PaymentService read scoping (PRD §5 — Admin has no visibility into Fees)", () => {
@@ -389,6 +418,17 @@ describe("PaymentService.initiateGatewayCheckout (PRD FR7.3)", () => {
 
     await expect(service.initiateGatewayCheckout({ invoiceId: "invoice-1" }, PARENT, ability)).rejects.toThrow(
       /Insufficient permissions/,
+    );
+  });
+
+  it("rejects checkout when the student has an unsettled invoice from an earlier term", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { totalAmount: 3000, lineItems: [], payments: [] },
+    ]);
+    const ability = abilityFactory.createForUser(PARENT);
+
+    await expect(service.initiateGatewayCheckout({ invoiceId: "invoice-1" }, PARENT, ability)).rejects.toThrow(
+      /unsettled invoice from an earlier term/,
     );
   });
 
@@ -565,6 +605,18 @@ describe("PaymentService.submitManualBankTransfer (PRD FR7.3a)", () => {
     await expect(service.submitManualBankTransfer({ invoiceId: "invoice-1", amount: 100 }, buildUploadedFile(), BURSAR)).rejects.toThrow(
       /no outstanding balance/,
     );
+    expect(storage.put).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects submission when the student has an unsettled invoice from an earlier term", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { totalAmount: 3000, lineItems: [], payments: [] },
+    ]);
+
+    await expect(
+      service.submitManualBankTransfer({ invoiceId: "invoice-1", amount: 3000 }, buildUploadedFile(), BURSAR),
+    ).rejects.toThrow(/unsettled invoice from an earlier term/);
     expect(storage.put).not.toHaveBeenCalled();
     expect(prisma.payment.create).not.toHaveBeenCalled();
   });

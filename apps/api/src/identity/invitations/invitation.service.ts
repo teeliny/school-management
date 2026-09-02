@@ -19,6 +19,17 @@ import { UserService } from "../users/user.service";
 
 const DEFAULT_EXPIRY_DAYS = 7;
 
+// Human-readable form of Role for the invite email body — deliberately not
+// shared with any UI role-label map (none currently exists to reuse), this
+// is copy for an email, not a UI string.
+const ROLE_LABEL: Record<Role, string> = {
+  SUPER_ADMIN: "Super Admin",
+  ADMIN: "Admin",
+  STAFF: "Staff",
+  PARENT: "Parent",
+  STUDENT: "Student",
+};
+
 type Tx = Prisma.TransactionClient;
 
 export interface CreateInvitationInput {
@@ -55,7 +66,7 @@ export class InvitationService {
     const { invitation, rawToken } = await this.prisma.$transaction((tx) =>
       this.createInTx(tx, input),
     );
-    await this.sendInviteEmail(invitation.email, rawToken);
+    await this.sendInviteEmail(invitation.email, rawToken, invitation.invitedRole, invitation.invitedByUserId);
     return invitation;
   }
 
@@ -249,7 +260,7 @@ export class InvitationService {
       },
     });
 
-    await this.sendInviteEmail(invitation.email, rawToken);
+    await this.sendInviteEmail(invitation.email, rawToken, invitation.invitedRole, invitation.invitedByUserId);
     return updated;
   }
 
@@ -268,18 +279,47 @@ export class InvitationService {
     });
   }
 
-  /** Public so callers composing their own transaction (e.g. StudentService's inline parent invite) can send post-commit. */
-  async sendInviteEmail(email: string, rawToken: string) {
+  /**
+   * Public so callers composing their own transaction (e.g. StudentService's
+   * inline parent invite) can send post-commit.
+   *
+   * Subject/CTA deliberately avoid "invited"/"invitation" wording — a
+   * subject like "You've been invited" plus a prominent "Accept your
+   * invitation" button over a token-bearing link is close to the single most
+   * commonly imitated phishing shape there is (fake Google Docs/Notion/Slack
+   * "you've been invited" lures); Gmail/Outlook classifiers are heavily
+   * trained on exactly that pattern regardless of the sending domain's own
+   * SPF/DKIM/DMARC standing — auth passing proves who sent it, not that the
+   * content isn't phishing-shaped. Framed instead as a plain account-setup
+   * notice, which is what it actually is. Still personalized (real school
+   * name, role, inviter) — see the prior revision's reasoning for why that
+   * matters, this is on top of it, not instead of it.
+   */
+  async sendInviteEmail(email: string, rawToken: string, invitedRole: Role, invitedByUserId?: string | null) {
     const webBaseUrl =
       this.config.get<string>("WEB_BASE_URL") ?? "http://localhost:3000";
     const acceptUrl = `${webBaseUrl}/accept-invite?token=${rawToken}`;
     console.log(acceptUrl, "url");
 
+    const [school, inviter] = await Promise.all([
+      this.prisma.schoolProfile.findFirst(),
+      invitedByUserId
+        ? this.prisma.user.findUnique({ where: { id: invitedByUserId }, select: { firstName: true, lastName: true } })
+        : Promise.resolve(null),
+    ]);
+    const schoolName = school?.name ?? "Your School";
+    const roleLabel = ROLE_LABEL[invitedRole];
+    const inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}` : null;
+
+    const intro = inviterName
+      ? `${inviterName} added you to ${schoolName} as ${roleLabel}.`
+      : `An account was created for you at ${schoolName} as ${roleLabel}.`;
+
     await this.mailer.send({
       to: email,
-      subject: "You've been invited",
-      html: `<p style="margin:0 0 16px;">You've been invited to join your school's account. This link expires in ${DEFAULT_EXPIRY_DAYS} days.</p>`,
-      ctaLabel: "Accept your invitation",
+      subject: `Your ${schoolName} account`,
+      html: `<p style="margin:0 0 16px;">${intro} Set your password to get started. This link expires in ${DEFAULT_EXPIRY_DAYS} days.</p>`,
+      ctaLabel: "Set your password",
       ctaUrl: acceptUrl,
     });
   }

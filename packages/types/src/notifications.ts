@@ -67,8 +67,15 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
   {
     key: "INVITATION_RECEIVED",
     channel: "EMAIL",
-    subject: "You've been invited to {{schoolName}}",
-    bodyTemplate: "{{inviterName}} has invited you to join {{schoolName}} as {{invitedRole}}.",
+    // Deliberately avoids "invited"/"invitation" wording — see
+    // InvitationService.sendInviteEmail (apps/api) for why: that phrase
+    // combined with an accept-link button is one of the most commonly
+    // imitated phishing shapes, and spam classifiers are trained hard
+    // against it regardless of sending-domain authentication. Kept in sync
+    // with that copy even though nothing currently calls notify() with this
+    // type (see that method's doc comment).
+    subject: "Your {{schoolName}} account",
+    bodyTemplate: "{{inviterName}} added you to {{schoolName}} as {{invitedRole}}.",
     isCritical: false,
   },
   {

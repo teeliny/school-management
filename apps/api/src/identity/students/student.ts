@@ -94,7 +94,7 @@ export class StudentService {
   // passes it, for a migrated student whose real original admission year
   // predates the class arm's current academic session.
   async create(dto: CreateStudentDto, options?: { admissionYearOverride?: number }) {
-    const pendingInvites: { email: string; rawToken: string }[] = [];
+    const pendingInvites: { email: string; rawToken: string; invitedRole: Role }[] = [];
 
     const student = await this.prisma.$transaction(async (tx) => {
       const admissionNumber = await this.generateAdmissionNumber(tx, dto.classArmId, options?.admissionYearOverride);
@@ -157,7 +157,7 @@ export class StudentService {
     // Emails go out only after the transaction commits — a failed send
     // shouldn't roll back a real student/guardian record.
     for (const invite of pendingInvites) {
-      await this.invitationService.sendInviteEmail(invite.email, invite.rawToken);
+      await this.invitationService.sendInviteEmail(invite.email, invite.rawToken, invite.invitedRole);
     }
 
     return student;
@@ -204,7 +204,7 @@ export class StudentService {
   private async resolveGuardian(
     tx: Tx,
     guardian: GuardianInputDto,
-    pendingInvites: { email: string; rawToken: string }[],
+    pendingInvites: { email: string; rawToken: string; invitedRole: Role }[],
   ): Promise<string> {
     if (guardian.existingParentProfileId) {
       const existing = await tx.parentProfile.findUnique({
@@ -245,7 +245,7 @@ export class StudentService {
       lastName: guardian.lastName,
       invitedRole: Role.PARENT,
     });
-    pendingInvites.push({ email: invitation.email, rawToken });
+    pendingInvites.push({ email: invitation.email, rawToken, invitedRole: invitation.invitedRole });
 
     if (guardian.phone || guardian.address) {
       if (guardian.phone) await tx.user.update({ where: { id: userId }, data: { phone: guardian.phone } });
@@ -274,7 +274,7 @@ export class StudentService {
    * arm.
    */
   async update(id: string, dto: UpdateStudentDto) {
-    const pendingInvites: { email: string; rawToken: string }[] = [];
+    const pendingInvites: { email: string; rawToken: string; invitedRole: Role }[] = [];
 
     await this.prisma.$transaction(async (tx) => {
       const existing = await tx.studentProfile.findUniqueOrThrow({
@@ -325,7 +325,7 @@ export class StudentService {
 
     // Same as create(): emails go out only after the transaction commits.
     for (const invite of pendingInvites) {
-      await this.invitationService.sendInviteEmail(invite.email, invite.rawToken);
+      await this.invitationService.sendInviteEmail(invite.email, invite.rawToken, invite.invitedRole);
     }
 
     return this.prisma.studentProfile.findUniqueOrThrow({
@@ -353,7 +353,7 @@ export class StudentService {
     studentId: string,
     current: { id: string; parentId: string }[],
     incoming: GuardianInputDto[],
-    pendingInvites: { email: string; rawToken: string }[],
+    pendingInvites: { email: string; rawToken: string; invitedRole: Role }[],
   ): Promise<void> {
     const incomingParentIds = new Set(
       incoming.map((g) => g.existingParentProfileId).filter((id): id is string => !!id),

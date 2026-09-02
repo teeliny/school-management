@@ -105,7 +105,7 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
   it("inline-invites a brand-new guardian and sends the email after commit", async () => {
     tx.user.findUnique.mockResolvedValueOnce(null); // no existing user for that email
     invitationService.createInTx.mockResolvedValueOnce({
-      invitation: { email: "new-parent@example.com" },
+      invitation: { email: "new-parent@example.com", invitedRole: Role.PARENT },
       rawToken: "raw-token-123",
       userId: "invited-user-1",
     });
@@ -131,6 +131,7 @@ describe("StudentService.create — guardian resolution (PRD FR1.3/FR1.5)", () =
     expect(invitationService.sendInviteEmail).toHaveBeenCalledWith(
       "new-parent@example.com",
       "raw-token-123",
+      Role.PARENT,
     );
   });
 });

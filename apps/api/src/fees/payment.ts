@@ -83,6 +83,34 @@ export class PaymentService {
   }
 
   /**
+   * A student must clear every earlier term's invoice before a payment can
+   * be started against a later one — "earlier" is derived from Term.startDate
+   * since terms have no explicit ordinal, and this holds across academic
+   * sessions too. Checked at payment-initiation only (recordCash,
+   * initiateGatewayCheckout, submitManualBankTransfer), not at
+   * resolution/approval (resolveGatewayOutcome, approveManualBankTransfer) —
+   * those finalize a payment already permitted at submission time.
+   */
+  private async assertNoEarlierUnsettledInvoice(studentId: string, termStartDate: Date): Promise<void> {
+    const earlierInvoices = await this.prisma.invoice.findMany({
+      where: { studentId, term: { startDate: { lt: termStartDate } } },
+      include: { lineItems: true, payments: true },
+    });
+
+    const hasUnsettled = earlierInvoices.some((invoice) => {
+      const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
+      const successfulPaymentAmounts = invoice.payments
+        .filter((p) => p.status === PaymentStatus.SUCCESSFUL)
+        .map((p) => Number(p.amount));
+      return computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts) > 0;
+    });
+
+    if (hasUnsettled) {
+      throw new BadRequestException("This student has an unsettled invoice from an earlier term — settle it before paying a later term's invoice");
+    }
+  }
+
+  /**
    * PRD §3.9: "CASH is recorded by the Bursar and takes effect immediately
    * (SUCCESSFUL) — the Bursar witnessed the payment directly." No
    * assignment-type scoping is needed here (unlike Attendance's per-student-
@@ -97,9 +125,11 @@ export class PaymentService {
       include: {
         lineItems: true,
         payments: true,
+        term: true,
         student: { include: { user: true, guardians: { include: { parent: true } } } },
       },
     });
+    await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
     const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
     const paidAt = new Date();
@@ -166,8 +196,9 @@ export class PaymentService {
   async initiateGatewayCheckout(dto: InitiateGatewayCheckoutDto, user: RequestUser, ability: AppAbility): Promise<{ checkoutUrl: string }> {
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: dto.invoiceId },
-      include: { lineItems: true, payments: true, student: { include: { guardians: true } } },
+      include: { lineItems: true, payments: true, term: true, student: { include: { guardians: true } } },
     });
+    await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
     if (!ability.can("manage", "Invoice")) {
       const parentProfile = user.roles.includes("PARENT")
@@ -331,8 +362,9 @@ export class PaymentService {
   async submitManualBankTransfer(dto: SubmitManualBankTransferDto, file: Express.Multer.File, user: RequestUser) {
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: dto.invoiceId },
-      include: { lineItems: true, payments: true },
+      include: { lineItems: true, payments: true, term: true },
     });
+    await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
     const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
     const successfulPaymentAmounts = invoice.payments.filter((p) => p.status === PaymentStatus.SUCCESSFUL).map((p) => Number(p.amount));
