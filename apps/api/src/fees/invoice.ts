@@ -172,7 +172,7 @@ export class InvoiceService {
           feeStructureId: null,
           type: "FEE",
           amount: input.amount,
-          description: input.description ?? "Opening balance – migrated from previous system",
+          description: input.description ?? "Opening balance – outstanding from previous term",
         },
       });
       return invoice;
