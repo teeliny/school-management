@@ -14,14 +14,16 @@ import { TermManager } from "../../components/organisms/term-manager";
 import { ClassLevelManager } from "../../components/organisms/class-level-manager";
 import { ClassArmManager } from "../../components/organisms/class-arm-manager";
 import { DepartmentManager } from "../../components/organisms/department-manager";
+import { SchoolEventManager } from "../../components/organisms/school-event-manager";
 
-type TabKey = "sessions" | "terms" | "class-levels" | "arms";
-const TAB_KEYS: TabKey[] = ["sessions", "terms", "class-levels", "arms"];
+type TabKey = "sessions" | "terms" | "class-levels" | "arms" | "events";
+const TAB_KEYS: TabKey[] = ["sessions", "terms", "class-levels", "arms", "events"];
 const TAB_LABEL: Record<TabKey, string> = {
   sessions: "Academic Sessions",
   terms: "Terms",
   "class-levels": "Class Levels & Departments",
   arms: "Class Arms",
+  events: "School Events",
 };
 
 export default function AcademicStructurePage() {
@@ -108,6 +110,12 @@ function AcademicStructurePageInner() {
         <TabsContent value="arms">
           <CollapsibleCard title="Class arms">
             <ClassArmManager />
+          </CollapsibleCard>
+        </TabsContent>
+
+        <TabsContent value="events">
+          <CollapsibleCard title="School events" sub="Clubs Day, Inter-house Sports, excursions — shown to every user on the Calendar">
+            <SchoolEventManager />
           </CollapsibleCard>
         </TabsContent>
       </Tabs>

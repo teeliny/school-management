@@ -6,6 +6,7 @@ import { ClassLevelController, ClassLevelService } from "./class-level";
 import { ClassArmController, ClassArmService } from "./class-arm";
 import { DepartmentController, DepartmentService } from "./department";
 import { StudentDepartmentController, StudentDepartmentService } from "./student-department";
+import { SchoolEventController, SchoolEventService } from "./school-event";
 
 @Module({
   controllers: [
@@ -16,6 +17,7 @@ import { StudentDepartmentController, StudentDepartmentService } from "./student
     ClassArmController,
     DepartmentController,
     StudentDepartmentController,
+    SchoolEventController,
   ],
   providers: [
     SchoolProfileService,
@@ -25,6 +27,7 @@ import { StudentDepartmentController, StudentDepartmentService } from "./student
     ClassArmService,
     DepartmentService,
     StudentDepartmentService,
+    SchoolEventService,
   ],
   exports: [SchoolProfileService, AcademicSessionService],
 })

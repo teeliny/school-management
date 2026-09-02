@@ -16,8 +16,11 @@ type CalendarEntryType =
   | "ASSESSMENT_OPEN"
   | "ASSESSMENT_CLOSE"
   | "ASSESSMENT_PUBLISH"
+  | "EXAM_PERIOD"
   | "REPORT_WINDOW_OPEN"
-  | "REPORT_WINDOW_CLOSE";
+  | "REPORT_WINDOW_CLOSE"
+  | "HOLIDAY"
+  | "SCHOOL_EVENT";
 
 interface CalendarEntry {
   type: CalendarEntryType;
@@ -32,9 +35,21 @@ const TYPE_VARIANT: Record<CalendarEntryType, BadgeVariant> = {
   ASSESSMENT_OPEN: "success",
   ASSESSMENT_CLOSE: "warning",
   ASSESSMENT_PUBLISH: "info",
+  EXAM_PERIOD: "warning",
   REPORT_WINDOW_OPEN: "success",
   REPORT_WINDOW_CLOSE: "warning",
+  HOLIDAY: "muted",
+  SCHOOL_EVENT: "info",
 };
+
+// PRD §3.11: visibility is the same GET /calendar response for everyone —
+// which types are worth *showing* by default is deliberately a frontend
+// decision. ASSESSMENT_OPEN/CLOSE and REPORT_WINDOW_OPEN/CLOSE are the
+// staff-facing input-window mechanics (when a subject/class teacher may key
+// in scores or comments); a parent/student doesn't act on those and doesn't
+// need them — they get the publish date and the actual EXAM_PERIOD (when the
+// mid-term/exam is sat) instead. Staff/Admin see everything.
+const STAFF_ONLY_TYPES: CalendarEntryType[] = ["ASSESSMENT_OPEN", "ASSESSMENT_CLOSE", "REPORT_WINDOW_OPEN", "REPORT_WINDOW_CLOSE"];
 
 function toDateInputValue(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -62,17 +77,22 @@ export default function CalendarPage() {
     load();
   }, [load]);
 
+  const isStaffOrAdmin = user
+    ? user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") || user.roles.includes("STAFF")
+    : false;
+
   const groups = useMemo(() => {
     if (!entries) return [];
+    const visible = isStaffOrAdmin ? entries : entries.filter((entry) => !STAFF_ONLY_TYPES.includes(entry.type));
     const byDate = new Map<string, CalendarEntry[]>();
-    for (const entry of entries) {
+    for (const entry of visible) {
       const key = entry.date.slice(0, 10);
       const list = byDate.get(key) ?? [];
       list.push(entry);
       byDate.set(key, list);
     }
     return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [entries]);
+  }, [entries, isStaffOrAdmin]);
 
   if (loading) {
     return <PageLoadingSkeleton />;
@@ -84,7 +104,14 @@ export default function CalendarPage() {
       <Letterhead eyebrow="Assessment · Calendar" title="Calendar" />
 
       <Card>
-        <CardHeader title="Upcoming dates" sub="Term boundaries, assessment windows, and report windows" />
+        <CardHeader
+          title="Upcoming dates"
+          sub={
+            isStaffOrAdmin
+              ? "Term boundaries, assessment/report input windows and publish dates, exam periods, public holidays, and school events"
+              : "Term boundaries, exam dates, result publish dates, public holidays, and school events"
+          }
+        />
 
         <div className="mb-4 grid grid-cols-2 gap-3">
           <div>

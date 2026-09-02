@@ -12,6 +12,9 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
       [{ id: "term-1", name: "First Term", startDate: BEFORE_RANGE, endDate: IN_RANGE }],
       [],
       [],
+      [],
+      [],
+      [],
       FROM,
       TO,
     );
@@ -24,6 +27,9 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
   it("excludes a Term entirely outside the query range", () => {
     const entries = buildCalendarEntries(
       [{ id: "term-1", name: "Next Term", startDate: AFTER_RANGE, endDate: AFTER_RANGE }],
+      [],
+      [],
+      [],
       [],
       [],
       FROM,
@@ -47,6 +53,9 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
           publishAt: AFTER_RANGE,
         },
       ],
+      [],
+      [],
+      [],
       [],
       FROM,
       TO,
@@ -75,6 +84,9 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
           inputClosesAt: AFTER_RANGE,
         },
       ],
+      [],
+      [],
+      [],
       FROM,
       TO,
     );
@@ -86,6 +98,70 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
         date: IN_RANGE,
         meta: { windowId: "window-1", termId: "term-1", classLevelCategory: "JSS" },
       },
+    ]);
+  });
+
+  it("includes a holiday whose date falls in range and excludes one that doesn't", () => {
+    const entries = buildCalendarEntries(
+      [],
+      [],
+      [],
+      [
+        { id: "holiday-1", name: "Independence Day", date: IN_RANGE },
+        { id: "holiday-2", name: "Next year's holiday", date: AFTER_RANGE },
+      ],
+      [],
+      [],
+      FROM,
+      TO,
+    );
+
+    expect(entries).toEqual([
+      { type: "HOLIDAY", title: "Independence Day", date: IN_RANGE, meta: { holidayId: "holiday-1" } },
+    ]);
+  });
+
+  it("includes a single-day school event by its date, and a multi-day one whose range overlaps the query range", () => {
+    const entries = buildCalendarEntries(
+      [],
+      [],
+      [],
+      [],
+      [
+        { id: "event-1", name: "Clubs Day", date: IN_RANGE, endDate: null },
+        { id: "event-2", name: "Excursion", date: BEFORE_RANGE, endDate: IN_RANGE },
+        { id: "event-3", name: "Next term's sports day", date: AFTER_RANGE, endDate: null },
+      ],
+      [],
+      FROM,
+      TO,
+    );
+
+    expect(entries).toEqual([
+      { type: "SCHOOL_EVENT", title: "Excursion", date: BEFORE_RANGE, endDate: IN_RANGE, meta: { eventId: "event-2" } },
+      { type: "SCHOOL_EVENT", title: "Clubs Day", date: IN_RANGE, meta: { eventId: "event-1" } },
+    ]);
+  });
+
+  it("includes an exam period whose min/max range overlaps the query range, omitting endDate when every slot lands on one day", () => {
+    const entries = buildCalendarEntries(
+      [],
+      [],
+      [],
+      [],
+      [],
+      [
+        { componentId: "comp-1", name: "Mid-Term Test", minDate: BEFORE_RANGE, maxDate: IN_RANGE },
+        { componentId: "comp-2", name: "Clubs Day quiz", minDate: IN_RANGE, maxDate: IN_RANGE },
+        { componentId: "comp-3", name: "Next term's exam", minDate: AFTER_RANGE, maxDate: AFTER_RANGE },
+      ],
+      FROM,
+      TO,
+    );
+
+    expect(entries).toEqual([
+      { type: "EXAM_PERIOD", title: "Mid-Term Test", date: BEFORE_RANGE, endDate: IN_RANGE, meta: { componentId: "comp-1" } },
+      { type: "EXAM_PERIOD", title: "Clubs Day quiz", date: IN_RANGE, meta: { componentId: "comp-2" } },
     ]);
   });
 
@@ -107,6 +183,9 @@ describe("buildCalendarEntries (PRD §3.11 read-aggregation)", () => {
         },
       ],
       [{ id: "window-1", termId: "term-1", classLevelCategory: "JSS", inputOpensAt: earlier, inputClosesAt: earlier }],
+      [],
+      [],
+      [],
       FROM,
       TO,
     );

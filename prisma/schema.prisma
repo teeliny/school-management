@@ -175,6 +175,7 @@ model AcademicSession {
   timetableSlots            TimetableSlot[]
   skillAssessmentItems      SkillAssessmentItem[]
   schoolHolidays            SchoolHoliday[]
+  schoolEvents              SchoolEvent[]
   feeStructures             FeeStructure[]
 
   @@map("academic_sessions")
@@ -200,6 +201,7 @@ model Term {
   reportComments             ReportComment[]
   classSubjectTermStatuses   ClassSubjectTermStatus[]
   schoolHolidays             SchoolHoliday[]
+  schoolEvents               SchoolEvent[]
   feeStructures              FeeStructure[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
   invoices                   Invoice[]
@@ -1404,6 +1406,29 @@ model SchoolHoliday {
   createdAt         DateTime         @default(now())
 
   @@map("school_holidays")
+}
+
+// A school-wide activity that isn't a class-scheduling concept (Clubs Day,
+// Inter-house Sports, an excursion) and so has no owning table for the
+// Academic Calendar (§3.11) to aggregate from the way it does for
+// Term/AssessmentComponent/ReportWindow — unlike those, this *is* the source
+// of truth for its own dates, same shape as SchoolHoliday (optional
+// session/term scoping, school-wide by default). `endDate` is optional and
+// only set for a multi-day event (an excursion spanning two days); a
+// single-day activity (Clubs Day) just omits it, same as leaving it null.
+model SchoolEvent {
+  id                String           @id @default(uuid())
+  name              String
+  description       String?
+  date              DateTime         @db.Date
+  endDate           DateTime?        @db.Date
+  academicSessionId String?
+  academicSession   AcademicSession? @relation(fields: [academicSessionId], references: [id])
+  termId            String?
+  term              Term?            @relation(fields: [termId], references: [id])
+  createdAt         DateTime         @default(now())
+
+  @@map("school_events")
 }
 
 enum AttendanceSessionType {

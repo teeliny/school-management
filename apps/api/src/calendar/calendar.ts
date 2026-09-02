@@ -1,7 +1,7 @@
 import { BadRequestException, Controller, Get, Injectable, Query, UseGuards } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
-import { buildCalendarEntries } from "./calendar.util";
+import { buildCalendarEntries, type CalendarComponentScheduleInput } from "./calendar.util";
 
 @Injectable()
 export class CalendarService {
@@ -14,7 +14,7 @@ export class CalendarService {
    * here.
    */
   async getEvents(from: Date, to: Date) {
-    const [terms, components, windows] = await Promise.all([
+    const [terms, components, windows, holidays, schoolEvents, examScheduleGroups] = await Promise.all([
       this.prisma.term.findMany({ where: { startDate: { lte: to }, endDate: { gte: from } } }),
       this.prisma.assessmentComponent.findMany({
         where: {
@@ -30,9 +30,36 @@ export class CalendarService {
           OR: [{ inputOpensAt: { gte: from, lte: to } }, { inputClosesAt: { gte: from, lte: to } }],
         },
       }),
+      this.prisma.schoolHoliday.findMany({ where: { date: { gte: from, lte: to } } }),
+      this.prisma.schoolEvent.findMany({
+        where: { date: { lte: to }, OR: [{ endDate: null, date: { gte: from } }, { endDate: { gte: from } }] },
+      }),
+      // Not date-range-filtered here — a component's full min/max exam
+      // period is computed first, then the same overlap check as Term is
+      // applied in buildCalendarEntries, so a query window that only covers
+      // part of an exam period doesn't truncate the range shown.
+      this.prisma.examSchedule.groupBy({
+        by: ["assessmentComponentId"],
+        where: { approvalStatus: "APPROVED" },
+        _min: { date: true },
+        _max: { date: true },
+      }),
     ]);
 
-    return buildCalendarEntries(terms, components, windows, from, to);
+    const scheduleComponents = examScheduleGroups.length
+      ? await this.prisma.assessmentComponent.findMany({
+          where: { id: { in: examScheduleGroups.map((g) => g.assessmentComponentId) } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const examSchedules: CalendarComponentScheduleInput[] = examScheduleGroups.map((group) => ({
+      componentId: group.assessmentComponentId,
+      name: scheduleComponents.find((c) => c.id === group.assessmentComponentId)?.name ?? "Exam",
+      minDate: group._min.date as Date,
+      maxDate: group._max.date as Date,
+    }));
+
+    return buildCalendarEntries(terms, components, windows, holidays, schoolEvents, examSchedules, from, to);
   }
 }
 
