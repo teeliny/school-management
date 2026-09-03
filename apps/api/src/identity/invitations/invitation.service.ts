@@ -38,6 +38,7 @@ export interface CreateInvitationInput {
   lastName: string;
   invitedRole: Role;
   staffCategory?: StaffCategory;
+  phone?: string;
   invitedByUserId?: string | null;
 }
 
@@ -92,8 +93,13 @@ export class InvitationService {
     let user = await tx.user.findUnique({ where: { email } });
     if (!user) {
       user = await tx.user.create({
-        data: { email, firstName: input.firstName, lastName: input.lastName },
+        data: { email, firstName: input.firstName, lastName: input.lastName, phone: input.phone },
       });
+    } else if (input.phone !== undefined) {
+      // Re-invite of an existing User gaining another role (FR1.5) — the
+      // create branch above is skipped entirely, so a phone typed on *this*
+      // invite would otherwise be silently dropped instead of applied.
+      user = await tx.user.update({ where: { id: user.id }, data: { phone: input.phone } });
     }
 
     await this.ensureProfileShell(

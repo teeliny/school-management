@@ -34,8 +34,17 @@ export class StaffProfileService {
     return this.prisma.staffProfile.findUnique({ where: { userId } });
   }
 
-  update(id: string, dto: UpdateStaffProfileDto) {
-    return this.prisma.staffProfile.update({ where: { id }, data: dto });
+  // `phone` lives on User, not StaffProfile — same split-write pattern as
+  // ParentProfileService.update.
+  async update(id: string, dto: UpdateStaffProfileDto) {
+    const { phone, ...profileFields } = dto;
+    return this.prisma.$transaction(async (tx) => {
+      const profile = await tx.staffProfile.update({ where: { id }, data: profileFields });
+      if (phone !== undefined) {
+        await tx.user.update({ where: { id: profile.userId }, data: { phone } });
+      }
+      return tx.staffProfile.findUniqueOrThrow({ where: { id }, include: { user: true } });
+    });
   }
 }
 
@@ -73,9 +82,14 @@ export class StaffProfileController {
   ) {
     const profile = await this.service.findOne(id);
     const ability = this.abilityFactory.createForUser(user);
-    if (!ability.can("manage", "StaffProfile") && profile.userId !== user.id) {
+    const canManage = ability.can("manage", "StaffProfile");
+    if (!canManage && profile.userId !== user.id) {
       throw new ForbiddenException("Insufficient permissions");
     }
-    return this.service.update(id, dto);
+    // A self-service edit (no "manage" grant) may only change contact info
+    // — employeeId/staffCategory/department/employmentDate/qualification/
+    // status are Admin/Super-Admin HR data and stay out of reach even
+    // though the ownership check above lets the request through.
+    return this.service.update(id, canManage ? dto : { phone: dto.phone });
   }
 }

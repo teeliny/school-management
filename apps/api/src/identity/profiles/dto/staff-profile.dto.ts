@@ -27,4 +27,12 @@ export class UpdateStaffProfileDto {
   @IsOptional()
   @IsEnum(StaffStatus)
   status?: StaffStatus;
+
+  // Lives on User, not StaffProfile — see StaffProfileService.update. Also
+  // the only field a self-service edit (StaffProfileController.update,
+  // caller editing their own profile without a "manage" grant) is allowed
+  // to change — every other field above is Admin/Super-Admin HR data.
+  @IsOptional()
+  @IsString()
+  phone?: string;
 }

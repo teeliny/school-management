@@ -26,6 +26,7 @@ export function InvitePersonForm({ isSuperAdmin, onInvited }: InvitePersonFormPr
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [role, setRole] = useState<InvitableRole>("STAFF");
   const [staffCategory, setStaffCategory] = useState<StaffCategory>("TEACHING");
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export function InvitePersonForm({ isSuperAdmin, onInvited }: InvitePersonFormPr
           lastName,
           email,
           invitedRole: role,
+          ...(phone.trim() ? { phone: phone.trim() } : {}),
           ...(role === "STAFF" ? { staffCategory } : {}),
         },
       });
@@ -53,6 +55,7 @@ export function InvitePersonForm({ isSuperAdmin, onInvited }: InvitePersonFormPr
       setFirstName("");
       setLastName("");
       setEmail("");
+      setPhone("");
       onInvited?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -87,6 +90,13 @@ export function InvitePersonForm({ isSuperAdmin, onInvited }: InvitePersonFormPr
         required
         value={email}
         onChange={(e) => setEmail(e.target.value)}
+      />
+      <FormField
+        label="Phone (optional)"
+        id="invite-phone"
+        type="tel"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
       />
 
       <div>

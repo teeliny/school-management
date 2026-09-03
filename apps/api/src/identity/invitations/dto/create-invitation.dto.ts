@@ -29,4 +29,8 @@ export class CreateInvitationDto {
   @IsOptional()
   @IsEnum(StaffCategory)
   staffCategory?: StaffCategory;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
 }
