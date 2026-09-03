@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { InjectQueue } from "@nestjs/bullmq";
+import { randomBytes } from "node:crypto";
 import { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import { memoryStorage } from "multer";
@@ -217,14 +218,15 @@ export class PaymentService {
       throw new BadRequestException("This invoice has no outstanding balance");
     }
 
-    // Generated once per invoice, reused across retries (PRD §3.9's literal
-    // "unique per invoice" wording, not per-attempt) — re-clicking "pay"
-    // after an abandoned/expired checkout link reuses the same reference
-    // rather than minting a new one each time.
-    const reference = invoice.gatewayPaymentReference ?? `INV-${invoice.id}-${Date.now()}`;
-    if (!invoice.gatewayPaymentReference) {
-      await this.prisma.invoice.update({ where: { id: invoice.id }, data: { gatewayPaymentReference: reference } });
-    }
+    // A fresh reference is minted on every checkout attempt, never reused
+    // (PRD §3.9) — Paystack's transaction/initialize permanently rejects a
+    // reference it has seen before, even from an abandoned/incomplete prior
+    // attempt, so reusing one across retries locks the parent out after the
+    // first attempt. Only the current/live reference needs to resolve later:
+    // resolveGatewayOutcome matches by invoiceId + PENDING + provider, not
+    // by reference, and webhook/reconciliation both read the live value.
+    const reference = `INV-${invoice.id}-${Date.now()}-${randomBytes(4).toString("hex")}`;
+    await this.prisma.invoice.update({ where: { id: invoice.id }, data: { gatewayPaymentReference: reference } });
 
     const provider = this.activeProvider();
     const existingPending = invoice.payments.find((p) => p.status === PaymentStatus.PENDING && p.gatewayProvider === provider);

@@ -10,6 +10,7 @@ import {
   Prisma,
   Role,
   StaffCategory,
+  UserStatus,
 } from "@prisma/client";
 import * as argon2 from "argon2";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -176,11 +177,39 @@ export class InvitationService {
   }
 
   /**
-   * PRD FR1.2/§3.1a: single-use accept flow. Validates the token, sets the
-   * password, activates the User, grants the invited role, and marks the
-   * Invitation ACCEPTED — all inside one transaction.
+   * Public: lets the accept-invite page decide whether to show a "choose a
+   * password" field at all. `alreadyActiveAccount` is true for a second
+   * invitation gaining an additional role (FR1.5, e.g. a Staff member also
+   * becoming a Parent) — that user already has a working password and
+   * doesn't need (or expect) to be asked to replace it.
    */
-  async accept(rawToken: string, password: string) {
+  async peek(rawToken: string): Promise<{
+    email: string;
+    invitedRole: Role;
+    status: InvitationStatus;
+    alreadyActiveAccount: boolean;
+  }> {
+    const invitation = await this.findByRawToken(rawToken);
+    if (!invitation) throw new NotFoundException("Invitation not found");
+    const user = await this.userService.findByEmail(invitation.email);
+    return {
+      email: invitation.email,
+      invitedRole: invitation.invitedRole,
+      status: invitation.status,
+      alreadyActiveAccount: user?.status === UserStatus.active,
+    };
+  }
+
+  /**
+   * PRD FR1.2/§3.1a: single-use accept flow. Validates the token, activates
+   * the User, grants the invited role, and marks the Invitation ACCEPTED —
+   * all inside one transaction. `password` is only used (and required) for a
+   * brand-new invited User with no password yet; an already-active User
+   * accepting a second invitation (FR1.5) just gains the new role — its
+   * existing password and sessions are never touched, since this is "accept
+   * a role," not "reset my credentials" (that's forgotPassword/resetPassword).
+   */
+  async accept(rawToken: string, password?: string) {
     const tokenHash = hashToken(rawToken);
     const invitation = await this.prisma.invitation.findUnique({
       where: { tokenHash },
@@ -196,8 +225,6 @@ export class InvitationService {
       throw new BadRequestException("Invitation has expired");
     }
 
-    const passwordHash = await argon2.hash(password);
-
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({
         where: { email: invitation.email },
@@ -205,10 +232,18 @@ export class InvitationService {
       if (!user)
         throw new NotFoundException("No account found for this invitation");
 
-      await tx.user.update({
-        where: { id: user.id },
-        data: { passwordHash, status: "active" },
-      });
+      if (user.status !== UserStatus.active) {
+        if (!password) {
+          throw new BadRequestException(
+            "Password is required to set up a new account",
+          );
+        }
+        const passwordHash = await argon2.hash(password);
+        await tx.user.update({
+          where: { id: user.id },
+          data: { passwordHash, status: UserStatus.active },
+        });
+      }
 
       const existingRole = await tx.userRole.findFirst({
         where: { userId: user.id, role: invitation.invitedRole },

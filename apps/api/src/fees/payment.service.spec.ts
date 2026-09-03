@@ -359,20 +359,23 @@ describe("PaymentService.initiateGatewayCheckout (PRD FR7.3)", () => {
 
     expect(prisma.invoice.update).toHaveBeenCalledWith({
       where: { id: "invoice-1" },
-      data: { gatewayPaymentReference: expect.stringMatching(/^INV-invoice-1-\d+$/) },
+      data: { gatewayPaymentReference: expect.stringMatching(/^INV-invoice-1-\d+-[0-9a-f]{8}$/) },
     });
   });
 
-  it("reuses an existing gatewayPaymentReference across retries instead of minting a new one", async () => {
-    prisma.invoice.findUniqueOrThrow.mockResolvedValue(buildInvoice({ gatewayPaymentReference: "INV-invoice-1-100" }));
+  it("mints and persists a fresh gatewayPaymentReference on every checkout attempt, even when one already exists", async () => {
+    prisma.invoice.findUniqueOrThrow.mockResolvedValue(buildInvoice({ gatewayPaymentReference: "INV-invoice-1-100-aabbccdd" }));
     const ability = abilityFactory.createForUser(PARENT);
 
     await service.initiateGatewayCheckout({ invoiceId: "invoice-1" }, PARENT, ability);
 
-    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).toHaveBeenCalledWith({
+      where: { id: "invoice-1" },
+      data: { gatewayPaymentReference: expect.stringMatching(/^INV-invoice-1-\d+-[0-9a-f]{8}$/) },
+    });
     expect(adapter.initTransaction).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ reference: "INV-invoice-1-100" }),
+      expect.objectContaining({ reference: expect.not.stringMatching("INV-invoice-1-100-aabbccdd") }),
     );
   });
 

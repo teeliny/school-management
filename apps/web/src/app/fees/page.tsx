@@ -27,6 +27,20 @@ const TAB_LABEL: Record<TabKey, string> = {
   history: "Payment History",
 };
 
+// Shared between the rendered TabsList and the default-tab computation below
+// so the two can never disagree — a hardcoded default that isn't actually in
+// this list (e.g. "generate" for a Parent, who never gets that tab) leaves
+// Radix's controlled Tabs with a value matching no trigger: nothing selected,
+// no content shown.
+function visibleTabKeys(canManageFees: boolean, isSuperAdmin: boolean, isParent: boolean): TabKey[] {
+  return TAB_KEYS.filter(
+    (key) =>
+      (!["generate", "structures", "gateway"].includes(key) || canManageFees) &&
+      (key !== "approvals" || isSuperAdmin) &&
+      (!["invoices", "history"].includes(key) || canManageFees || isParent),
+  );
+}
+
 export default function FeesPage() {
   return (
     <Suspense fallback={null}>
@@ -49,22 +63,26 @@ function FeesPageInner() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
 
-  const initialTab = (searchParams.get("tab") as TabKey | null) ?? (studentId ? "invoices" : "generate");
-  const [tab, setTab] = useState<TabKey>(TAB_KEYS.includes(initialTab) ? initialTab : "generate");
+  // PRD §5: the fees domain is Bursar/Super-Admin only — deliberately NOT
+  // the generic isAdmin helper other pages use, since a plain Admin has zero
+  // visibility into Fees. Computed with `!!user &&` since these run before
+  // the loading/user-null early returns below (hooks must run unconditionally).
+  const canManageFees = !!user && (user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("BURSAR"));
+  const isParent = !!user && user.roles.includes("PARENT");
+  // Narrower than canManageFees — approve/reject is Super-Admin only (a
+  // manual role check on the backend, not a CASL grant Bursar also has).
+  const isSuperAdmin = !!user && user.roles.includes("SUPER_ADMIN");
+  const visibleTabs = visibleTabKeys(canManageFees, isSuperAdmin, isParent);
+
+  const requestedTab = searchParams.get("tab") as TabKey | null;
+  const defaultTab: TabKey = studentId && visibleTabs.includes("invoices") ? "invoices" : (visibleTabs[0] ?? "invoices");
+  const initialTab = requestedTab && visibleTabs.includes(requestedTab) ? requestedTab : defaultTab;
+  const [tab, setTab] = useState<TabKey>(initialTab);
 
   if (loading) {
     return <PageLoadingSkeleton />;
   }
   if (!user) return null;
-
-  // PRD §5: the fees domain is Bursar/Super-Admin only — deliberately NOT
-  // the generic isAdmin helper other pages use, since a plain Admin has zero
-  // visibility into Fees.
-  const canManageFees = user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("BURSAR");
-  const isParent = user.roles.includes("PARENT");
-  // Narrower than canManageFees — approve/reject is Super-Admin only (a
-  // manual role check on the backend, not a CASL grant Bursar also has).
-  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
 
   if (!canManageFees && !isParent) {
     return (
@@ -88,12 +106,7 @@ function FeesPageInner() {
 
       <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
         <TabsList>
-          {TAB_KEYS.filter(
-            (key) =>
-              (!["generate", "structures", "gateway"].includes(key) || canManageFees) &&
-              (key !== "approvals" || isSuperAdmin) &&
-              (!["invoices", "history"].includes(key) || canManageFees || isParent),
-          ).map((key) => (
+          {visibleTabs.map((key) => (
             <TabsTrigger key={key} value={key}>
               {TAB_LABEL[key]}
             </TabsTrigger>

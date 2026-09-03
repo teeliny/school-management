@@ -356,10 +356,11 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
 
     expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          status: TermReportCardStatus.PUBLISHED,
-          student: { guardians: { some: { parentId: "parent-1" } } },
-        }),
+        // Each role's scoping condition is OR'd together rather than merged
+        // into one object — necessary so a user holding multiple roles (e.g.
+        // Staff who is also a Parent) sees the union of what each role can
+        // see, not just whichever branch ran last.
+        where: { OR: [{ status: TermReportCardStatus.PUBLISHED, student: { guardians: { some: { parentId: "parent-1" } } } }] },
       }),
     );
   });
@@ -383,7 +384,7 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
 
     expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ studentId: "student-1", status: TermReportCardStatus.PUBLISHED }),
+        where: { OR: [{ studentId: "student-1", status: TermReportCardStatus.PUBLISHED }] },
       }),
     );
   });
@@ -397,7 +398,7 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
 
     expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ student: { currentClassId: { in: ["arm-1", "arm-2"] } } }),
+        where: { OR: [{ student: { currentClassId: { in: ["arm-1", "arm-2"] } } }] },
       }),
     );
     // Unlike parent/student, staff isn't restricted to PUBLISHED-only.
@@ -425,7 +426,7 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
 
     expect(staffAssignments.activeAssignedClassArmIds).not.toHaveBeenCalled();
     expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: {} }),
+      expect.objectContaining({ where: { OR: [{}] } }),
     );
   });
 });

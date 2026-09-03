@@ -12,6 +12,7 @@ interface InvitationPeek {
   email: string;
   invitedRole: string;
   status: string;
+  alreadyActiveAccount: boolean;
 }
 
 export function AcceptInviteForm() {
@@ -39,7 +40,8 @@ export function AcceptInviteForm() {
     setSubmitError(null);
     setSubmitting(true);
     try {
-      await apiFetch(`/invitations/${token}/accept`, { method: "POST", body: { password } });
+      const body = invitation?.alreadyActiveAccount ? {} : { password };
+      await apiFetch(`/invitations/${token}/accept`, { method: "POST", body });
       router.push("/login");
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -73,24 +75,37 @@ export function AcceptInviteForm() {
         size="lg"
         className="mx-auto mb-3.5"
       />
-      <h1 className="font-display mb-1 text-lg font-semibold">Set up your account</h1>
+      <h1 className="font-display mb-1 text-lg font-semibold">
+        {invitation.alreadyActiveAccount ? "Add a role to your account" : "Set up your account"}
+      </h1>
       <p className="mb-5 text-[11.5px] text-muted">
-        Accepting invitation for <strong>{invitation.email}</strong> as {invitation.invitedRole}
+        {invitation.alreadyActiveAccount ? (
+          <>
+            You already have an account for <strong>{invitation.email}</strong>. Accepting will add the{" "}
+            {invitation.invitedRole} role — your existing password stays the same.
+          </>
+        ) : (
+          <>
+            Accepting invitation for <strong>{invitation.email}</strong> as {invitation.invitedRole}
+          </>
+        )}
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-3.5 text-left">
         {submitError && <p className="text-sm text-danger">{submitError}</p>}
-        <FormField
-          label="Choose a password"
-          id="password"
-          type="password"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        {!invitation.alreadyActiveAccount && (
+          <FormField
+            label="Choose a password"
+            id="password"
+            type="password"
+            required
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        )}
         <Button type="submit" disabled={submitting} className="w-full justify-center">
-          {submitting ? "Setting up…" : "Accept invitation"}
+          {submitting ? "Working…" : "Accept invitation"}
         </Button>
       </form>
     </div>

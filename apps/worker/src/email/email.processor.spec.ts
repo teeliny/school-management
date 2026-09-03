@@ -1,7 +1,10 @@
 import { EmailProcessor } from "./email.processor";
 
 function buildPrismaMock() {
-  return { emailLog: { update: jest.fn() } };
+  return {
+    emailLog: { update: jest.fn() },
+    schoolProfile: { findFirst: jest.fn().mockResolvedValue(null) },
+  };
 }
 
 function buildConfigMock(apiKey: string | undefined) {
@@ -41,7 +44,16 @@ describe("EmailProcessor.process", () => {
 
     await processor.process({ data: jobData } as never);
 
-    expect(send).toHaveBeenCalledWith({ from: "no-reply@example.com", to: "a@b.com", subject: "Hi", html: "Body" });
+    expect(send).toHaveBeenCalledWith(
+      {
+        from: "Your School <no-reply@example.com>",
+        to: "a@b.com",
+        subject: "Hi",
+        html: expect.stringContaining("Body"),
+        text: expect.stringContaining("Body"),
+      },
+      { idempotencyKey: "log-1" },
+    );
     expect(prisma.emailLog.update).toHaveBeenCalledWith({
       where: { id: "log-1" },
       data: { status: "SENT", resendMessageId: "msg-123", sentAt: expect.any(Date) },

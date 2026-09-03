@@ -5,7 +5,6 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
   Patch,
   Post,
@@ -82,16 +81,10 @@ export class InvitationsController {
     return this.invitations.revoke(id);
   }
 
-  /** Public: lets the accept-invite page show who/what the invite is for before the user sets a password. */
+  /** Public: lets the accept-invite page show who/what the invite is for, and whether a password step is even needed. */
   @Get(":token")
   async peek(@Param("token") token: string) {
-    const invitation = await this.invitations.findByRawToken(token);
-    if (!invitation) throw new NotFoundException("Invitation not found");
-    return {
-      email: invitation.email,
-      invitedRole: invitation.invitedRole,
-      status: invitation.status,
-    };
+    return this.invitations.peek(token);
   }
 
   // No model — keyed by :token, not :id, and pre-account-creation (no

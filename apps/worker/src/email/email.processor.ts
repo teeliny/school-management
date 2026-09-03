@@ -59,19 +59,26 @@ export class EmailProcessor extends WorkerHost {
     }
 
     try {
-      await this.resend.emails.send({
-        from,
-        to: recipientEmail,
-        subject,
-        html,
-        text,
-      });
+      // idempotencyKey is stable across every BullMQ retry of this same job,
+      // so a retry caused by our side timing out on an already-successful
+      // send (e.g. a slow/cold-starting instance) is recognized by Resend as
+      // a duplicate and not actually re-sent.
+      const result = await this.resend.emails.send(
+        {
+          from,
+          to: recipientEmail,
+          subject,
+          html,
+          text,
+        },
+        { idempotencyKey: emailLogId },
+      );
 
       await this.prisma.emailLog.update({
         where: { id: emailLogId },
         data: {
           status: "SENT",
-          resendMessageId: "result.data?.id",
+          resendMessageId: result.data?.id,
           sentAt: new Date(),
         },
       });
