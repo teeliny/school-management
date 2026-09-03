@@ -130,7 +130,7 @@ function FeesPageInner() {
         {canManageFees && (
           <TabsContent value="gateway">
             <Card>
-              <CardHeader title="Payment gateway" sub="Read-only — credentials are set via env var + redeploy" />
+              <CardHeader title="Payment gateway" sub="Read-only — credentials are updated via the API, not this UI" />
               <PaymentGatewayConfigList />
             </Card>
           </TabsContent>

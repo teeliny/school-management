@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Injectable, Param, Patch, Post, UseGuards } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { ConfigService } from "@nestjs/config";
+import { Prisma, type PaymentGatewayProvider } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EnvelopeEncryptionService } from "../../common/crypto/envelope-encryption.service";
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
@@ -28,7 +29,18 @@ export class PaymentGatewayConfigService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly envelope: EnvelopeEncryptionService,
+    private readonly config: ConfigService,
   ) {}
+
+  // Same lookup/default as PaymentService.activeProvider (fees.module.ts's
+  // DI factory reads the same var to wire PAYMENT_GATEWAY_ADAPTER) —
+  // duplicated rather than shared since it's one line and the two services
+  // have no other reason to depend on each other. A PaymentGatewayConfig
+  // row's own `isActive` means "usable," not "this one" — this is the only
+  // thing that actually determines which provider new checkouts use.
+  activeProvider(): PaymentGatewayProvider {
+    return (this.config.get<string>("PAYMENT_GATEWAY_PROVIDER") ?? "MONNIFY") as PaymentGatewayProvider;
+  }
 
   create(dto: CreatePaymentGatewayConfigDto) {
     return this.prisma.paymentGatewayConfig.create({
@@ -88,6 +100,14 @@ export class PaymentGatewayConfigController {
   @CheckPolicies((ability) => ability.can("manage", "PaymentGatewayConfig"))
   findAll() {
     return this.service.findAll();
+  }
+
+  // Registered before ":id" — a literal segment must be matched first or
+  // Nest's router would treat "active-provider" as an :id lookup instead.
+  @Get("active-provider")
+  @CheckPolicies((ability) => ability.can("manage", "PaymentGatewayConfig"))
+  activeProvider() {
+    return { provider: this.service.activeProvider() };
   }
 
   @Get(":id")
