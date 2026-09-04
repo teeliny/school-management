@@ -27,6 +27,11 @@ interface TermOption {
   id: string;
   name: string;
 }
+interface ClassLevelOption {
+  id: string;
+  name: string;
+  category: ClassLevelCategory;
+}
 interface DepartmentOption {
   id: string;
   name: string;
@@ -51,6 +56,10 @@ interface TermStatus {
   termId: string;
   isActive: boolean;
 }
+interface LevelStatus {
+  classLevelId: string;
+  isActive: boolean;
+}
 interface ChildPeriodOverride {
   childSubjectId: string;
   periodsPerWeek: number;
@@ -64,6 +73,7 @@ interface ClassSubjectRow {
   concurrencyGroupId: string | null;
   subject: SubjectOption & { childSubjects: ChildSubject[] };
   termStatuses: TermStatus[];
+  levelStatuses: LevelStatus[];
   childPeriodOverrides: ChildPeriodOverride[];
 }
 interface RowEdit {
@@ -96,8 +106,13 @@ export function ClassSubjectAssignment() {
     queryKey: ["departments"],
     queryFn: () => apiFetch<DepartmentOption[]>("/departments", { auth: true }),
   });
+  const { data: classLevels = [] } = useQuery({
+    queryKey: ["class-levels"],
+    queryFn: () => apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }),
+  });
   const [concurrencyGroups, setConcurrencyGroups] = useState<ConcurrencyGroupOption[]>([]);
   const [classLevelCategory, setClassLevelCategory] = useState<ClassLevelCategory | "">("");
+  const [classLevelId, setClassLevelId] = useState("");
   const [academicSessionId, setAcademicSessionId] = useState("");
   const [termId, setTermId] = useState("");
   const [assigned, setAssigned] = useState<ClassSubjectRow[] | null>(null);
@@ -117,6 +132,12 @@ export function ClassSubjectAssignment() {
   useEffect(() => {
     setTermId("");
   }, [academicSessionId]);
+
+  useEffect(() => {
+    setClassLevelId("");
+  }, [classLevelCategory]);
+
+  const classLevelsInGroup = classLevels.filter((l) => l.category === classLevelCategory);
 
   const { data: terms = [] } = useQuery({
     queryKey: ["terms", academicSessionId],
@@ -305,11 +326,36 @@ export function ClassSubjectAssignment() {
     }
   }
 
+  // Unlike term status, level status is keyed by classSubjectId alone (no
+  // per-child subjectId) — a group subject and all its children share one
+  // classLevelCategory-wide assignment, so disabling it for one ClassLevel
+  // (e.g. "Nursery 1" within NURSERY) disables the whole row, children
+  // included, for that ClassLevel — see the model comment in schema.prisma.
+  function isActiveForClassLevel(row: ClassSubjectRow) {
+    if (!classLevelId) return true;
+    const status = row.levelStatuses.find((s) => s.classLevelId === classLevelId);
+    return status ? status.isActive : true;
+  }
+
+  async function toggleLevelStatus(row: ClassSubjectRow, currentlyActive: boolean) {
+    if (!classLevelId) return;
+    setError(null);
+    try {
+      await apiFetch(`/class-subjects/${row.id}/levels/${classLevelId}/${currentlyActive ? "disable" : "enable"}`, {
+        method: "PATCH",
+        auth: true,
+      });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update subject status for this class level");
+    }
+  }
+
   return (
     <div className="space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <Label htmlFor="cs-class-group">Class group</Label>
           <Select value={classLevelCategory} onValueChange={(v) => setClassLevelCategory(v as ClassLevelCategory)}>
@@ -320,6 +366,21 @@ export function ClassSubjectAssignment() {
               {CLASS_GROUPS.map((group) => (
                 <SelectItem key={group} value={group}>
                   {group}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor="cs-class-level">Class level (to disable a subject for just this one)</Label>
+          <Select value={classLevelId} onValueChange={setClassLevelId} disabled={!classLevelCategory}>
+            <SelectTrigger id="cs-class-level" className="mt-1">
+              <SelectValue placeholder={classLevelCategory ? "Select class level" : "Select a class group first"} />
+            </SelectTrigger>
+            <SelectContent>
+              {classLevelsInGroup.map((level) => (
+                <SelectItem key={level.id} value={level.id}>
+                  {level.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -392,7 +453,7 @@ export function ClassSubjectAssignment() {
       {assigned && (
         <>
           <div className="max-h-[420px] overflow-auto">
-            <table className="w-full min-w-[720px] text-left text-[12.5px]">
+            <table className="w-full min-w-[860px] text-left text-[12.5px]">
             <thead>
               <tr className="border-b border-border text-muted">
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Subject</th>
@@ -401,8 +462,11 @@ export function ClassSubjectAssignment() {
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Periods/wk</th>
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Elective block</th>
                 <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide" />
-                <th className="py-2 text-[10px] font-medium uppercase tracking-wide">
+                <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">
                   {termId ? "Status this term" : "Status (select a term to disable)"}
+                </th>
+                <th className="py-2 text-[10px] font-medium uppercase tracking-wide">
+                  {classLevelId ? "Status this class level" : "Status (select a class level to disable)"}
                 </th>
               </tr>
             </thead>
@@ -516,7 +580,7 @@ export function ClassSubjectAssignment() {
                           </Button>
                         )}
                       </td>
-                      <td className="py-2.5 align-top">
+                      <td className="py-2.5 pr-4 align-top">
                         {termId && (
                           <div className="flex items-center gap-2">
                             <Badge variant={active ? "success" : "danger"}>{active ? "Active" : "Disabled"}</Badge>
@@ -530,6 +594,27 @@ export function ClassSubjectAssignment() {
                             </Button>
                           </div>
                         )}
+                      </td>
+                      <td className="py-2.5 align-top">
+                        {classLevelId &&
+                          (() => {
+                            const levelActive = isActiveForClassLevel(row);
+                            return (
+                              <div className="flex items-center gap-2">
+                                <Badge variant={levelActive ? "success" : "danger"}>
+                                  {levelActive ? "Active" : "Disabled"}
+                                </Badge>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => toggleLevelStatus(row, levelActive)}
+                                >
+                                  {levelActive ? "Disable" : "Enable"}
+                                </Button>
+                              </div>
+                            );
+                          })()}
                       </td>
                     </tr>
                     {row.subject.isGroup &&
@@ -585,7 +670,7 @@ export function ClassSubjectAssignment() {
                                 )}
                               </div>
                             </td>
-                            <td className="py-2">
+                            <td className="py-2 pr-4">
                               {termId && (
                                 <div className="flex items-center gap-2">
                                   <Badge variant={childActive ? "success" : "danger"}>
@@ -602,6 +687,9 @@ export function ClassSubjectAssignment() {
                                 </div>
                               )}
                             </td>
+                            <td className="py-2 text-muted">
+                              {classLevelId && "— (set on the group row above)"}
+                            </td>
                           </tr>
                         );
                       })}
@@ -610,7 +698,7 @@ export function ClassSubjectAssignment() {
               })}
               {assigned.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-2.5 text-muted">
+                  <td colSpan={8} className="py-2.5 text-muted">
                     No subjects assigned to this class group yet.
                   </td>
                 </tr>

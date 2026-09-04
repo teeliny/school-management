@@ -54,17 +54,25 @@ interface ClassArmOption {
   id: string;
   name: string;
   displayName: string;
+  classLevelId?: string;
   classLevel?: { category: string };
 }
 interface AcademicSessionOption {
   id: string;
   name: string;
 }
+interface ClassSubjectSummary {
+  classLevelCategory: string;
+  // Which specific ClassLevels within that category (e.g. "Nursery 1"
+  // within NURSERY) have had this subject explicitly disabled — absence of
+  // an entry for a given classLevelId means it's still active there.
+  levelStatuses?: { classLevelId: string; isActive: boolean }[];
+}
 interface SubjectOption {
   id: string;
   name: string;
   isGroup: boolean;
-  classSubjects?: { classLevelCategory: string }[];
+  classSubjects?: ClassSubjectSummary[];
   childSubjects?: { id: string; name: string }[];
 }
 
@@ -184,10 +192,22 @@ export function StaffAssignmentForm({
   // class arms. Falls back to the unfiltered session-scoped list when the
   // subject has no catalogued group (shouldn't normally happen) so the
   // field isn't silently empty.
-  const selectedSubjectGroups = selectableSubjects.find((s) => s.id === subjectId)?.classSubjects?.map((cs) => cs.classLevelCategory) ?? [];
+  const selectedClassSubjects = selectableSubjects.find((s) => s.id === subjectId)?.classSubjects ?? [];
+  const selectedSubjectGroups = selectedClassSubjects.map((cs) => cs.classLevelCategory);
   const eligibleClassArms =
     selectedSubjectGroups.length > 0
-      ? subjectTeacherClassArms.filter((arm) => arm.classLevel && selectedSubjectGroups.includes(arm.classLevel.category))
+      ? subjectTeacherClassArms.filter((arm) => {
+          if (!arm.classLevel || !selectedSubjectGroups.includes(arm.classLevel.category)) return false;
+          // Category-wide assignment can still be disabled for one specific
+          // ClassLevel within it (ClassSubjectLevelStatus) — e.g. a subject
+          // assigned to NURSERY but disabled for "Nursery 1" shouldn't
+          // offer that arm even though its category matches.
+          const classSubject = selectedClassSubjects.find((cs) => cs.classLevelCategory === arm.classLevel?.category);
+          const disabledForThisLevel = classSubject?.levelStatuses?.some(
+            (ls) => ls.classLevelId === arm.classLevelId && !ls.isActive,
+          );
+          return !disabledForThisLevel;
+        })
       : subjectTeacherClassArms;
 
   return (

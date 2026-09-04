@@ -237,7 +237,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       const staffBlockedPeriods: Record<string, Record<string, number[]>> = {};
 
       for (const arm of arms) {
-        const subjects = await this.resolveSubjectsForClassArm(arm.classLevel.category, arm.id, term.academicSessionId);
+        const subjects = await this.resolveSubjectsForClassArm(arm.classLevel.category, arm.id, arm.classLevelId, term.academicSessionId);
         const armSlots = existingSlots.filter((s) => s.classArmId === arm.id);
         classArmPayloads.push({
           classArmId: arm.id,
@@ -293,21 +293,34 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       include: { term: true },
     });
 
-    const classArmIds = request.classArmId
-      ? [request.classArmId]
-      : (
-          await this.prisma.classArm.findMany({
-            where: { academicSessionId: component.term.academicSessionId, classLevel: { category: component.classLevelCategory } },
-            select: { id: true },
-          })
-        ).map((a) => a.id);
+    const examClassArms = request.classArmId
+      ? await this.prisma.classArm.findMany({ where: { id: request.classArmId }, select: { id: true, classLevelId: true } })
+      : await this.prisma.classArm.findMany({
+          where: { academicSessionId: component.term.academicSessionId, classLevel: { category: component.classLevelCategory } },
+          select: { id: true, classLevelId: true },
+        });
+    const classArmIds = examClassArms.map((a) => a.id);
 
-    const requiredSubjects = await this.resolveRequiredSubjects(component.classLevelCategory);
-    const subjectPayloads: ExamSubjectPayload[] = requiredSubjects.map((s) => ({
-      subjectId: s.id,
-      requiresCalculation: s.requiresCalculation,
-      concurrencyGroupId: s.concurrencyGroupId,
-    }));
+    // Required subjects are resolved per ClassLevel, not once for the whole
+    // category — a subject assigned to the category but disabled for one
+    // specific ClassLevel (ClassSubjectLevelStatus, e.g. "Nursery 1" within
+    // NURSERY) must not get an exam scheduled for that ClassLevel's arms,
+    // even though it's still required for the rest of the category. Cached
+    // per classLevelId since several arms typically share one ClassLevel.
+    const subjectPayloadsByLevel = new Map<string, ExamSubjectPayload[]>();
+    const subjectPayloadsForLevel = async (classLevelId: string): Promise<ExamSubjectPayload[]> => {
+      let payloads = subjectPayloadsByLevel.get(classLevelId);
+      if (!payloads) {
+        const requiredSubjects = await this.resolveRequiredSubjects(component.classLevelCategory, classLevelId);
+        payloads = requiredSubjects.map((s) => ({
+          subjectId: s.id,
+          requiresCalculation: s.requiresCalculation,
+          concurrencyGroupId: s.concurrencyGroupId,
+        }));
+        subjectPayloadsByLevel.set(classLevelId, payloads);
+      }
+      return payloads;
+    };
 
     const parameters = (request.parameters ?? {}) as {
       examStartDate: string;
@@ -340,11 +353,13 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
 
     const existingByClassArm = await this.summarizeExistingExamLoad(classArmIds, examStartDate, examEndDate);
 
-    const classArms: ExamClassArmPayload[] = classArmIds.map((classArmId) => ({
-      classArmId,
-      subjects: subjectPayloads,
-      existingByDate: existingByClassArm[classArmId] ?? {},
-    }));
+    const classArms: ExamClassArmPayload[] = await Promise.all(
+      examClassArms.map(async (arm) => ({
+        classArmId: arm.id,
+        subjects: await subjectPayloadsForLevel(arm.classLevelId),
+        existingByDate: existingByClassArm[arm.id] ?? {},
+      })),
+    );
 
     return {
       requestId: request.id,
@@ -803,10 +818,18 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * further resolves a teacher per class arm on top) and EXAM_TIMETABLE
    * (which needs neither `periodsPerWeek` nor a teacher — a subject is
    * examined exactly once, and `ExamSchedule` has no `staffId`, PRD §3.8).
+   * classLevelId narrows a category-wide ClassSubject down to one concrete
+   * ClassLevel (e.g. NURSERY covers both "Nursery 1" and "Nursery 2") —
+   * passed by both callers below so a subject explicitly disabled for one
+   * ClassLevel (ClassSubjectLevelStatus) is never scheduled/examined for it,
+   * even though it's still required for the rest of the category.
    */
-  private async resolveRequiredSubjects(category: ClassLevelCategory): Promise<RequiredSubject[]> {
+  private async resolveRequiredSubjects(category: ClassLevelCategory, classLevelId?: string): Promise<RequiredSubject[]> {
     const classSubjects = await this.prisma.classSubject.findMany({
-      where: { classLevelCategory: category },
+      where: {
+        classLevelCategory: category,
+        ...(classLevelId ? { levelStatuses: { none: { classLevelId, isActive: false } } } : {}),
+      },
       include: { subject: { include: { childSubjects: true } }, childPeriodOverrides: true },
     });
 
@@ -837,9 +860,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   private async resolveSubjectsForClassArm(
     category: ClassLevelCategory,
     classArmId: string,
+    classLevelId: string,
     academicSessionId: string,
   ): Promise<ResolvedSubject[]> {
-    const candidates = await this.resolveRequiredSubjects(category);
+    const candidates = await this.resolveRequiredSubjects(category, classLevelId);
 
     const resolved: ResolvedSubject[] = [];
     for (const subject of candidates) {

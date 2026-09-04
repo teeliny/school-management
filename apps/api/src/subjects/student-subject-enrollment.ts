@@ -21,6 +21,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CreateBulkEnrollmentDto, CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 import { ClassSubjectTermStatusService } from "./class-subject-term-status";
+import { ClassSubjectLevelStatusService } from "./class-subject-level-status";
 
 type Tx = Prisma.TransactionClient;
 
@@ -40,6 +41,7 @@ export class StudentSubjectEnrollmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly classSubjectTermStatus: ClassSubjectTermStatusService,
+    private readonly classSubjectLevelStatus: ClassSubjectLevelStatusService,
     @InjectQueue(QUEUE_NAMES.SUBJECT_TERM_RESULT_RECOMPUTE)
     private readonly recomputeQueue: Queue<SubjectTermResultRecomputeJob>,
   ) {}
@@ -91,6 +93,16 @@ export class StudentSubjectEnrollmentService {
         },
       });
       if (status && !status.isActive) continue;
+
+      const levelStatus = await tx.classSubjectLevelStatus.findUnique({
+        where: {
+          classSubjectId_classLevelId: {
+            classSubjectId: classSubject.id,
+            classLevelId: classArm.classLevelId,
+          },
+        },
+      });
+      if (levelStatus && !levelStatus.isActive) continue;
 
       await tx.studentSubjectEnrollment.upsert({
         where: {
@@ -157,6 +169,16 @@ export class StudentSubjectEnrollmentService {
         },
       });
       if (status && !status.isActive) continue;
+
+      const levelStatus = await this.prisma.classSubjectLevelStatus.findUnique({
+        where: {
+          classSubjectId_classLevelId: {
+            classSubjectId: classSubject.id,
+            classLevelId: classArm.classLevelId,
+          },
+        },
+      });
+      if (levelStatus && !levelStatus.isActive) continue;
 
       await this.prisma.studentSubjectEnrollment.upsert({
         where: {
@@ -230,6 +252,11 @@ export class StudentSubjectEnrollmentService {
       subjectId: dto.subjectId,
       classLevelCategory: classArm.classLevel.category,
       termId: dto.termId,
+    });
+    await this.classSubjectLevelStatus.assertActiveForClassLevel({
+      subjectId: dto.subjectId,
+      classLevelCategory: classArm.classLevel.category,
+      classLevelId: classArm.classLevelId,
     });
 
     const enrollment = await this.prisma.studentSubjectEnrollment.upsert({

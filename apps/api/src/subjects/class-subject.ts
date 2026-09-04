@@ -116,6 +116,7 @@ export class ClassSubjectService {
       include: {
         subject: { include: { childSubjects: true } },
         termStatuses: { include: { term: true } },
+        levelStatuses: { include: { classLevel: true } },
         childPeriodOverrides: true,
       },
       orderBy: { createdAt: "asc" },
@@ -128,6 +129,7 @@ export class ClassSubjectService {
       include: {
         subject: { include: { childSubjects: true } },
         termStatuses: { include: { term: true } },
+        levelStatuses: { include: { classLevel: true } },
         childPeriodOverrides: true,
       },
     });

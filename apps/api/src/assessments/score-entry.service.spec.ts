@@ -21,6 +21,10 @@ function buildClassSubjectTermStatusMock() {
   return { assertActiveForTerm: jest.fn() };
 }
 
+function buildClassSubjectLevelStatusMock() {
+  return { assertActiveForClassLevel: jest.fn() };
+}
+
 const USER: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["SUBJECT_TEACHER"] };
 
 function buildDto(overrides: Partial<CreateScoreEntryDto> = {}): CreateScoreEntryDto {
@@ -38,13 +42,20 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let staffAssignments: ReturnType<typeof buildStaffAssignmentsMock>;
   let classSubjectTermStatus: ReturnType<typeof buildClassSubjectTermStatusMock>;
+  let classSubjectLevelStatus: ReturnType<typeof buildClassSubjectLevelStatusMock>;
   let service: ScoreEntryService;
 
   beforeEach(() => {
     prisma = buildPrismaMock();
     staffAssignments = buildStaffAssignmentsMock();
     classSubjectTermStatus = buildClassSubjectTermStatusMock();
-    service = new ScoreEntryService(prisma as never, staffAssignments as never, classSubjectTermStatus as never);
+    classSubjectLevelStatus = buildClassSubjectLevelStatusMock();
+    service = new ScoreEntryService(
+      prisma as never,
+      staffAssignments as never,
+      classSubjectTermStatus as never,
+      classSubjectLevelStatus as never,
+    );
     prisma.classArm.findUniqueOrThrow.mockResolvedValue({
       id: "arm-1",
       classLevelId: "level-1",
@@ -129,6 +140,26 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     classSubjectTermStatus.assertActiveForTerm.mockRejectedValue(new Error("disabled for this class for this term"));
 
     await expect(service.enter(buildDto(), USER, true)).rejects.toThrow(/disabled for this class for this term/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+  });
+
+  it("checks the class-subject's per-class-level status before writing, for both regular and override entry", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
+
+    await service.enter(buildDto(), USER, false);
+
+    expect(classSubjectLevelStatus.assertActiveForClassLevel).toHaveBeenCalledWith({
+      subjectId: "subj-1",
+      classLevelCategory: ClassLevelCategory.JSS,
+      classLevelId: "level-1",
+    });
+  });
+
+  it("blocks score entry — even as an Admin override — when the subject is disabled for this specific class level", async () => {
+    classSubjectLevelStatus.assertActiveForClassLevel.mockRejectedValue(new Error("disabled for this class level"));
+
+    await expect(service.enter(buildDto(), USER, true)).rejects.toThrow(/disabled for this class level/);
     expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
   });
 

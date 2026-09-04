@@ -17,6 +17,7 @@ interface ClassArmOption {
   id: string;
   name: string;
   displayName: string;
+  classLevelId: string;
   classLevel: { category: string };
 }
 interface SubjectOption {
@@ -93,15 +94,22 @@ export default function GradebookPage() {
 
   // Subjects are scoped to the selected class arm's class group (Primary,
   // JSS, …) via the ClassSubject join table — not the whole catalogue —
-  // same pattern as the Skills & Comments subject panel.
+  // same pattern as the Skills & Comments subject panel. Also passes the
+  // arm's concrete classLevelId so a subject assigned to the group but
+  // disabled for this one ClassLevel (ClassSubjectLevelStatus — e.g.
+  // "Nursery 1" within NURSERY) is excluded here too, not just at score
+  // entry.
   useEffect(() => {
     setSubjectId("");
-    const classLevelCategory = classArms.find((a) => a.id === classArmId)?.classLevel.category;
-    if (!classLevelCategory) {
+    const classArm = classArms.find((a) => a.id === classArmId);
+    if (!classArm) {
       setSubjects([]);
       return;
     }
-    apiFetch<SubjectOption[]>(`/subjects?classLevelCategory=${classLevelCategory}`, { auth: true })
+    apiFetch<SubjectOption[]>(
+      `/subjects?classLevelCategory=${classArm.classLevel.category}&classLevelId=${classArm.classLevelId}`,
+      { auth: true },
+    )
       .then(setSubjects)
       .catch(() => setSubjects([]));
   }, [classArmId, classArms]);

@@ -14,6 +14,7 @@ interface ClassArmOption {
   id: string;
   name: string;
   displayName: string;
+  classLevelId: string;
   classLevel: { category: string };
 }
 interface SubjectOption {
@@ -86,7 +87,10 @@ export function SubjectCommentPanel({
       setSubjects([]);
       return;
     }
-    apiFetch<SubjectOption[]>(`/subjects?classLevelCategory=${selectedArm.classLevel.category}`, { auth: true })
+    apiFetch<SubjectOption[]>(
+      `/subjects?classLevelCategory=${selectedArm.classLevel.category}&classLevelId=${selectedArm.classLevelId}`,
+      { auth: true },
+    )
       .then(setSubjects)
       .catch(() => setSubjects([]));
   }, [selectedArm]);

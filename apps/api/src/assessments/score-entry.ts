@@ -8,6 +8,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
+import { ClassSubjectLevelStatusService } from "../subjects/class-subject-level-status";
 import { Audited } from "../audit/audited.decorator";
 import type { AuditRequestOverrides } from "../audit/audit.interceptor";
 import { CreateScoreEntryDto } from "./dto/score-entry.dto";
@@ -18,6 +19,7 @@ export class ScoreEntryService {
     private readonly prisma: PrismaService,
     private readonly staffAssignments: StaffAssignmentService,
     private readonly classSubjectTermStatus: ClassSubjectTermStatusService,
+    private readonly classSubjectLevelStatus: ClassSubjectLevelStatusService,
   ) {}
 
   /**
@@ -62,6 +64,15 @@ export class ScoreEntryService {
       subjectId: dto.subjectId,
       classLevelCategory: classArm.classLevel.category,
       termId: component.termId,
+    });
+    // Same "applies regardless of override" reasoning, one class-group level
+    // down: a subject assigned to the NURSERY category can still be disabled
+    // for one specific ClassLevel (e.g. "Nursery 1") while staying active for
+    // another (e.g. "Nursery 2") in that same category.
+    await this.classSubjectLevelStatus.assertActiveForClassLevel({
+      subjectId: dto.subjectId,
+      classLevelCategory: classArm.classLevel.category,
+      classLevelId: classArm.classLevelId,
     });
 
     if (isOverride) {

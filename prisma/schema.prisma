@@ -69,6 +69,7 @@ model User {
   generatedReportCards               TermReportCard[]
   createdReportWindows               ReportWindow[]
   disabledClassSubjectTermStatuses   ClassSubjectTermStatus[]
+  disabledClassSubjectLevelStatuses  ClassSubjectLevelStatus[]
   paymentsMade                       Payment[]
   notifications                      Notification[]
   notificationPreferences            NotificationPreference[]
@@ -226,8 +227,9 @@ model ClassLevel {
   category  ClassLevelCategory
   createdAt DateTime           @default(now())
 
-  classArms          ClassArm[]
-  feeStructureLevels FeeStructureClassLevel[]
+  classArms                 ClassArm[]
+  feeStructureLevels        FeeStructureClassLevel[]
+  classSubjectLevelStatuses ClassSubjectLevelStatus[]
 
   @@map("class_levels")
 }
@@ -611,6 +613,7 @@ model ClassSubject {
   createdAt          DateTime                      @default(now())
 
   termStatuses         ClassSubjectTermStatus[]
+  levelStatuses        ClassSubjectLevelStatus[]
   childPeriodOverrides ClassSubjectChildPeriods[]
 
   @@unique([classLevelCategory, subjectId])
@@ -644,6 +647,36 @@ model ClassSubjectTermStatus {
 
   @@unique([classSubjectId, subjectId, termId])
   @@map("class_subject_term_statuses")
+}
+
+// Per-ClassLevel disable/enable for a subject already assigned to a class
+// group via ClassSubject (e.g. NURSERY covers both the "Nursery 1" and
+// "Nursery 2" ClassLevels, which normally share one ClassSubject
+// assignment — see that model's comment). To give one ClassLevel a subject
+// the rest of the category doesn't have: assign it once at the category
+// level (applies to every ClassLevel in the group by default, same as
+// today), then add a row here with isActive=false for every OTHER
+// ClassLevel in the group that shouldn't have it. Same sparse-override
+// shape as ClassSubjectTermStatus just above (absence of a row means
+// active) and ClassSubjectChildPeriods below — disable-only, not scoped to
+// a term, so it persists across terms/sessions until an Admin changes it,
+// same "curriculum structure, not session/term state" reasoning as
+// ClassSubject itself.
+model ClassSubjectLevelStatus {
+  id               String       @id @default(uuid())
+  classSubjectId   String
+  classSubject     ClassSubject @relation(fields: [classSubjectId], references: [id], onDelete: Cascade)
+  classLevelId     String
+  classLevel       ClassLevel   @relation(fields: [classLevelId], references: [id], onDelete: Cascade)
+  isActive         Boolean      @default(true)
+  disabledAt       DateTime?
+  disabledByUserId String?
+  disabledByUser   User?        @relation(fields: [disabledByUserId], references: [id])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([classSubjectId, classLevelId])
+  @@map("class_subject_level_statuses")
 }
 
 // Per-child override of a group ClassSubject's periodsPerWeek — a group

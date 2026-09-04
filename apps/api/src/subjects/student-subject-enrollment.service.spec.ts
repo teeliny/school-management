@@ -7,6 +7,7 @@ function buildPrismaMock() {
     classArm: { findUniqueOrThrow: jest.fn() },
     classSubject: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
     classSubjectTermStatus: { findUnique: jest.fn() },
+    classSubjectLevelStatus: { findUnique: jest.fn() },
     studentDepartment: { findUnique: jest.fn() },
     studentProfile: { findMany: jest.fn() },
     studentSubjectEnrollment: { upsert: jest.fn() },
@@ -20,12 +21,17 @@ function buildTxMock() {
     term: { findFirst: jest.fn() },
     classSubject: { findMany: jest.fn() },
     classSubjectTermStatus: { findUnique: jest.fn() },
+    classSubjectLevelStatus: { findUnique: jest.fn() },
     studentSubjectEnrollment: { upsert: jest.fn() },
   };
 }
 
 function buildClassSubjectTermStatusMock() {
   return { assertActiveForTerm: jest.fn() };
+}
+
+function buildClassSubjectLevelStatusMock() {
+  return { assertActiveForClassLevel: jest.fn() };
 }
 
 function buildRecomputeQueueMock() {
@@ -49,11 +55,13 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
     service = new StudentSubjectEnrollmentService(
       {} as never,
       buildClassSubjectTermStatusMock() as never,
+      buildClassSubjectLevelStatusMock() as never,
       buildRecomputeQueueMock() as never,
     );
     tx.classArm.findUniqueOrThrow.mockResolvedValue(CLASS_ARM);
     tx.term.findFirst.mockResolvedValue(TERM);
     tx.classSubjectTermStatus.findUnique.mockResolvedValue(null);
+    tx.classSubjectLevelStatus.findUnique.mockResolvedValue(null);
   });
 
   it("auto-enrolls a COMPULSORY subject and skips a GENERAL one", async () => {
@@ -134,6 +142,25 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
     expect(tx.classSubject.findMany).not.toHaveBeenCalled();
     expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
   });
+
+  it("skips a COMPULSORY subject explicitly disabled for this specific class level", async () => {
+    tx.classSubject.findMany.mockResolvedValue([
+      {
+        id: "cs-1",
+        subjectId: "subj-compulsory",
+        type: SubjectType.COMPULSORY,
+        subject: { isActive: true },
+      },
+    ]);
+    tx.classSubjectLevelStatus.findUnique.mockResolvedValue({ isActive: false });
+
+    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
+      studentId: "student-1",
+      classArmId: "arm-1",
+    });
+
+    expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
 });
 
 // Regression: JSS 1's CCA/Yoruba/French report-card bug — a ClassSubject
@@ -155,17 +182,23 @@ describe("StudentSubjectEnrollmentService.syncEnrollmentsForClassSubject", () =>
   };
   const STUDENT = {
     id: "student-1",
-    currentClass: { id: "arm-1", academicSessionId: "session-1" },
+    currentClass: { id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" },
   };
 
   beforeEach(() => {
     prisma = buildPrismaMock();
     recomputeQueue = buildRecomputeQueueMock();
-    service = new StudentSubjectEnrollmentService(prisma as never, buildClassSubjectTermStatusMock() as never, recomputeQueue as never);
+    service = new StudentSubjectEnrollmentService(
+      prisma as never,
+      buildClassSubjectTermStatusMock() as never,
+      buildClassSubjectLevelStatusMock() as never,
+      recomputeQueue as never,
+    );
     prisma.classSubject.findUniqueOrThrow.mockResolvedValue(CLASS_SUBJECT);
     prisma.studentProfile.findMany.mockResolvedValue([STUDENT]);
     prisma.term.findFirst.mockResolvedValue(TERM);
     prisma.classSubjectTermStatus.findUnique.mockResolvedValue(null);
+    prisma.classSubjectLevelStatus.findUnique.mockResolvedValue(null);
   });
 
   it("backfills every student currently in the class category and queues a recompute", async () => {
@@ -231,10 +264,18 @@ describe("StudentSubjectEnrollmentService.syncEnrollmentsForClassSubject", () =>
     expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
   });
 
+  it("skips a student whose enrollment is dropped by a per-class-level ClassSubjectLevelStatus", async () => {
+    prisma.classSubjectLevelStatus.findUnique.mockResolvedValue({ isActive: false });
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
   it("backfills every affected student when more than one is in the category", async () => {
     prisma.studentProfile.findMany.mockResolvedValue([
       STUDENT,
-      { id: "student-2", currentClass: { id: "arm-1", academicSessionId: "session-1" } },
+      { id: "student-2", currentClass: { id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" } },
     ]);
 
     await service.syncEnrollmentsForClassSubject("cs-1");
@@ -247,6 +288,7 @@ describe("StudentSubjectEnrollmentService.syncEnrollmentsForClassSubject", () =>
 describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let classSubjectTermStatus: ReturnType<typeof buildClassSubjectTermStatusMock>;
+  let classSubjectLevelStatus: ReturnType<typeof buildClassSubjectLevelStatusMock>;
   let recomputeQueue: ReturnType<typeof buildRecomputeQueueMock>;
   let service: StudentSubjectEnrollmentService;
 
@@ -264,8 +306,14 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
   beforeEach(() => {
     prisma = buildPrismaMock();
     classSubjectTermStatus = buildClassSubjectTermStatusMock();
+    classSubjectLevelStatus = buildClassSubjectLevelStatusMock();
     recomputeQueue = buildRecomputeQueueMock();
-    service = new StudentSubjectEnrollmentService(prisma as never, classSubjectTermStatus as never, recomputeQueue as never);
+    service = new StudentSubjectEnrollmentService(
+      prisma as never,
+      classSubjectTermStatus as never,
+      classSubjectLevelStatus as never,
+      recomputeQueue as never,
+    );
     prisma.classArm.findUniqueOrThrow.mockResolvedValue({
       ...CLASS_ARM,
       classLevel: { category: ClassLevelCategory.SSS },
@@ -334,6 +382,14 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
     classSubjectTermStatus.assertActiveForTerm.mockRejectedValue(new Error("disabled for this class for this term"));
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/disabled for this class for this term/);
+    expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("blocks opt-in when the subject is disabled for this specific class level", async () => {
+    prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.GENERAL, departmentId: null });
+    classSubjectLevelStatus.assertActiveForClassLevel.mockRejectedValue(new Error("disabled for this class level"));
+
+    await expect(service.enroll(buildDto())).rejects.toThrow(/disabled for this class level/);
     expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
   });
 });

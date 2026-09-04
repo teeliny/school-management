@@ -18,6 +18,7 @@ interface ClassArmOption {
   id: string;
   name: string;
   displayName: string;
+  classLevelId: string;
   classLevel: { category: string };
 }
 interface TermOption {

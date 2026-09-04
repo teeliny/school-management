@@ -8,6 +8,7 @@ import {
   ClassSubjectConcurrencyGroupService,
 } from "./class-subject-concurrency-group";
 import { ClassSubjectTermStatusController, ClassSubjectTermStatusService } from "./class-subject-term-status";
+import { ClassSubjectLevelStatusController, ClassSubjectLevelStatusService } from "./class-subject-level-status";
 import { SubjectGroupWeightController, SubjectGroupWeightService } from "./subject-group-weight";
 import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } from "./student-subject-enrollment";
 
@@ -16,8 +17,9 @@ import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } f
 // PrismaService directly (no cross-module service calls needed here).
 // Exports StudentSubjectEnrollmentService since IdentityModule's
 // StudentService needs it for the compulsory auto-enroll hook, and
-// ClassSubjectTermStatusService since AssessmentsModule's ScoreEntryService
-// needs it for the per-term disable check.
+// ClassSubjectTermStatusService/ClassSubjectLevelStatusService since
+// AssessmentsModule's ScoreEntryService needs them for the per-term/
+// per-class-level disable checks.
 @Module({
   imports: [BullModule.registerQueue({ name: QUEUE_NAMES.SUBJECT_TERM_RESULT_RECOMPUTE })],
   controllers: [
@@ -25,6 +27,7 @@ import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } f
     ClassSubjectController,
     ClassSubjectConcurrencyGroupController,
     ClassSubjectTermStatusController,
+    ClassSubjectLevelStatusController,
     SubjectGroupWeightController,
     StudentSubjectEnrollmentController,
   ],
@@ -33,9 +36,10 @@ import { StudentSubjectEnrollmentController, StudentSubjectEnrollmentService } f
     ClassSubjectService,
     ClassSubjectConcurrencyGroupService,
     ClassSubjectTermStatusService,
+    ClassSubjectLevelStatusService,
     SubjectGroupWeightService,
     StudentSubjectEnrollmentService,
   ],
-  exports: [SubjectService, StudentSubjectEnrollmentService, ClassSubjectTermStatusService],
+  exports: [SubjectService, StudentSubjectEnrollmentService, ClassSubjectTermStatusService, ClassSubjectLevelStatusService],
 })
 export class SubjectModule {}

@@ -101,7 +101,7 @@ export class SubjectService {
     });
   }
 
-  findAll(filters: { isGroup?: boolean; search?: string; classLevelCategory?: ClassLevelCategory }) {
+  findAll(filters: { isGroup?: boolean; search?: string; classLevelCategory?: ClassLevelCategory; classLevelId?: string }) {
     return this.prisma.subject.findMany({
       where: {
         isGroup: filters.isGroup,
@@ -118,7 +118,23 @@ export class SubjectService {
             }
           : {}),
         ...(filters.classLevelCategory
-          ? { classSubjects: { some: { classLevelCategory: filters.classLevelCategory } } }
+          ? {
+              classSubjects: {
+                some: {
+                  classLevelCategory: filters.classLevelCategory,
+                  // classLevelId narrows a category-wide assignment down to
+                  // one concrete ClassLevel (e.g. NURSERY covers both
+                  // "Nursery 1" and "Nursery 2") — excluded here only if
+                  // that ClassLevel has an explicit disabling
+                  // ClassSubjectLevelStatus row; absence of a row still
+                  // means active, same sparse-override semantics as the
+                  // service-layer check.
+                  ...(filters.classLevelId
+                    ? { levelStatuses: { none: { classLevelId: filters.classLevelId, isActive: false } } }
+                    : {}),
+                },
+              },
+            }
           : {}),
       },
       include: {
@@ -136,6 +152,11 @@ export class SubjectService {
             type: true,
             departmentId: true,
             department: { select: { name: true } },
+            // Lets a caller that queries across the whole catalogue (not
+            // narrowed by classLevelId above, e.g. the staff-assignment
+            // subject picker) work out client-side which specific
+            // ClassLevels within a matched category are disabled.
+            levelStatuses: { select: { classLevelId: true, isActive: true } },
           },
         },
       },
@@ -193,11 +214,13 @@ export class SubjectController {
     @Query("isGroup") isGroup?: string,
     @Query("search") search?: string,
     @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory,
+    @Query("classLevelId") classLevelId?: string,
   ) {
     return this.service.findAll({
       isGroup: isGroup === undefined ? undefined : isGroup === "true",
       search,
       classLevelCategory,
+      classLevelId,
     });
   }
 

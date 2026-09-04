@@ -213,8 +213,15 @@ export class BroadsheetService {
     // a plain subject, never a child, so this is already "reportable" scope
     // with no extra parentSubjectId filter needed (same as report-card.
     // processor.ts's reportableResults, just derived from the other side).
+    // Excludes a subject explicitly disabled for this concrete ClassLevel
+    // (ClassSubjectLevelStatus) — classLevel is always resolved to exactly
+    // one row above regardless of scope, so this applies whether the
+    // request is CLASS_LEVEL- or CLASS_ARM-scoped.
     const classSubjects = await this.prisma.classSubject.findMany({
-      where: { classLevelCategory: classLevel.category },
+      where: {
+        classLevelCategory: classLevel.category,
+        levelStatuses: { none: { classLevelId: classLevel.id, isActive: false } },
+      },
       include: { subject: { select: { id: true, name: true } } },
       orderBy: { createdAt: "asc" },
     });
