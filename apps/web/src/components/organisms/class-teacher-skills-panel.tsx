@@ -8,6 +8,7 @@ import { Label } from "../atoms/label";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Textarea } from "../atoms/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { Input } from "../atoms/input";
 import { PaginatedStudentList } from "./paginated-student-list";
 
 interface ClassArmOption {
@@ -21,10 +22,17 @@ interface TermOption {
   name: string;
   academicSessionId: string;
 }
-type SkillCategory = "PSYCHOMOTOR" | "AFFECTIVE_COGNITIVE";
+type SkillGroupValueType = "RATING" | "RANGE_TEXT";
+interface SkillGroup {
+  id: string;
+  name: string;
+  order: number;
+  valueType: SkillGroupValueType;
+}
 interface SkillItem {
   id: string;
-  category: SkillCategory;
+  groupId: string;
+  group: SkillGroup;
   name: string;
   order: number;
 }
@@ -32,7 +40,8 @@ type RatingValue = "EXCELLENT" | "VERY_GOOD" | "GOOD" | "FAIR" | "POOR";
 interface RatingRecord {
   studentId: string;
   skillAssessmentItemId: string;
-  rating: RatingValue;
+  rating: RatingValue | null;
+  rangeText: string | null;
 }
 interface CommentRecord {
   studentId: string;
@@ -46,10 +55,6 @@ interface ProgressSummary {
 }
 
 const RATINGS: RatingValue[] = ["EXCELLENT", "VERY_GOOD", "GOOD", "FAIR", "POOR"];
-const CATEGORY_LABEL: Record<SkillCategory, string> = {
-  PSYCHOMOTOR: "Psychomotor",
-  AFFECTIVE_COGNITIVE: "Affective / Cognitive",
-};
 const WINDOW_VARIANT: Record<ReportWindowStatus, BadgeVariant> = {
   DRAFT: "muted",
   OPEN: "success",
@@ -71,7 +76,12 @@ export function ClassTeacherSkillsPanel({
   const [skillItems, setSkillItems] = useState<SkillItem[]>([]);
   const [ratings, setRatings] = useState<RatingRecord[]>([]);
   const [comments, setComments] = useState<CommentRecord[]>([]);
-  const [ratingDrafts, setRatingDrafts] = useState<Record<string, Record<string, RatingValue | "">>>({});
+  // A draft value is just a string regardless of the item's valueType — a
+  // RATING item's draft happens to be one of RatingValue's members, a
+  // RANGE_TEXT item's draft is free text (e.g. "1-10"); which of
+  // rating/rangeText it's saved as is resolved from the item's valueType at
+  // save time. Empty string means unset either way.
+  const [ratingDrafts, setRatingDrafts] = useState<Record<string, Record<string, string>>>({});
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<Record<string, "saving" | "saved" | "error">>({});
   const [error, setError] = useState<string | null>(null);
@@ -102,9 +112,10 @@ export function ClassTeacherSkillsPanel({
         `/report-windows?termId=${termId}&classLevelCategory=${selectedArm.classLevel.category}`,
         { auth: true },
       ),
-      apiFetch<SkillItem[]>(`/skill-assessment-items?academicSessionId=${selectedTerm.academicSessionId}`, {
-        auth: true,
-      }),
+      apiFetch<SkillItem[]>(
+        `/skill-assessment-items?academicSessionId=${selectedTerm.academicSessionId}&classLevelCategory=${selectedArm.classLevel.category}`,
+        { auth: true },
+      ),
       apiFetch<RatingRecord[]>(`/skill-ratings?termId=${termId}`, { auth: true }),
       apiFetch<CommentRecord[]>(`/report-comments?termId=${termId}`, { auth: true }),
       apiFetch<ProgressSummary>(
@@ -150,13 +161,20 @@ export function ClassTeacherSkillsPanel({
     });
   }, [students, skillItems, ratings, comments]);
 
-  const itemsByCategory = useMemo(() => {
-    const grouped: Record<SkillCategory, SkillItem[]> = { PSYCHOMOTOR: [], AFFECTIVE_COGNITIVE: [] };
-    for (const item of skillItems) grouped[item.category].push(item);
-    for (const category of Object.keys(grouped) as SkillCategory[]) {
-      grouped[category].sort((a, b) => a.order - b.order);
+  // Groups are whatever this class arm's category actually has (the API
+  // already filtered skillItems to applicable groups) — not a fixed pair,
+  // so this builds however many sections the report needs, in group order,
+  // each with its own items in item order.
+  const itemsByGroup = useMemo(() => {
+    const groups = new Map<string, { group: SkillGroup; items: SkillItem[] }>();
+    for (const item of skillItems) {
+      const entry = groups.get(item.groupId) ?? { group: item.group, items: [] };
+      entry.items.push(item);
+      groups.set(item.groupId, entry);
     }
-    return grouped;
+    return [...groups.values()]
+      .sort((a, b) => a.group.order - b.group.order)
+      .map((entry) => ({ ...entry, items: [...entry.items].sort((a, b) => a.order - b.order) }));
   }, [skillItems]);
 
   const readOnly = !isAdmin && windowStatus !== "OPEN";
@@ -181,14 +199,22 @@ export function ClassTeacherSkillsPanel({
     setSaveState((s) => ({ ...s, [studentId]: "saving" }));
     try {
       const ratingCalls = Object.entries(ratingDrafts[studentId] ?? {})
-        .filter(([, rating]) => rating !== "")
-        .map(([skillAssessmentItemId, rating]) =>
-          apiFetch("/skill-ratings", {
+        .filter(([, value]) => value !== "")
+        .map(([skillAssessmentItemId, value]) => {
+          const item = skillItems.find((i) => i.id === skillAssessmentItemId);
+          const isRangeText = item?.group.valueType === "RANGE_TEXT";
+          return apiFetch("/skill-ratings", {
             method: "POST",
             auth: true,
-            body: { studentId, termId, skillAssessmentItemId, rating },
-          }),
-        );
+            body: {
+              studentId,
+              termId,
+              skillAssessmentItemId,
+              rating: isRangeText ? undefined : value,
+              rangeText: isRangeText ? value : undefined,
+            },
+          });
+        });
       const comment = commentDrafts[studentId] ?? "";
       const commentCall = comment.trim()
         ? [
@@ -299,22 +325,33 @@ export function ClassTeacherSkillsPanel({
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {(Object.keys(itemsByCategory) as SkillCategory[]).map((category) =>
-                  itemsByCategory[category].length > 0 ? (
-                    <div key={category}>
-                      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                        {CATEGORY_LABEL[category]}
-                      </p>
-                      <div className="space-y-1.5">
-                        {itemsByCategory[category].map((item) => (
-                          <div key={item.id} className="flex items-center justify-between gap-2">
-                            <span className="text-[12px] text-foreground">{item.name}</span>
+                {itemsByGroup.map(({ group, items }) => (
+                  <div key={group.id}>
+                    <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{group.name}</p>
+                    <div className="space-y-1.5">
+                      {items.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between gap-2">
+                          <span className="text-[12px] text-foreground">{item.name}</span>
+                          {group.valueType === "RANGE_TEXT" ? (
+                            <Input
+                              className="h-8 w-36 text-[11.5px]"
+                              placeholder='e.g. "1-10"'
+                              value={ratingDrafts[student.id]?.[item.id] ?? ""}
+                              onChange={(e) =>
+                                setRatingDrafts((s) => ({
+                                  ...s,
+                                  [student.id]: { ...s[student.id], [item.id]: e.target.value },
+                                }))
+                              }
+                              disabled={readOnly}
+                            />
+                          ) : (
                             <Select
                               value={ratingDrafts[student.id]?.[item.id] ?? ""}
                               onValueChange={(v) =>
                                 setRatingDrafts((s) => ({
                                   ...s,
-                                  [student.id]: { ...s[student.id], [item.id]: v as RatingValue },
+                                  [student.id]: { ...s[student.id], [item.id]: v },
                                 }))
                               }
                               disabled={readOnly}
@@ -330,12 +367,12 @@ export function ClassTeacherSkillsPanel({
                                 ))}
                               </SelectContent>
                             </Select>
-                          </div>
-                        ))}
-                      </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ) : null,
-                )}
+                  </div>
+                ))}
               </div>
 
               {skillItems.length === 0 && (
@@ -364,12 +401,12 @@ export function ClassTeacherSkillsPanel({
 }
 
 function buildRatingDrafts(students: { id: string }[], items: SkillItem[], ratings: RatingRecord[]) {
-  const drafts: Record<string, Record<string, RatingValue | "">> = {};
+  const drafts: Record<string, Record<string, string>> = {};
   for (const student of students) {
-    const studentDrafts: Record<string, RatingValue | ""> = {};
+    const studentDrafts: Record<string, string> = {};
     for (const item of items) {
       const match = ratings.find((r) => r.studentId === student.id && r.skillAssessmentItemId === item.id);
-      studentDrafts[item.id] = match?.rating ?? "";
+      studentDrafts[item.id] = match?.rating ?? match?.rangeText ?? "";
     }
     drafts[student.id] = studentDrafts;
   }

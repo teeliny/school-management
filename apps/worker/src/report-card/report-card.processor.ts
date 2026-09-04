@@ -302,7 +302,7 @@ export class ReportCardProcessor extends WorkerHost {
 
     const ratings = await this.prisma.skillRating.findMany({
       where: { studentId, termId },
-      include: { skillAssessmentItem: true },
+      include: { skillAssessmentItem: { include: { group: true } } },
     });
 
     const [classTeacherComment, principalComment] = await Promise.all([
@@ -391,9 +391,17 @@ export class ReportCardProcessor extends WorkerHost {
       overall,
       ratings.map(
         (r): FullTermSkillRatingInput => ({
-          category: r.skillAssessmentItem.category,
+          groupName: r.skillAssessmentItem.group.name,
+          groupOrder: r.skillAssessmentItem.group.order,
+          itemOrder: r.skillAssessmentItem.order,
           name: r.skillAssessmentItem.name,
-          rating: r.rating,
+          // rating is nullable now — a RANGE_TEXT group (e.g. Reception's
+          // Numbers/Letters) uses rangeText instead, per its
+          // SkillGroup.valueType (SkillRatingService.rate enforces exactly
+          // one of the two is set). The PDF's rating column just prints
+          // whichever this item actually used — humanizeRating() is a
+          // no-op on free text like "1-10" (no underscores to replace).
+          rating: r.rating ?? r.rangeText ?? "",
         }),
       ),
       { classTeacherComment: classTeacherComment?.comment ?? null, principalComment: principalComment?.comment ?? null },

@@ -6,6 +6,7 @@ import { ScoreEntryController, ScoreEntryService } from "./score-entry";
 import { GradeScaleController, GradeScaleService } from "./grade-scale";
 import { TermReportCardController, TermReportCardService, ReportCardVerificationController } from "./term-report-card";
 import { SkillAssessmentItemController, SkillAssessmentItemService } from "./skill-assessment-item";
+import { SkillGroupController, SkillGroupService } from "./skill-group";
 import { ReportWindowController, ReportWindowService } from "./report-window";
 import { SkillRatingController, SkillRatingService } from "./skill-rating";
 import { ReportCommentController, ReportCommentService } from "./report-comment";
@@ -32,6 +33,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     TermReportCardController,
     ReportCardVerificationController,
     SkillAssessmentItemController,
+    SkillGroupController,
     ReportWindowController,
     SkillRatingController,
     ReportCommentController,
@@ -43,6 +45,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     GradeScaleService,
     TermReportCardService,
     SkillAssessmentItemService,
+    SkillGroupService,
     ReportWindowService,
     SkillRatingService,
     ReportCommentService,

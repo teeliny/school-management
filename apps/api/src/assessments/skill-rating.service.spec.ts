@@ -1,4 +1,4 @@
-import { AssignmentType, ReportWindowStatus, SkillRatingValue } from "@prisma/client";
+import { AssignmentType, ReportWindowStatus, SkillGroupValueType, SkillRatingValue } from "@prisma/client";
 import { SkillRatingService } from "./skill-rating";
 import type { RequestUser } from "../auth/jwt.strategy";
 import type { CreateSkillRatingDto } from "./dto/skill-rating.dto";
@@ -8,6 +8,7 @@ function buildPrismaMock() {
     staffProfile: { findUnique: jest.fn() },
     studentProfile: { findUniqueOrThrow: jest.fn() },
     reportWindow: { findFirst: jest.fn() },
+    skillAssessmentItem: { findUniqueOrThrow: jest.fn() },
     skillRating: { upsert: jest.fn() },
   };
 }
@@ -39,6 +40,10 @@ describe("SkillRatingService.rate (PRD §3.6 — CLASS_TEACHER + ReportWindow ga
     service = new SkillRatingService(prisma as never, staffAssignments as never);
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue({
       currentClass: { id: "arm-1", classLevel: { category: "JSS" } },
+    });
+    prisma.skillAssessmentItem.findUniqueOrThrow.mockResolvedValue({
+      name: "Punctuality",
+      group: { valueType: SkillGroupValueType.RATING, classLevelCategories: [] },
     });
   });
 
@@ -99,6 +104,67 @@ describe("SkillRatingService.rate (PRD §3.6 — CLASS_TEACHER + ReportWindow ga
       userId: "user-1",
       assignmentType: AssignmentType.CLASS_TEACHER,
       classArmId: "arm-1",
+    });
+  });
+
+  describe("value-type and class-level applicability (RANGE_TEXT items, e.g. Reception's Counting/Sounding)", () => {
+    beforeEach(() => {
+      staffAssignments.findActiveAssignment.mockResolvedValue({ staffId: "staff-1" });
+      prisma.reportWindow.findFirst.mockResolvedValue({ status: ReportWindowStatus.OPEN });
+      prisma.skillRating.upsert.mockResolvedValue({ id: "rating-1" });
+    });
+
+    it("rejects a rating-type item given rangeText instead of rating", async () => {
+      await expect(
+        service.rate(buildDto({ rating: undefined, rangeText: "1-10" }), USER, false),
+      ).rejects.toThrow(/rating is required/);
+      expect(prisma.skillRating.upsert).not.toHaveBeenCalled();
+    });
+
+    it("accepts a RANGE_TEXT item given rangeText and stores rating: null", async () => {
+      prisma.skillAssessmentItem.findUniqueOrThrow.mockResolvedValue({
+        name: "Counting",
+        group: { valueType: SkillGroupValueType.RANGE_TEXT, classLevelCategories: [] },
+      });
+
+      await service.rate(buildDto({ rating: undefined, rangeText: "1-10" }), USER, false);
+
+      expect(prisma.skillRating.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ rating: null, rangeText: "1-10" }) }),
+      );
+    });
+
+    it("rejects a RANGE_TEXT item given rating instead of rangeText", async () => {
+      prisma.skillAssessmentItem.findUniqueOrThrow.mockResolvedValue({
+        name: "Counting",
+        group: { valueType: SkillGroupValueType.RANGE_TEXT, classLevelCategories: [] },
+      });
+
+      await expect(service.rate(buildDto(), USER, false)).rejects.toThrow(/rangeText is required/);
+      expect(prisma.skillRating.upsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects rating a student outside the item's restricted class-level categories, even as an Admin override", async () => {
+      prisma.skillAssessmentItem.findUniqueOrThrow.mockResolvedValue({
+        name: "Counting",
+        group: { valueType: SkillGroupValueType.RANGE_TEXT, classLevelCategories: [{ classLevelCategory: "RECEPTION" }] },
+      });
+
+      await expect(service.rate(buildDto({ rating: undefined, rangeText: "1-10" }), USER, true)).rejects.toThrow(
+        /does not apply to this student's class level/,
+      );
+      expect(prisma.skillRating.upsert).not.toHaveBeenCalled();
+    });
+
+    it("allows a restricted item when the student's class level matches", async () => {
+      prisma.skillAssessmentItem.findUniqueOrThrow.mockResolvedValue({
+        name: "Sounding",
+        group: { valueType: SkillGroupValueType.RANGE_TEXT, classLevelCategories: [{ classLevelCategory: "JSS" }] },
+      });
+
+      await service.rate(buildDto({ rating: undefined, rangeText: "a-f" }), USER, false);
+
+      expect(prisma.skillRating.upsert).toHaveBeenCalled();
     });
   });
 });

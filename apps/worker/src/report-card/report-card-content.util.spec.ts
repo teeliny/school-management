@@ -184,22 +184,35 @@ describe("buildFullTermContent (full-term report content assembly)", () => {
     expect(content.overallRemark).toBe("Excellent");
   });
 
-  it("splits skill ratings into PSYCHOMOTOR and AFFECTIVE_COGNITIVE buckets", () => {
+  it("buckets skill ratings by group name, groups sorted by groupOrder then items by itemOrder", () => {
     const content = buildFullTermContent(
       [],
       [],
       NO_OVERALL,
       [
-        { category: "PSYCHOMOTOR", name: "Handwriting", rating: "GOOD" },
-        { category: "AFFECTIVE_COGNITIVE", name: "Punctuality", rating: "EXCELLENT" },
+        { groupName: "Affective/Cognitive Skills", groupOrder: 2, itemOrder: 1, name: "Punctuality", rating: "EXCELLENT" },
+        { groupName: "Psychomotor Skills", groupOrder: 1, itemOrder: 2, name: "Sports and Games", rating: "GOOD" },
+        { groupName: "Psychomotor Skills", groupOrder: 1, itemOrder: 1, name: "Handwriting", rating: "VERY_GOOD" },
       ],
       { classTeacherComment: null, principalComment: null },
     );
 
-    expect(content.psychomotorSkills).toEqual([{ category: "PSYCHOMOTOR", name: "Handwriting", rating: "GOOD" }]);
-    expect(content.affectiveCognitiveSkills).toEqual([
-      { category: "AFFECTIVE_COGNITIVE", name: "Punctuality", rating: "EXCELLENT" },
+    expect(content.skillGroups).toEqual([
+      {
+        name: "Psychomotor Skills",
+        items: [
+          { name: "Handwriting", rating: "VERY_GOOD" },
+          { name: "Sports and Games", rating: "GOOD" },
+        ],
+      },
+      { name: "Affective/Cognitive Skills", items: [{ name: "Punctuality", rating: "EXCELLENT" }] },
     ]);
+  });
+
+  it("omits a group entirely when it has no ratings, rather than an empty section", () => {
+    const content = buildFullTermContent([], [], NO_OVERALL, [], { classTeacherComment: null, principalComment: null });
+
+    expect(content.skillGroups).toEqual([]);
   });
 
   it("passes the two required comments through unchanged", () => {

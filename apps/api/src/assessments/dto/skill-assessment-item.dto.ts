@@ -1,13 +1,12 @@
 import { PartialType } from "@nestjs/mapped-types";
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, IsUUID } from "class-validator";
-import { SkillCategory } from "@prisma/client";
+import { IsBoolean, IsInt, IsOptional, IsString, IsUUID } from "class-validator";
 
 export class CreateSkillAssessmentItemDto {
   @IsUUID()
   academicSessionId!: string;
 
-  @IsEnum(SkillCategory)
-  category!: SkillCategory;
+  @IsUUID()
+  groupId!: string;
 
   @IsString()
   name!: string;

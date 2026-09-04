@@ -505,7 +505,7 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
       renderStatBoxRow(doc, boxes);
     }
 
-    renderSkillSectionsSideBySide(doc, content.psychomotorSkills, content.affectiveCognitiveSkills);
+    renderSkillGroups(doc, content.skillGroups);
 
     sectionHeader(doc, "Class Teacher's Comment");
     commentBox(doc, content.classTeacherComment);
@@ -558,48 +558,49 @@ function renderSkillTable(
 }
 
 /**
- * Psychomotor and Affective/Cognitive skills side by side (two columns)
- * rather than stacked — both categories together are short enough that
- * stacking them was pushing the report past a single page for no reason.
- * Each column gets its own scoped title; a shared page-break check runs
- * once up front since both columns need to land on the same page together.
+ * Skill groups (Admin-named, e.g. "Psychomotor Skills"/"Affective/Cognitive
+ * Skills" for one class group, "Numbers"/"Letters"/"Social & Character
+ * Skills" for another — see SkillGroup in schema.prisma) laid out two per
+ * row rather than stacked one-per-row — a page of narrow single-column
+ * tables would push the report well past one page for no reason. Only
+ * groups this student actually has a rating in are rendered at all (empty
+ * groups the student's class level doesn't use, e.g. "Numbers" on a JSS
+ * report, are skipped entirely rather than shown as an empty placeholder
+ * section) — an odd group out at the end renders full width alone.
  */
-function renderSkillSectionsSideBySide(
-  doc: PDFKit.PDFDocument,
-  psychomotorSkills: { name: string; rating: string }[],
-  affectiveCognitiveSkills: { name: string; rating: string }[],
-): void {
-  if (doc.y > doc.page.height - doc.page.margins.bottom - 130) doc.addPage();
+function renderSkillGroups(doc: PDFKit.PDFDocument, groups: { name: string; items: { name: string; rating: string }[] }[]): void {
+  const nonEmptyGroups = groups.filter((g) => g.items.length > 0);
+  if (nonEmptyGroups.length === 0) return;
 
   const left = doc.page.margins.left;
   const gap = 16;
   const colWidth = (contentWidth(doc) - gap) / 2;
   const rightX = left + colWidth + gap;
-  const startY = doc.y + 3;
 
-  const psychTableY = columnHeader(doc, "Psychomotor Skills", left, colWidth, startY);
-  const affTableY = columnHeader(doc, "Affective/Cognitive Skills", rightX, colWidth, startY);
-  const tableY = Math.max(psychTableY, affTableY);
+  for (let i = 0; i < nonEmptyGroups.length; i += 2) {
+    const pair = nonEmptyGroups.slice(i, i + 2);
+    if (doc.y > doc.page.height - doc.page.margins.bottom - 130) doc.addPage();
+    const startY = doc.y + 3;
 
-  if (psychomotorSkills.length === 0) {
-    doc.fillColor(MUTED).font("Helvetica-Oblique").fontSize(9).text("No ratings recorded yet.", left, tableY, { width: colWidth });
-  } else {
-    renderSkillTable(doc, psychomotorSkills, { x: left, y: tableY }, colWidth);
+    if (pair.length === 1) {
+      const tableY = columnHeader(doc, pair[0]!.name, left, contentWidth(doc), startY);
+      renderSkillTable(doc, pair[0]!.items, { x: left, y: tableY }, contentWidth(doc));
+    } else {
+      const leftTableY = columnHeader(doc, pair[0]!.name, left, colWidth, startY);
+      const rightTableY = columnHeader(doc, pair[1]!.name, rightX, colWidth, startY);
+      const tableY = Math.max(leftTableY, rightTableY);
+
+      renderSkillTable(doc, pair[0]!.items, { x: left, y: tableY }, colWidth);
+      const afterLeftY = doc.y;
+
+      renderSkillTable(doc, pair[1]!.items, { x: rightX, y: tableY }, colWidth);
+      const afterRightY = doc.y;
+
+      doc.y = Math.max(afterLeftY, afterRightY);
+    }
+
+    doc.fillColor("black").font("Helvetica").fontSize(10);
+    doc.x = left;
+    doc.y += 10;
   }
-  const afterPsychY = doc.y;
-
-  if (affectiveCognitiveSkills.length === 0) {
-    doc
-      .fillColor(MUTED)
-      .font("Helvetica-Oblique")
-      .fontSize(9)
-      .text("No ratings recorded yet.", rightX, tableY, { width: colWidth });
-  } else {
-    renderSkillTable(doc, affectiveCognitiveSkills, { x: rightX, y: tableY }, colWidth);
-  }
-  const afterAffY = doc.y;
-
-  doc.fillColor("black").font("Helvetica").fontSize(10);
-  doc.x = left;
-  doc.y = Math.max(afterPsychY, afterAffY) + 10;
 }

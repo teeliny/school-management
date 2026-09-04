@@ -116,9 +116,19 @@ export interface FullTermOverallInput {
 }
 
 export interface FullTermSkillRatingInput {
-  category: "PSYCHOMOTOR" | "AFFECTIVE_COGNITIVE";
+  groupName: string;
+  // Display order — the group's own order field, then this rating's item's
+  // order within it. Sorted on here rather than trusted from query order,
+  // since a plain SkillRating.findMany has no natural ordering of its own.
+  groupOrder: number;
+  itemOrder: number;
   name: string;
   rating: string;
+}
+
+export interface FullTermSkillGroupContent {
+  name: string;
+  items: { name: string; rating: string }[];
 }
 
 export interface FullTermCommentsInput {
@@ -156,8 +166,12 @@ export interface FullTermContent {
   overallAverage: number | null;
   overallGrade: string | null;
   overallRemark: string | null;
-  psychomotorSkills: FullTermSkillRatingInput[];
-  affectiveCognitiveSkills: FullTermSkillRatingInput[];
+  // In display order — group by group (each group's own `order`), then
+  // item by item within a group (each item's own `order`). Only groups
+  // this student has at least one rating in are ever present (see
+  // buildFullTermContent) — a group the student's class level doesn't use
+  // is simply absent, not an empty section.
+  skillGroups: FullTermSkillGroupContent[];
   classTeacherComment: string | null;
   principalComment: string | null;
   // PRD §3.6/§3.7: "days present / school-days-opened this term" — null when
@@ -169,8 +183,8 @@ export interface FullTermContent {
 /**
  * The full-term report's content — per-subject breakdown/totals/prior-term
  * columns/grade+remark+position (already resolved by the caller, see
- * FullTermSubjectResultInput's own doc comment) plus skill ratings split by
- * category and the two required comments. Publish-gate completeness itself
+ * FullTermSubjectResultInput's own doc comment) plus skill ratings grouped
+ * by SkillGroup and the two required comments. Publish-gate completeness itself
  * is checked in TermReportCardService (api), not here — generation always
  * renders whatever exists, per the PRD FR4.7 design (Admin can preview an
  * incomplete card before every piece is in).
@@ -191,8 +205,7 @@ export function buildFullTermContent(
     overallAverage: overall.average,
     overallGrade: overall.grade,
     overallRemark: overall.remark,
-    psychomotorSkills: skillRatings.filter((s) => s.category === "PSYCHOMOTOR"),
-    affectiveCognitiveSkills: skillRatings.filter((s) => s.category === "AFFECTIVE_COGNITIVE"),
+    skillGroups: groupSkillRatings(skillRatings),
     classTeacherComment: comments.classTeacherComment,
     principalComment: comments.principalComment,
     attendance: attendance && {
@@ -201,4 +214,28 @@ export function buildFullTermContent(
       percentage: computeAttendancePercentage(attendance.daysPresent, attendance.schoolDaysOpened),
     },
   };
+}
+
+/**
+ * Buckets flat skill ratings by their group name, sorted groups-first by
+ * groupOrder then items-within-a-group by itemOrder — a plain
+ * SkillRating.findMany has no natural ordering, so without this the PDF
+ * previously rendered items in whatever order Postgres happened to return
+ * them (a real bug: "Numbers"/"Letters" items interleaved with unrelated
+ * ones instead of sitting together).
+ */
+function groupSkillRatings(skillRatings: FullTermSkillRatingInput[]): FullTermSkillGroupContent[] {
+  const byGroup = new Map<string, { order: number; items: FullTermSkillRatingInput[] }>();
+  for (const rating of skillRatings) {
+    const entry = byGroup.get(rating.groupName) ?? { order: rating.groupOrder, items: [] };
+    entry.items.push(rating);
+    byGroup.set(rating.groupName, entry);
+  }
+
+  return [...byGroup.entries()]
+    .sort(([, a], [, b]) => a.order - b.order)
+    .map(([name, { items }]) => ({
+      name,
+      items: [...items].sort((a, b) => a.itemOrder - b.itemOrder).map((item) => ({ name: item.name, rating: item.rating })),
+    }));
 }

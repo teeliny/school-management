@@ -11,7 +11,6 @@ import {
   GuardianRelationship,
   ReportCommentType,
   Role,
-  SkillCategory,
   SkillRatingValue,
   StaffCategory,
   SubjectType,
@@ -794,74 +793,51 @@ async function main() {
     }
 
     // -------------------------------------------------------------------
-    // Skill assessment items for the session (PRD FR4.5 default lists)
+    // Skill groups + assessment items for the session (PRD FR4.5 default
+    // lists) — SkillGroup replaces the old fixed PSYCHOMOTOR/
+    // AFFECTIVE_COGNITIVE SkillCategory enum with an admin-named bucket
+    // (same "named group" shape as ClassSubjectConcurrencyGroup), left
+    // unrestricted here (applies to every class level) same as the old
+    // enum's behavior.
     // -------------------------------------------------------------------
-    const skillDefs: {
-      category: SkillCategory;
-      name: string;
-      order: number;
-    }[] = [
-      { category: SkillCategory.PSYCHOMOTOR, name: "Handwriting", order: 1 },
-      { category: SkillCategory.PSYCHOMOTOR, name: "Verbal Fluency", order: 2 },
-      {
-        category: SkillCategory.PSYCHOMOTOR,
-        name: "Sports and Games",
-        order: 3,
-      },
-      { category: SkillCategory.PSYCHOMOTOR, name: "Musical Skills", order: 4 },
-      {
-        category: SkillCategory.PSYCHOMOTOR,
-        name: "Handling of Tools and Instruments",
-        order: 5,
-      },
-      {
-        category: SkillCategory.AFFECTIVE_COGNITIVE,
-        name: "Punctuality",
-        order: 1,
-      },
-      {
-        category: SkillCategory.AFFECTIVE_COGNITIVE,
-        name: "Neatness",
-        order: 2,
-      },
-      {
-        category: SkillCategory.AFFECTIVE_COGNITIVE,
-        name: "Honesty",
-        order: 3,
-      },
-      {
-        category: SkillCategory.AFFECTIVE_COGNITIVE,
-        name: "Leadership",
-        order: 4,
-      },
-      {
-        category: SkillCategory.AFFECTIVE_COGNITIVE,
-        name: "Relationship with Others",
-        order: 5,
-      },
+    const skillGroupDefs = [
+      { name: "Psychomotor Skills", order: 1 },
+      { name: "Affective/Cognitive Skills", order: 2 },
+    ];
+    const skillGroupIdByName: Record<string, string> = {};
+    for (const def of skillGroupDefs) {
+      const group = await prisma.skillGroup.upsert({
+        where: { academicSessionId_name: { academicSessionId: session.id, name: def.name } },
+        update: {},
+        create: { academicSessionId: session.id, name: def.name, order: def.order },
+      });
+      skillGroupIdByName[def.name] = group.id;
+    }
+
+    const skillDefs: { group: string; name: string; order: number }[] = [
+      { group: "Psychomotor Skills", name: "Handwriting", order: 1 },
+      { group: "Psychomotor Skills", name: "Verbal Fluency", order: 2 },
+      { group: "Psychomotor Skills", name: "Sports and Games", order: 3 },
+      { group: "Psychomotor Skills", name: "Musical Skills", order: 4 },
+      { group: "Psychomotor Skills", name: "Handling of Tools and Instruments", order: 5 },
+      { group: "Affective/Cognitive Skills", name: "Punctuality", order: 1 },
+      { group: "Affective/Cognitive Skills", name: "Neatness", order: 2 },
+      { group: "Affective/Cognitive Skills", name: "Honesty", order: 3 },
+      { group: "Affective/Cognitive Skills", name: "Leadership", order: 4 },
+      { group: "Affective/Cognitive Skills", name: "Relationship with Others", order: 5 },
     ];
     for (const def of skillDefs) {
+      const groupId = req(skillGroupIdByName[def.group], `skill group "${def.group}"`);
       const existing = await prisma.skillAssessmentItem.findUnique({
-        where: {
-          academicSessionId_category_name: {
-            academicSessionId: session.id,
-            category: def.category,
-            name: def.name,
-          },
-        },
+        where: { groupId_name: { groupId, name: def.name } },
       });
       if (!existing) {
         await prisma.skillAssessmentItem.create({
-          data: {
-            academicSessionId: session.id,
-            category: def.category,
-            name: def.name,
-            order: def.order,
-          },
+          data: { academicSessionId: session.id, groupId, name: def.name, order: def.order },
         });
       }
     }
-    logger.log(`Skill assessment items ready: ${skillDefs.length} items.`);
+    logger.log(`Skill groups + assessment items ready: ${skillGroupDefs.length} groups, ${skillDefs.length} items.`);
 
     // -------------------------------------------------------------------
     // Grade scale — school-wide (not session/term-scoped), matching the
