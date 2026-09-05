@@ -24,6 +24,7 @@ export function AcceptInviteForm() {
   const [password, setPassword] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -34,6 +35,13 @@ export function AcceptInviteForm() {
       .then(setInvitation)
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Invitation not found"));
   }, [token]);
+
+  useEffect(() => {
+    if (!invitation || invitation.status === "PENDING") return;
+    apiFetch("/auth/me", { auth: true })
+      .then(() => setIsLoggedIn(true))
+      .catch(() => setIsLoggedIn(false));
+  }, [invitation]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,9 +68,18 @@ export function AcceptInviteForm() {
 
   if (invitation.status !== "PENDING") {
     return (
-      <p className="text-sm text-muted">
-        This invitation is {invitation.status.toLowerCase()} and can no longer be accepted.
-      </p>
+      <div className="w-[380px] max-w-full rounded-card border border-border bg-card px-8 py-8 text-center">
+        <p className="mb-5 text-sm text-muted">
+          This invitation is {invitation.status.toLowerCase()} and can no longer be accepted.
+        </p>
+        <Button
+          type="button"
+          onClick={() => router.push(isLoggedIn ? "/dashboard" : "/login")}
+          className="w-full justify-center"
+        >
+          {isLoggedIn ? "Go to dashboard" : "Go to login"}
+        </Button>
+      </div>
     );
   }
 
