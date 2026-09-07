@@ -3,6 +3,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
+import type { RequestUser } from "../auth/jwt.strategy";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { CreateClassArmDto, UpdateClassArmDto } from "./dto/class-arm.dto";
 
 const CLASS_ARM_DETAIL_INCLUDE = { classLevel: { select: { name: true, category: true } } } as const;
@@ -27,9 +30,27 @@ export class ClassArmService {
     return this.prisma.classArm.create({ data: dto });
   }
 
-  async findAll(classLevelId?: string, academicSessionId?: string) {
+  /**
+   * `user`, when supplied (the controller always passes it), narrows the
+   * list for a Principal/Headteacher to their own section (JSS/SSS vs.
+   * Creche/Reception/Nursery/Primary) — this is the shared class-arm picker
+   * behind Report Cards/Attendance/Skills & Comments/Planner/Broadsheet/
+   * Gradebook, so fixing it here fixes every one of those pages at once,
+   * rather than each frontend page filtering the same unscoped list
+   * separately. Safe to apply unconditionally: Super-Admin/Admin/Registrar
+   * (including class-arm-manager.tsx's Admin-only CRUD page) get `null`
+   * from resolvePrincipalHeadteacherCategories and stay fully unscoped, and
+   * a plain STAFF member (no Principal/Headteacher title) also gets `null`
+   * — this endpoint has never restricted them and still doesn't.
+   */
+  async findAll(classLevelId?: string, academicSessionId?: string, user?: RequestUser) {
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
     const arms = await this.prisma.classArm.findMany({
-      where: { classLevelId: classLevelId || undefined, academicSessionId: academicSessionId || undefined },
+      where: {
+        classLevelId: classLevelId || undefined,
+        academicSessionId: academicSessionId || undefined,
+        ...(categories ? { classLevel: { category: { in: categories } } } : {}),
+      },
       include: CLASS_ARM_DETAIL_INCLUDE,
       orderBy: { name: "asc" },
     });
@@ -62,8 +83,12 @@ export class ClassArmController {
   }
 
   @Get()
-  findAll(@Query("classLevelId") classLevelId?: string, @Query("academicSessionId") academicSessionId?: string) {
-    return this.service.findAll(classLevelId, academicSessionId);
+  findAll(
+    @CurrentUser() user: RequestUser,
+    @Query("classLevelId") classLevelId?: string,
+    @Query("academicSessionId") academicSessionId?: string,
+  ) {
+    return this.service.findAll(classLevelId, academicSessionId, user);
   }
 
   @Get(":id")

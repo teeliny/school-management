@@ -1,14 +1,30 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "../molecules/alert-dialog";
 import { cn } from "../../lib/cn";
 import type { ClassLevelCategory, SubjectType } from "../../lib/subject-applicability";
+
+interface ClassLevelOption {
+  id: string;
+  name: string;
+  order: number;
+  category: ClassLevelCategory;
+}
 
 interface ChildSubject {
   id: string;
@@ -53,17 +69,58 @@ const TYPE_VARIANT: Record<ClassSubjectSummary["type"], BadgeVariant> = {
 // that's also where class-group assignments are added/removed/changed now.
 export function SubjectList({
   canManage,
+  canDelete,
   onEdit,
 }: {
   canManage?: boolean;
+  canDelete?: boolean;
   onEdit?: (subject: SubjectListItem) => void;
 }) {
+  const queryClient = useQueryClient();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function remove(id: string) {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await apiFetch(`/subjects/${id}`, { method: "DELETE", auth: true });
+      setDeletingId(null);
+      queryClient.invalidateQueries({ queryKey: ["subjects"] });
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : "Failed to delete subject");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const { data: classLevels = [] } = useQuery({
+    queryKey: ["class-levels"],
+    queryFn: () => apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }),
+  });
+  const [classLevelId, setClassLevelId] = useState<string>("");
+  const selectedClassLevel = classLevels.find((level) => level.id === classLevelId);
+
   const {
     data: subjects,
     error: queryError,
   } = useQuery({
-    queryKey: ["subjects"],
-    queryFn: () => apiFetch<SubjectListItem[]>("/subjects", { auth: true }),
+    // classLevelId narrows to one specific ClassLevel (e.g. "JSS 2") — the
+    // backend's classLevelId filter only takes effect alongside
+    // classLevelCategory (SubjectService.findAll), so both are sent together,
+    // derived from the selected ClassLevel's own category rather than asking
+    // the user to pick both.
+    queryKey: ["subjects", classLevelId],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (selectedClassLevel) {
+        params.set("classLevelCategory", selectedClassLevel.category);
+        params.set("classLevelId", selectedClassLevel.id);
+      }
+      const query = params.toString();
+      return apiFetch<SubjectListItem[]>(`/subjects${query ? `?${query}` : ""}`, { auth: true });
+    },
   });
   const error = queryError instanceof ApiError ? queryError.message : queryError ? "Failed to load subjects" : null;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -87,19 +144,54 @@ export function SubjectList({
     );
   }, [subjects, search]);
 
+  const showActions = canManage || canDelete;
+
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!subjects) return <p className="text-sm text-muted">Loading…</p>;
-  if (subjects.length === 0) return <p className="text-sm text-muted">No subjects defined yet.</p>;
 
   return (
     <div className="space-y-3">
-      <Input
-        type="search"
-        placeholder="Search by name or code…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        aria-label="Search subjects"
-      />
+      {deleteError && (
+        <div className="flex items-start justify-between gap-3 rounded-md border border-danger/30 bg-danger-bg px-3 py-2 text-sm text-danger">
+          <span>{deleteError}</span>
+          <button
+            type="button"
+            onClick={() => setDeleteError(null)}
+            className="shrink-0 text-danger/70 hover:text-danger"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          type="search"
+          placeholder="Search by name or code…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search subjects"
+          className="sm:flex-1"
+        />
+        <Select value={classLevelId || "ALL"} onValueChange={(v) => setClassLevelId(v === "ALL" ? "" : v)}>
+          <SelectTrigger className="sm:w-56" aria-label="Filter by class level">
+            <SelectValue placeholder="All class levels" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All class levels</SelectItem>
+            {classLevels.map((level) => (
+              <SelectItem key={level.id} value={level.id}>
+                {level.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {subjects.length === 0 ? (
+        <p className="text-sm text-muted">
+          {classLevelId ? `No subjects assigned to ${selectedClassLevel?.name ?? "this class level"}.` : "No subjects defined yet."}
+        </p>
+      ) : (
       <div className="max-h-[420px] overflow-auto">
         <table className="w-full text-left text-[12.5px]">
           <thead>
@@ -108,13 +200,13 @@ export function SubjectList({
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Name</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Class groups</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Notes</th>
-              {canManage && <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Actions</th>}
+              {showActions && <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {filteredSubjects?.length === 0 && (
               <tr>
-                <td colSpan={canManage ? 5 : 4} className="py-3 text-muted">
+                <td colSpan={showActions ? 5 : 4} className="py-3 text-muted">
                   No subjects match &ldquo;{search}&rdquo;.
                 </td>
               </tr>
@@ -170,11 +262,43 @@ export function SubjectList({
                         {subject.requiresCalculation && <Badge variant="muted">Calculation</Badge>}
                       </div>
                     </td>
-                    {canManage && (
+                    {showActions && (
                       <td className="py-2.5">
-                        <Button type="button" variant="outline" size="sm" onClick={() => onEdit?.(subject)}>
-                          Edit
-                        </Button>
+                        <div className="flex justify-end gap-1.5">
+                          {canManage && (
+                            <Button type="button" variant="outline" size="sm" onClick={() => onEdit?.(subject)}>
+                              Edit
+                            </Button>
+                          )}
+                          {canDelete && (
+                            <AlertDialog
+                              open={deletingId === subject.id}
+                              onOpenChange={(open) => setDeletingId(open ? subject.id : null)}
+                            >
+                              <AlertDialogTrigger asChild>
+                                <Button type="button" variant="outline" size="sm">
+                                  Delete
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogTitle className="text-lg font-semibold">Delete {subject.name}?</AlertDialogTitle>
+                                <AlertDialogDescription className="mt-2 text-sm text-muted">
+                                  This also deletes every score, enrollment, and class-group assignment recorded
+                                  against this subject{subject.isGroup ? " and its child subjects" : ""}. This cannot
+                                  be undone.
+                                </AlertDialogDescription>
+                                <div className="mt-4 flex justify-end gap-2">
+                                  <AlertDialogCancel asChild>
+                                    <Button variant="outline">Cancel</Button>
+                                  </AlertDialogCancel>
+                                  <Button disabled={deleting} onClick={() => remove(subject.id)}>
+                                    Confirm delete
+                                  </Button>
+                                </div>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -192,7 +316,7 @@ export function SubjectList({
                         </td>
                         <td className="py-2 pr-4" />
                         <td className="py-2 pr-4" />
-                        {canManage && <td className="py-2" />}
+                        {showActions && <td className="py-2" />}
                       </tr>
                     ))}
                 </Fragment>
@@ -201,6 +325,7 @@ export function SubjectList({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

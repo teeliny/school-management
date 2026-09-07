@@ -27,6 +27,10 @@ export default function SubjectsPage() {
     user.roles.includes("SUPER_ADMIN") ||
     user.roles.includes("ADMIN") ||
     ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
+  // Deleting a subject cascades onto ScoreEntry/StudentSubjectEnrollment/
+  // ClassSubject rows, so it's Super-Admin-only — narrower than canManage
+  // above, same carve-out as SubjectController.remove on the backend.
+  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
 
   function handleEdit(subject: SubjectListItem) {
     setEditingSubject({
@@ -46,7 +50,7 @@ export default function SubjectsPage() {
       <div className="space-y-4">
         <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
           <CollapsibleCard title="Subject catalogue">
-            <SubjectList canManage={canManage} onEdit={handleEdit} />
+            <SubjectList canManage={canManage} canDelete={isSuperAdmin} onEdit={handleEdit} />
           </CollapsibleCard>
 
           {canManage && (

@@ -467,36 +467,62 @@ export class StudentService {
    * that scoped rules need row-level checks against StaffAssignment/
    * StudentGuardian, evaluated per-request.
    *
-   * `filters.classArmId`/`search` narrow within that row-level scope;
+   * `filters.classArmId`/`classLevelId`/`classLevelCategory`/`search` narrow
+   * within that row-level scope (composed via Prisma `AND`, not a flat
+   * object spread — see the comment on `conditions` below for why that
+   * distinction matters for a Principal/Headteacher's own section scope);
    * `skip`/`take` paginate. `take` being present is what switches the return
    * shape to `{ data, total }` — omitting it (every caller before this)
    * keeps the plain-array response so no existing consumer breaks.
    */
   async findAllForUser(
     user: RequestUser,
-    filters: { classArmId?: string; classLevelCategory?: ClassLevelCategory; search?: string; skip?: number; take?: number } = {},
+    filters: {
+      classArmId?: string;
+      classLevelId?: string;
+      classLevelCategory?: ClassLevelCategory;
+      search?: string;
+      skip?: number;
+      take?: number;
+    } = {},
   ) {
     const scopeWhere = await this.scopeWhereForUser(user);
     if (scopeWhere === null) return filters.take !== undefined ? { data: [], total: 0 } : [];
 
-    const mergedWhere: Prisma.StudentProfileWhereInput = {
-      ...scopeWhere,
-      ...(filters.classArmId ? { currentClassId: filters.classArmId } : {}),
-      ...(filters.classLevelCategory ? { currentClass: { classLevel: { category: filters.classLevelCategory } } } : {}),
+    const currentClassWhere: Prisma.ClassArmWhereInput = {};
+    if (filters.classLevelId) currentClassWhere.classLevelId = filters.classLevelId;
+    if (filters.classLevelCategory) currentClassWhere.classLevel = { category: filters.classLevelCategory };
+
+    // Composed via a Prisma `AND` array, not a flat object spread — scopeWhere
+    // may itself key on `currentClass` (a Principal/Headteacher's own section
+    // restriction, resolvePrincipalHeadteacherCategories) or `currentClassId`
+    // (a class/subject teacher's assigned arms), and a flat spread would let
+    // a caller-supplied classLevelId/classLevelCategory/classArmId silently
+    // *replace* that restriction instead of narrowing within it as the
+    // filters are documented to do above.
+    const conditions: Prisma.StudentProfileWhereInput[] = [
+      scopeWhere,
+      ...(filters.classArmId ? [{ currentClassId: filters.classArmId }] : []),
+      ...(Object.keys(currentClassWhere).length > 0 ? [{ currentClass: currentClassWhere }] : []),
       ...(filters.search
-        ? {
-            OR: [
-              { admissionNumber: { contains: filters.search, mode: "insensitive" as const } },
-              { user: { firstName: { contains: filters.search, mode: "insensitive" as const } } },
-              { user: { lastName: { contains: filters.search, mode: "insensitive" as const } } },
-            ],
-          }
-        : {}),
-    };
+        ? [
+            {
+              OR: [
+                { admissionNumber: { contains: filters.search, mode: "insensitive" as const } },
+                { user: { firstName: { contains: filters.search, mode: "insensitive" as const } } },
+                { user: { lastName: { contains: filters.search, mode: "insensitive" as const } } },
+              ],
+            },
+          ]
+        : []),
+    ].filter((c) => Object.keys(c).length > 0);
+
     // An empty `where` is passed as `undefined` rather than `{}` so an
     // unscoped (Admin/school-wide) list is issued exactly as it was before
-    // filters existed — same query, same call shape.
-    const where = Object.keys(mergedWhere).length > 0 ? mergedWhere : undefined;
+    // filters existed — same query, same call shape. A single condition is
+    // passed unwrapped (not `{ AND: [condition] }`) for the same reason.
+    const where: Prisma.StudentProfileWhereInput | undefined =
+      conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { AND: conditions };
 
     if (filters.take === undefined) {
       return this.prisma.studentProfile.findMany({
@@ -656,6 +682,7 @@ export class StudentController {
   findAll(
     @CurrentUser() user: RequestUser,
     @Query("classArmId") classArmId?: string,
+    @Query("classLevelId") classLevelId?: string,
     @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory,
     @Query("search") search?: string,
     @Query("skip") skip?: string,
@@ -663,6 +690,7 @@ export class StudentController {
   ) {
     return this.service.findAllForUser(user, {
       classArmId,
+      classLevelId,
       classLevelCategory,
       search,
       skip: skip === undefined ? undefined : Number(skip),

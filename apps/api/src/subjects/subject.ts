@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Injectable,
   Param,
@@ -268,8 +269,17 @@ export class SubjectController {
   }
 
   @Delete(":id")
-  @CheckPolicies((ability) => ability.can("manage", "Subject"))
-  remove(@Param("id") id: string) {
+  // Super-Admin-only carve-out, not the plain CASL "manage Subject" check
+  // every other route on this controller uses — Admin and Principal/
+  // Headteacher already have "manage" (create/edit/disable), but deleting a
+  // subject outright cascades onto ScoreEntry/StudentSubjectEnrollment/
+  // ClassSubject rows (see the onDelete: Cascade relations in schema.prisma)
+  // and is reserved for the owner, same pattern as
+  // TermReportCardController.remove.
+  remove(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+    if (!user.roles.includes("SUPER_ADMIN")) {
+      throw new ForbiddenException("Only the Super-Admin can delete a subject");
+    }
     return this.service.remove(id);
   }
 

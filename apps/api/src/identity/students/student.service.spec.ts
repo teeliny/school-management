@@ -199,6 +199,35 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
   });
 
+  it("narrows a PRINCIPAL's own JSS/SSS section scope by an explicit classLevelId, rather than the filter overwriting it", async () => {
+    prisma.staffAssignment.count.mockResolvedValueOnce(0); // no REGISTRAR/BURSAR
+
+    await service.findAllForUser(staffUser(["PRINCIPAL"]), { classLevelId: "level-jss2" });
+
+    // Composed via AND — a caller-supplied classLevelId must narrow within
+    // the Principal's own section, never replace it outright.
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          AND: [
+            { currentClass: { classLevel: { category: { in: ["JSS", "SSS"] } } } },
+            { currentClass: { classLevelId: "level-jss2" } },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("narrows Admin's unscoped list by classLevelId without wrapping in AND (single condition stays unwrapped)", async () => {
+    const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+    await service.findAllForUser(adminUser, { classLevelId: "level-jss2" });
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { currentClass: { classLevelId: "level-jss2" } } }),
+    );
+  });
+
   it("falls back to class-arm scoping for STAFF with no school-wide assignment", async () => {
     prisma.staffAssignment.count.mockResolvedValueOnce(0);
     prisma.staffAssignment.findMany.mockResolvedValueOnce([{ classArmId: "arm-1" }]);

@@ -2,12 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { User as UserIcon } from "lucide-react";
+import type { ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { PhotoUploadButton } from "../molecules/photo-upload-button";
+
+interface ClassLevelOption {
+  id: string;
+  name: string;
+  order: number;
+  category: ClassLevelCategory;
+}
 
 interface StudentListItem {
   id: string;
@@ -47,15 +57,22 @@ export function PeopleList({
   canEdit?: boolean;
   onEdit?: (id: string) => void;
 }) {
+  const { data: classLevels = [] } = useQuery({
+    queryKey: ["class-levels"],
+    queryFn: () => apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }),
+  });
+  const [classLevelId, setClassLevelId] = useState("");
+
   const [students, setStudents] = useState<StudentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const load = useCallback(() => {
-    apiFetch<StudentListItem[]>("/students", { auth: true })
+    const query = classLevelId ? `?classLevelId=${classLevelId}` : "";
+    apiFetch<StudentListItem[]>(`/students${query}`, { auth: true })
       .then(setStudents)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load students"));
-  }, []);
+  }, [classLevelId]);
 
   useEffect(() => {
     load();
@@ -74,17 +91,37 @@ export function PeopleList({
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!students) return <p className="text-sm text-muted">Loading…</p>;
-  if (students.length === 0) return <p className="text-sm text-muted">No students visible to you yet.</p>;
 
   return (
     <div className="space-y-3">
-      <Input
-        type="search"
-        placeholder="Search by name or admission number…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        aria-label="Search students"
-      />
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          type="search"
+          placeholder="Search by name or admission number…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search students"
+          className="sm:flex-1"
+        />
+        <Select value={classLevelId || "ALL"} onValueChange={(v) => setClassLevelId(v === "ALL" ? "" : v)}>
+          <SelectTrigger className="sm:w-56" aria-label="Filter by class level">
+            <SelectValue placeholder="All class levels" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All class levels</SelectItem>
+            {classLevels.map((level) => (
+              <SelectItem key={level.id} value={level.id}>
+                {level.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {students.length === 0 ? (
+        <p className="text-sm text-muted">
+          {classLevelId ? "No students in this class level." : "No students visible to you yet."}
+        </p>
+      ) : (
       <div className="max-h-[420px] overflow-auto">
         <table className="w-full text-left text-[12.5px]">
           <thead>
@@ -156,6 +193,7 @@ export function PeopleList({
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
