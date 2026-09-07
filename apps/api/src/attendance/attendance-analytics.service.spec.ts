@@ -1,7 +1,13 @@
 import { AttendanceAnalyticsService } from "./attendance-analytics";
+import type { RequestUser } from "../auth/jwt.strategy";
 
 // Mon 2026-03-02 .. Fri 2026-03-06 — 5 weekdays, no holidays.
 const TERM = { id: "term-1", startDate: new Date("2026-03-02T00:00:00.000Z"), endDate: new Date("2026-03-06T00:00:00.000Z") };
+
+// Admin is exempt from resolvePrincipalHeadteacherCategories' scoping, same
+// as every other test in this file that predates the Principal/Headteacher
+// per-student/per-class-arm scope check.
+const ADMIN_USER: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
 
 function buildPrismaMock() {
   return {
@@ -28,7 +34,7 @@ describe("AttendanceAnalyticsService (PRD §6.5 FR5.3)", () => {
     ]);
     const service = new AttendanceAnalyticsService(prisma as never, buildSchoolProfileMock() as never);
 
-    const result = await service.forStudent("student-1", "term-1");
+    const result = await service.forStudent("student-1", "term-1", ADMIN_USER);
 
     expect(result).toMatchObject({ schoolDaysOpened: 5, present: 4, absent: 1, late: 0, excused: 0, percentage: 80 });
   });
@@ -38,7 +44,7 @@ describe("AttendanceAnalyticsService (PRD §6.5 FR5.3)", () => {
     const schoolProfile = { get: jest.fn().mockResolvedValue({ attendanceGranularity: "MORNING_AND_AFTERNOON" }) };
     const service = new AttendanceAnalyticsService(prisma as never, schoolProfile as never);
 
-    const result = await service.forStudent("student-1", "term-1");
+    const result = await service.forStudent("student-1", "term-1", ADMIN_USER);
 
     expect(result.schoolDaysOpened).toBe(10);
   });
@@ -52,7 +58,7 @@ describe("AttendanceAnalyticsService (PRD §6.5 FR5.3)", () => {
     });
     const service = new AttendanceAnalyticsService(prisma as never, buildSchoolProfileMock() as never);
 
-    const result = await service.forStudent("student-1", "term-1");
+    const result = await service.forStudent("student-1", "term-1", ADMIN_USER);
 
     expect(result.schoolDaysOpened).toBe(0);
     expect(result.percentage).toBeNull();
@@ -74,7 +80,7 @@ describe("AttendanceAnalyticsService (PRD §6.5 FR5.3)", () => {
     ]);
     const service = new AttendanceAnalyticsService(prisma as never, buildSchoolProfileMock() as never);
 
-    const result = await service.forClassArm("arm-1", "term-1");
+    const result = await service.forClassArm("arm-1", "term-1", ADMIN_USER);
 
     expect(result.students).toHaveLength(2);
     expect(result.students[0]).toMatchObject({ studentId: "student-1", present: 5, percentage: 100 });

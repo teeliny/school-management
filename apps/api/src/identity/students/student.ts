@@ -27,6 +27,7 @@ import type { RequestUser } from "../../auth/jwt.strategy";
 import { UserService } from "../users/user.service";
 import { InvitationService } from "../invitations/invitation.service";
 import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
+import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../../storage/storage-adapter";
 import { CreateStudentDto, GuardianInputDto } from "./dto/create-student.dto";
 import { UpdateStudentDto } from "./dto/update-student.dto";
@@ -451,12 +452,14 @@ export class StudentService {
 
   /**
    * PRD §5 row-level list scoping: SUPER_ADMIN/ADMIN see every student;
-   * STAFF holding an active PRINCIPAL/HEADTEACHER/REGISTRAR assignment
-   * (school-wide roles, not tied to a classArmId) see every student too,
-   * matching their real-world remit (e.g. writing PRINCIPAL report-card
-   * comments for any student, or Registrar enrolling/maintaining any
-   * student — see ability.factory.ts's REGISTRAR block); other STAFF see
-   * students in class arms they hold an active
+   * STAFF holding an active REGISTRAR/BURSAR assignment (school-wide roles,
+   * not tied to a classArmId) see every student too, matching their
+   * real-world remit (e.g. Registrar enrolling/maintaining any student, or
+   * Bursar attaching a fee to any student — see ability.factory.ts's
+   * REGISTRAR block); a PRINCIPAL/HEADTEACHER-held assignment narrows
+   * instead to that title's own section (JSS/SSS vs. Creche/Reception/
+   * Nursery/Primary — resolvePrincipalHeadteacherCategories), not
+   * school-wide; other STAFF see students in class arms they hold an active
    * CLASS_TEACHER or SUBJECT_TEACHER assignment for (subject-level narrowing
    * arrives in Phase 3 once StudentSubjectEnrollment exists); PARENT see
    * their own wards; STUDENT sees only themself. This is plain Prisma
@@ -539,6 +542,8 @@ export class StudentService {
 
     if (user.roles.includes("STAFF")) {
       if (await this.hasActiveSchoolWideAssignment(user.id)) return {};
+      const categories = resolvePrincipalHeadteacherCategories(user);
+      if (categories) return { currentClass: { classLevel: { category: { in: categories } } } };
       const classArmIds = await this.activeAssignedClassArmIds(user.id);
       if (classArmIds.length === 0) return null;
       return { currentClassId: { in: classArmIds } };
@@ -583,6 +588,10 @@ export class StudentService {
 
     if (user.roles.includes("STAFF")) {
       if (await this.hasActiveSchoolWideAssignment(user.id)) return student;
+      const categories = resolvePrincipalHeadteacherCategories(user);
+      if (categories && student.currentClass && categories.includes(student.currentClass.classLevel.category)) {
+        return student;
+      }
       if (student.currentClassId) {
         const classArmIds = await this.activeAssignedClassArmIds(user.id);
         if (classArmIds.includes(student.currentClassId)) return student;
@@ -608,6 +617,9 @@ export class StudentService {
     return [...new Set(assignments.map((a) => a.classArmId).filter((id): id is string => id !== null))];
   }
 
+  // PRINCIPAL/HEADTEACHER are deliberately excluded here — they're scoped to
+  // their own section instead (resolvePrincipalHeadteacherCategories, called
+  // separately by both callers of this method before falling back to it).
   private async hasActiveSchoolWideAssignment(userId: string): Promise<boolean> {
     const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
     if (!staffProfile) return false;
@@ -617,10 +629,9 @@ export class StudentService {
         staffId: staffProfile.id,
         isActive: true,
         // BURSAR needs to find any student to attach an invoice/payment/fee
-        // opt-in to (FeeStructureStudentAssignmentService) — same school-wide
-        // remit shape as PRINCIPAL/HEADTEACHER/REGISTRAR, not tied to a
-        // classArmId.
-        assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
+        // opt-in to (FeeStructureStudentAssignmentService), and REGISTRAR
+        // enrolls/maintains any student — neither is tied to a classArmId.
+        assignmentType: { in: [AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
       },
     });
     return count > 0;

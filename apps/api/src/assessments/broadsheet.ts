@@ -1,10 +1,13 @@
-import { BadRequestException, Controller, Get, Injectable, Query, UseGuards } from "@nestjs/common";
+import { BadRequestException, Controller, ForbiddenException, Get, Injectable, Query, UseGuards } from "@nestjs/common";
 import type { ClassLevelCategory } from "@prisma/client";
 import { findGradeScaleMatch, type GradeScaleRow } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
+import type { RequestUser } from "../auth/jwt.strategy";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 
 interface RankableResult {
   id: string;
@@ -131,16 +134,19 @@ export interface BroadsheetResponse {
 export class BroadsheetService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async build(params: {
-    termId?: string;
-    academicSessionId?: string;
-    classLevelId?: string;
-    classArmId?: string;
-    sortBy?: string;
-    sortDir?: "asc" | "desc";
-    skip?: number;
-    take?: number;
-  }): Promise<BroadsheetResponse> {
+  async build(
+    params: {
+      termId?: string;
+      academicSessionId?: string;
+      classLevelId?: string;
+      classArmId?: string;
+      sortBy?: string;
+      sortDir?: "asc" | "desc";
+      skip?: number;
+      take?: number;
+    },
+    user?: RequestUser,
+  ): Promise<BroadsheetResponse> {
     if (!params.classLevelId && !params.classArmId) {
       throw new BadRequestException("classLevelId or classArmId is required");
     }
@@ -188,6 +194,19 @@ export class BroadsheetService {
       classLevel = arm.classLevel;
       classArms = [{ id: arm.id, name: arm.name }];
       scope = "CLASS_ARM";
+    }
+
+    // PRD §5 footnote 7: Broadsheet read access is Principal/Headteacher/
+    // Super-Admin — Principal/Headteacher narrowed to their own section
+    // (JSS/SSS vs. Creche/Reception/Nursery/Primary), same split as every
+    // other resource in this pass. This raw endpoint had no such check
+    // before — only DashboardService.broadsheetSnapshot's own already-
+    // filtered classLevel query stayed in scope by construction.
+    if (user) {
+      const categories = resolvePrincipalHeadteacherCategories(user);
+      if (categories && !categories.includes(classLevel.category)) {
+        throw new ForbiddenException("This class level is outside your assigned section");
+      }
     }
 
     const classArmIds = classArms.map((a) => a.id);
@@ -343,6 +362,7 @@ export class BroadsheetController {
   @Get()
   @CheckPolicies((ability) => ability.can("read", "Broadsheet"))
   get(
+    @CurrentUser() user: RequestUser,
     @Query("termId") termId?: string,
     @Query("academicSessionId") academicSessionId?: string,
     @Query("classLevelId") classLevelId?: string,
@@ -352,15 +372,18 @@ export class BroadsheetController {
     @Query("skip") skip?: string,
     @Query("take") take?: string,
   ) {
-    return this.service.build({
-      termId,
-      academicSessionId,
-      classLevelId,
-      classArmId,
-      sortBy,
-      sortDir,
-      skip: skip === undefined ? undefined : Number(skip),
-      take: take === undefined ? undefined : Number(take),
-    });
+    return this.service.build(
+      {
+        termId,
+        academicSessionId,
+        classLevelId,
+        classArmId,
+        sortBy,
+        sortDir,
+        skip: skip === undefined ? undefined : Number(skip),
+        take: take === undefined ? undefined : Number(take),
+      },
+      user,
+    );
   }
 }

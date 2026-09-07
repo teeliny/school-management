@@ -153,11 +153,11 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     service = new StudentService(prisma as never, {} as never, {} as never, {} as never, {} as never);
   });
 
-  function staffUser(): RequestUser {
-    return { id: "user-1", roles: ["STAFF"], assignmentTypes: [] };
+  function staffUser(assignmentTypes: string[] = []): RequestUser {
+    return { id: "user-1", roles: ["STAFF"], assignmentTypes };
   }
 
-  it("returns every student for STAFF holding an active PRINCIPAL assignment, without narrowing by class arm", async () => {
+  it("returns every student for STAFF holding an active REGISTRAR/BURSAR assignment, without narrowing by class arm", async () => {
     prisma.staffAssignment.count.mockResolvedValueOnce(1); // hasActiveSchoolWideAssignment
 
     await service.findAllForUser(staffUser());
@@ -165,12 +165,36 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     expect(prisma.staffAssignment.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          assignmentType: { in: [AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
+          assignmentType: { in: [AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
         }),
       }),
     );
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
       expect.not.objectContaining({ where: expect.anything() }),
+    );
+    expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes a PRINCIPAL-held assignment to JSS/SSS students only, without a DB round trip", async () => {
+    prisma.staffAssignment.count.mockResolvedValueOnce(0); // no REGISTRAR/BURSAR
+
+    await service.findAllForUser(staffUser(["PRINCIPAL"]));
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { currentClass: { classLevel: { category: { in: ["JSS", "SSS"] } } } } }),
+    );
+    expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("scopes a HEADTEACHER-held assignment to Creche/Reception/Nursery/Primary students only", async () => {
+    prisma.staffAssignment.count.mockResolvedValueOnce(0); // no REGISTRAR/BURSAR
+
+    await service.findAllForUser(staffUser(["HEADTEACHER"]));
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { currentClass: { classLevel: { category: { in: ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"] } } } },
+      }),
     );
     expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
   });

@@ -15,14 +15,44 @@ import { CheckPolicies } from "../../casl/check-policies.decorator";
 import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { AbilityFactory } from "../../casl/ability.factory";
+import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
 import { UpdateStaffProfileDto } from "./dto/staff-profile.dto";
 
 @Injectable()
 export class StaffProfileService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.staffProfile.findMany({ include: { user: true } });
+  /**
+   * `user`, when supplied, narrows the roster for a Principal/Headteacher to
+   * staff who actually pertain to their own section: anyone with no active
+   * assignment yet (nothing to scope by — better to show them than hide a
+   * not-yet-assigned hire), anyone holding a school-wide title (no
+   * classArmId — BURSAR/REGISTRAR/PRINCIPAL/HEADTEACHER/VICE_PRINCIPAL/
+   * OTHER — who serve the whole school regardless of section), and any
+   * CLASS_TEACHER/SUBJECT_TEACHER whose class arm falls in that section.
+   * A teacher assigned only to arms outside the caller's section is
+   * excluded.
+   */
+  findAll(user?: RequestUser) {
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
+    return this.prisma.staffProfile.findMany({
+      where: categories
+        ? {
+            OR: [
+              { assignments: { none: { isActive: true } } },
+              {
+                assignments: {
+                  some: {
+                    isActive: true,
+                    OR: [{ classArmId: null }, { classArm: { classLevel: { category: { in: categories } } } }],
+                  },
+                },
+              },
+            ],
+          }
+        : undefined,
+      include: { user: true },
+    });
   }
 
   findOne(id: string) {
@@ -60,8 +90,8 @@ export class StaffProfileController {
 
   @Get()
   @CheckPolicies((ability) => ability.can("read", "StaffProfile"))
-  findAll() {
-    return this.service.findAll();
+  findAll(@CurrentUser() user: RequestUser) {
+    return this.service.findAll(user);
   }
 
   @Get(":id")

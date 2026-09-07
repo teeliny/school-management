@@ -17,6 +17,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { SchoolProfileService } from "../academic-structure/school-profile";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 
 type StatusCounts = { present: number; absent: number; late: number; excused: number };
 
@@ -40,7 +41,8 @@ export class AttendanceAnalyticsService {
   // opened" denominator (packages/types' computeSchoolDaysOpened), which the
   // FULL_TERM report card's (currently deferred) attendance line will
   // eventually reuse.
-  async forStudent(studentId: string, termId: string) {
+  async forStudent(studentId: string, termId: string, user: RequestUser) {
+    await this.assertStudentInScope(user, studentId);
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
     const opened = await this.schoolDaysOpened(term.startDate, term.endDate);
 
@@ -57,7 +59,8 @@ export class AttendanceAnalyticsService {
     return { studentId, termId, schoolDaysOpened: opened, ...summary, percentage: computeAttendancePercentage(summary.present, opened) };
   }
 
-  async forClassArm(classArmId: string, termId: string) {
+  async forClassArm(classArmId: string, termId: string, user: RequestUser) {
+    await this.assertClassArmInScope(user, classArmId);
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
     const opened = await this.schoolDaysOpened(term.startDate, term.endDate);
 
@@ -257,15 +260,10 @@ export class AttendanceAnalyticsService {
   private async resolveScopeForUser(
     user: RequestUser,
   ): Promise<{ type: "categories"; categories: ClassLevelCategory[] } | { type: "classArmIds"; classArmIds: string[] }> {
+    const categories = resolvePrincipalHeadteacherCategories(user);
+    if (categories) return { type: "categories", categories };
     if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") || user.assignmentTypes.includes("REGISTRAR")) {
       return { type: "categories", categories: [...CLASS_LEVEL_CATEGORIES] };
-    }
-    if (user.assignmentTypes.includes("PRINCIPAL")) return { type: "categories", categories: [ClassLevelCategory.JSS, ClassLevelCategory.SSS] };
-    if (user.assignmentTypes.includes("HEADTEACHER")) {
-      return {
-        type: "categories",
-        categories: [ClassLevelCategory.CRECHE, ClassLevelCategory.RECEPTION, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY],
-      };
     }
 
     const classArmIds = await this.staffAssignments.activeClassTeacherClassArmIds(user.id);
@@ -275,6 +273,31 @@ export class AttendanceAnalyticsService {
       );
     }
     return { type: "classArmIds", classArmIds };
+  }
+
+  // PRD §5 footnote 5-family split, extended to the per-student/per-class
+  // sibling routes below (daily-issues already applied it) — a Principal/
+  // Headteacher's unconditioned "manage AttendanceSession" CASL grant
+  // otherwise let them pass any studentId/classArmId here, unscoped.
+  private async assertStudentInScope(user: RequestUser, studentId: string): Promise<void> {
+    const categories = resolvePrincipalHeadteacherCategories(user);
+    if (!categories) return;
+    const student = await this.prisma.studentProfile.findUniqueOrThrow({
+      where: { id: studentId },
+      include: { currentClass: { include: { classLevel: true } } },
+    });
+    if (!student.currentClass || !categories.includes(student.currentClass.classLevel.category)) {
+      throw new ForbiddenException("This student is outside your assigned section");
+    }
+  }
+
+  private async assertClassArmInScope(user: RequestUser, classArmId: string): Promise<void> {
+    const categories = resolvePrincipalHeadteacherCategories(user);
+    if (!categories) return;
+    const classArm = await this.prisma.classArm.findUniqueOrThrow({ where: { id: classArmId }, include: { classLevel: true } });
+    if (!categories.includes(classArm.classLevel.category)) {
+      throw new ForbiddenException("This class arm is outside your assigned section");
+    }
   }
 
   private async schoolDaysOpened(start: Date, end: Date): Promise<number> {
@@ -315,14 +338,14 @@ export class AttendanceAnalyticsController {
 
   @Get("students/:studentId")
   @CheckPolicies((ability) => ability.can("read", "AttendanceSession"))
-  forStudent(@Param("studentId") studentId: string, @Query("termId") termId: string) {
-    return this.service.forStudent(studentId, termId);
+  forStudent(@Param("studentId") studentId: string, @Query("termId") termId: string, @CurrentUser() user: RequestUser) {
+    return this.service.forStudent(studentId, termId, user);
   }
 
   @Get("class-arms/:classArmId")
   @CheckPolicies((ability) => ability.can("read", "AttendanceSession"))
-  forClassArm(@Param("classArmId") classArmId: string, @Query("termId") termId: string) {
-    return this.service.forClassArm(classArmId, termId);
+  forClassArm(@Param("classArmId") classArmId: string, @Query("termId") termId: string, @CurrentUser() user: RequestUser) {
+    return this.service.forClassArm(classArmId, termId, user);
   }
 
   @Get("staff/:staffId")

@@ -9,6 +9,7 @@ import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
 import { ClassSubjectLevelStatusService } from "../subjects/class-subject-level-status";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { Audited } from "../audit/audited.decorator";
 import type { AuditRequestOverrides } from "../audit/audit.interceptor";
 import { CreateScoreEntryDto } from "./dto/score-entry.dto";
@@ -76,6 +77,15 @@ export class ScoreEntryService {
     });
 
     if (isOverride) {
+      // A Principal/Headteacher's override reaches here via CASL's
+      // unconditioned "manage ScoreEntry" grant (ability.factory.ts) — scope
+      // it to their own section, same as the list/read side of this
+      // resource. Admin/Super-Admin (resolvePrincipalHeadteacherCategories
+      // returns null for them) stay unrestricted.
+      const categories = resolvePrincipalHeadteacherCategories(user);
+      if (categories && !categories.includes(classArm.classLevel.category)) {
+        throw new ForbiddenException("This class is outside your assigned section");
+      }
       const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
       enteredByStaffId = staffProfile?.id ?? null;
     } else {
@@ -118,9 +128,16 @@ export class ScoreEntryService {
     return { scoreEntry, before };
   }
 
-  findAll(filters: { subjectId?: string; assessmentComponentId?: string; classArmId?: string; studentId?: string }) {
+  findAll(
+    filters: { subjectId?: string; assessmentComponentId?: string; classArmId?: string; studentId?: string },
+    user?: RequestUser,
+  ) {
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
     return this.prisma.scoreEntry.findMany({
-      where: filters,
+      where: {
+        ...filters,
+        ...(categories ? { classArm: { classLevel: { category: { in: categories } } } } : {}),
+      },
       orderBy: { enteredAt: "desc" },
     });
   }
@@ -166,12 +183,13 @@ export class ScoreEntryController {
 
   @Get()
   findAll(
+    @CurrentUser() user: RequestUser,
     @Query("subjectId") subjectId?: string,
     @Query("assessmentComponentId") assessmentComponentId?: string,
     @Query("classArmId") classArmId?: string,
     @Query("studentId") studentId?: string,
   ) {
-    return this.service.findAll({ subjectId, assessmentComponentId, classArmId, studentId });
+    return this.service.findAll({ subjectId, assessmentComponentId, classArmId, studentId }, user);
   }
 
   @Get("summary")

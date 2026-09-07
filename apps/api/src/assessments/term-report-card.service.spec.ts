@@ -18,7 +18,7 @@ function buildPrismaMock() {
 }
 
 function buildStaffAssignmentsMock() {
-  return { activeAssignedClassArmIds: jest.fn(), hasActiveSchoolWideAssignment: jest.fn().mockResolvedValue(false) };
+  return { activeAssignedClassArmIds: jest.fn() };
 }
 
 function buildQueueMock() {
@@ -417,16 +417,33 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
     expect(prisma.termReportCard.findMany).not.toHaveBeenCalled();
   });
 
-  it("gives a Principal/Headteacher (school-wide STAFF assignment) every report card, any status", async () => {
+  it("scopes a Principal to only JSS/SSS report cards, any status", async () => {
     const user: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["PRINCIPAL"] };
-    staffAssignments.hasActiveSchoolWideAssignment.mockResolvedValue(true);
     prisma.termReportCard.findMany.mockResolvedValue([]);
 
     await service.findForUser(user, {});
 
     expect(staffAssignments.activeAssignedClassArmIds).not.toHaveBeenCalled();
     expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { OR: [{}] } }),
+      expect.objectContaining({
+        where: { OR: [{ student: { currentClass: { classLevel: { category: { in: ["JSS", "SSS"] } } } } }] },
+      }),
+    );
+  });
+
+  it("scopes a Headteacher to only Creche/Reception/Nursery/Primary report cards, any status", async () => {
+    const user: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["HEADTEACHER"] };
+    prisma.termReportCard.findMany.mockResolvedValue([]);
+
+    await service.findForUser(user, {});
+
+    expect(staffAssignments.activeAssignedClassArmIds).not.toHaveBeenCalled();
+    expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          OR: [{ student: { currentClass: { classLevel: { category: { in: ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"] } } } } }],
+        },
+      }),
     );
   });
 });

@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ClassLevelCategoryGroup, Prisma, TimetableApprovalStatus } from "@prisma/client";
+import { categoryToGroup } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -19,6 +20,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { Audited } from "../audit/audited.decorator";
 import { UpdateDutyAssignmentDto } from "./dto/update-duty-assignment.dto";
 import { SwapDutyAssignmentDto } from "./dto/swap-duty-assignment.dto";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 
 /**
  * BUILD_PLAN.md §9 Step 6: DutyAssignment's first service/controller — Step
@@ -35,17 +37,35 @@ export class DutyAssignmentService {
   // weeks — needed because, unlike TimetableSlot/ExamSchedule/
   // InvigilationAssignment, DutyAssignment has no classArmId/
   // assessmentComponentId to scope a single generation run's rows by.
-  findAll(filters: {
-    classLevelCategoryGroup?: ClassLevelCategoryGroup;
-    staffId?: string;
-    approvalStatus?: TimetableApprovalStatus;
-    weekStartDateFrom?: Date;
-    weekStartDateTo?: Date;
-  }) {
-    const { weekStartDateFrom, weekStartDateTo, ...rest } = filters;
+  findAll(
+    filters: {
+      classLevelCategoryGroup?: ClassLevelCategoryGroup;
+      staffId?: string;
+      approvalStatus?: TimetableApprovalStatus;
+      weekStartDateFrom?: Date;
+      weekStartDateTo?: Date;
+    },
+    user?: RequestUser,
+  ) {
+    const { weekStartDateFrom, weekStartDateTo, classLevelCategoryGroup, ...rest } = filters;
+
+    // PRD §5 footnote split extended here: a Principal/Headteacher only sees
+    // their own section's duty roster (JSS_SSS vs. CRECHE_NURSERY_PRIMARY).
+    let groupWhere: ClassLevelCategoryGroup | { in: ClassLevelCategoryGroup[] } | undefined = classLevelCategoryGroup;
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
+    if (categories) {
+      const allowedGroups = [...new Set(categories.map((c) => categoryToGroup(c)))];
+      if (classLevelCategoryGroup) {
+        if (!allowedGroups.includes(classLevelCategoryGroup)) return Promise.resolve([]);
+      } else {
+        groupWhere = { in: allowedGroups };
+      }
+    }
+
     return this.prisma.dutyAssignment.findMany({
       where: {
         ...rest,
+        classLevelCategoryGroup: groupWhere,
         approvalStatus: filters.approvalStatus ?? TimetableApprovalStatus.APPROVED,
         weekStartDate:
           weekStartDateFrom || weekStartDateTo ? { gte: weekStartDateFrom, lte: weekStartDateTo } : undefined,
@@ -129,13 +149,16 @@ export class DutyAssignmentController {
     if (approvalStatus && approvalStatus !== TimetableApprovalStatus.APPROVED) {
       this.assertCanManage(user);
     }
-    return this.service.findAll({
-      classLevelCategoryGroup,
-      staffId,
-      approvalStatus,
-      weekStartDateFrom: weekStartDateFrom ? new Date(weekStartDateFrom) : undefined,
-      weekStartDateTo: weekStartDateTo ? new Date(weekStartDateTo) : undefined,
-    });
+    return this.service.findAll(
+      {
+        classLevelCategoryGroup,
+        staffId,
+        approvalStatus,
+        weekStartDateFrom: weekStartDateFrom ? new Date(weekStartDateFrom) : undefined,
+        weekStartDateTo: weekStartDateTo ? new Date(weekStartDateTo) : undefined,
+      },
+      user,
+    );
   }
 
   // BUILD_PLAN.md §9 Step 6f: reassign via the grid's inline Select.

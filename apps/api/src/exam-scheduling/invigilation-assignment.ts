@@ -21,6 +21,7 @@ import { Audited } from "../audit/audited.decorator";
 import { UpdateInvigilationAssignmentDto } from "./dto/update-invigilation-assignment.dto";
 import { SwapInvigilationAssignmentDto } from "./dto/swap-invigilation-assignment.dto";
 import { withDisplayName } from "../academic-structure/class-arm";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 
 /**
  * BUILD_PLAN.md §9 Step 4: no manual CRUD yet (read endpoints arrive with
@@ -95,18 +96,28 @@ export class InvigilationAssignmentService {
   // column of its own, only via examSchedule.assessmentComponentId — so the
   // grid can fetch a whole component's roster (every arm) in one call,
   // matching how the queue already groups INVIGILATION batches by that key.
-  async findAll(filters: {
-    examScheduleId?: string;
-    staffId?: string;
-    assessmentComponentId?: string;
-    approvalStatus?: TimetableApprovalStatus;
-  }) {
+  async findAll(
+    filters: {
+      examScheduleId?: string;
+      staffId?: string;
+      assessmentComponentId?: string;
+      approvalStatus?: TimetableApprovalStatus;
+    },
+    user?: RequestUser,
+  ) {
     const { assessmentComponentId, ...rest } = filters;
+    // PRD §5 footnote split extended here: a Principal/Headteacher only sees
+    // invigilation rows for exams in their own section.
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
+    const examScheduleWhere: Prisma.ExamScheduleWhereInput = {};
+    if (assessmentComponentId) examScheduleWhere.assessmentComponentId = assessmentComponentId;
+    if (categories) examScheduleWhere.classArm = { classLevel: { category: { in: categories } } };
+
     const rows = await this.prisma.invigilationAssignment.findMany({
       where: {
         ...rest,
         approvalStatus: filters.approvalStatus ?? TimetableApprovalStatus.APPROVED,
-        examSchedule: assessmentComponentId ? { assessmentComponentId } : undefined,
+        examSchedule: Object.keys(examScheduleWhere).length > 0 ? examScheduleWhere : undefined,
       },
       include: {
         examSchedule: { include: { classArm: { include: { classLevel: { select: { name: true } } } }, subject: true } },
@@ -185,7 +196,7 @@ export class InvigilationAssignmentController {
     if (approvalStatus && approvalStatus !== TimetableApprovalStatus.APPROVED) {
       this.assertCanManage(user);
     }
-    return this.service.findAll({ examScheduleId, staffId, assessmentComponentId, approvalStatus });
+    return this.service.findAll({ examScheduleId, staffId, assessmentComponentId, approvalStatus }, user);
   }
 
   // BUILD_PLAN.md §9 Step 6e: reassign via the grid's inline Select.

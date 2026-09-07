@@ -21,6 +21,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { withDisplayName } from "../academic-structure/class-arm";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { CreateTimetableSlotDto, UpdateTimetableSlotDto } from "./dto/timetable-slot.dto";
 
 interface ConflictCheckInput {
@@ -131,11 +132,9 @@ export class TimetableSlotService {
 
   // PRD §5 footnote 6: the whole-school "all classes" overview (no single
   // classArmId requested) scopes Principal to JSS/SSS and Headteacher to
-  // Creche/Nursery/Primary — Super-Admin/Admin/Registrar stay unscoped. Only
-  // applies to this no-classArmId "view everything" case, not to a request
-  // for one specific class arm (Principal/Headteacher's unconditioned
-  // "manage TimetableSlot" CASL grant already lets them touch any single
-  // class's rows today).
+  // Creche/Nursery/Primary — Super-Admin/Admin/Registrar stay unscoped. A
+  // request for one specific class arm is checked separately, in findAll
+  // below (assertClassArmInScope), rather than through this method.
   private async resolveCategoryGroupScopedClassArmIds(user: RequestUser): Promise<string[] | null> {
     const isPrincipal = user.assignmentTypes.includes("PRINCIPAL");
     const isHeadteacher = user.assignmentTypes.includes("HEADTEACHER");
@@ -176,6 +175,18 @@ export class TimetableSlotService {
         if (groupScoped !== null) {
           if (groupScoped.length === 0) return [];
           classArmWhere = { in: groupScoped };
+        }
+      } else {
+        // A specific classArmId was requested — check it falls within a
+        // Principal/Headteacher's own section (the whole-school overview
+        // above already handles the no-classArmId case).
+        const categories = resolvePrincipalHeadteacherCategories(user);
+        if (categories) {
+          const arm = await this.prisma.classArm.findUnique({
+            where: { id: filters.classArmId },
+            select: { classLevel: { select: { category: true } } },
+          });
+          if (!arm || !categories.includes(arm.classLevel.category)) return [];
         }
       }
     }

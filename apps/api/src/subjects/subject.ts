@@ -16,6 +16,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
+import type { RequestUser } from "../auth/jwt.strategy";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { CreateSubjectDto, CreateSubjectGroupChildDto, CreateSubjectGroupDto, UpdateSubjectDto } from "./dto/subject.dto";
 
 const SUBJECT_DETAIL_INCLUDE = {
@@ -101,7 +104,32 @@ export class SubjectService {
     });
   }
 
-  findAll(filters: { isGroup?: boolean; search?: string; classLevelCategory?: ClassLevelCategory; classLevelId?: string }) {
+  /**
+   * `user`, when supplied (the controller always passes it; internal
+   * seed-script callers don't), narrows the catalogue for a Principal/
+   * Headteacher to subjects assigned (via ClassSubject) to their own
+   * section — Principal: JSS/SSS, Headteacher: Creche/Reception/Nursery/
+   * Primary — same split as resolvePrincipalHeadteacherCategories'
+   * doc comment. An explicit `classLevelCategory` outside that section
+   * narrows to nothing rather than being ignored, so a Principal/
+   * Headteacher can't page around the restriction via the query param.
+   */
+  findAll(
+    filters: { isGroup?: boolean; search?: string; classLevelCategory?: ClassLevelCategory; classLevelId?: string },
+    user?: RequestUser,
+  ) {
+    const allowedCategories = user ? resolvePrincipalHeadteacherCategories(user) : null;
+    let categoryIn: ClassLevelCategory[] | undefined;
+    if (allowedCategories) {
+      categoryIn = filters.classLevelCategory
+        ? allowedCategories.includes(filters.classLevelCategory)
+          ? [filters.classLevelCategory]
+          : []
+        : allowedCategories;
+    } else if (filters.classLevelCategory) {
+      categoryIn = [filters.classLevelCategory];
+    }
+
     return this.prisma.subject.findMany({
       where: {
         isGroup: filters.isGroup,
@@ -117,11 +145,11 @@ export class SubjectService {
               ],
             }
           : {}),
-        ...(filters.classLevelCategory
+        ...(categoryIn
           ? {
               classSubjects: {
                 some: {
-                  classLevelCategory: filters.classLevelCategory,
+                  classLevelCategory: { in: categoryIn },
                   // classLevelId narrows a category-wide assignment down to
                   // one concrete ClassLevel (e.g. NURSERY covers both
                   // "Nursery 1" and "Nursery 2") — excluded here only if
@@ -211,17 +239,21 @@ export class SubjectController {
 
   @Get()
   findAll(
+    @CurrentUser() user: RequestUser,
     @Query("isGroup") isGroup?: string,
     @Query("search") search?: string,
     @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory,
     @Query("classLevelId") classLevelId?: string,
   ) {
-    return this.service.findAll({
-      isGroup: isGroup === undefined ? undefined : isGroup === "true",
-      search,
-      classLevelCategory,
-      classLevelId,
-    });
+    return this.service.findAll(
+      {
+        isGroup: isGroup === undefined ? undefined : isGroup === "true",
+        search,
+        classLevelCategory,
+        classLevelId,
+      },
+      user,
+    );
   }
 
   @Get(":id")

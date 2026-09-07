@@ -7,6 +7,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { CreateReportCommentDto } from "./dto/report-comment.dto";
 
 @Injectable()
@@ -42,6 +43,23 @@ export class ReportCommentService {
     let authorStaffId: string | null = null;
 
     if (isOverride) {
+      // A Principal/Headteacher's write reaches here via CASL's
+      // unconditioned "manage ReportComment" grant (ability.factory.ts) —
+      // for any comment type, not just PRINCIPAL — so scope it to their own
+      // section here rather than relying on the commentType-specific
+      // PRINCIPAL branch below, which their override bypasses entirely.
+      // Admin/Super-Admin (resolvePrincipalHeadteacherCategories returns
+      // null for them) stay unrestricted.
+      const categories = resolvePrincipalHeadteacherCategories(user);
+      if (categories) {
+        const student = await this.prisma.studentProfile.findUniqueOrThrow({
+          where: { id: dto.studentId },
+          include: { currentClass: { include: { classLevel: true } } },
+        });
+        if (!student.currentClass || !categories.includes(student.currentClass.classLevel.category)) {
+          throw new ForbiddenException("This student is outside your assigned section");
+        }
+      }
       const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
       authorStaffId = staffProfile?.id ?? null;
     } else if (dto.commentType === ReportCommentType.SUBJECT) {
@@ -156,8 +174,14 @@ export class ReportCommentService {
     });
   }
 
-  findAll(filters: { studentId?: string; termId?: string }) {
-    return this.prisma.reportComment.findMany({ where: filters });
+  findAll(filters: { studentId?: string; termId?: string }, user?: RequestUser) {
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
+    return this.prisma.reportComment.findMany({
+      where: {
+        ...filters,
+        ...(categories ? { student: { currentClass: { classLevel: { category: { in: categories } } } } } : {}),
+      },
+    });
   }
 
   // Powers the "X of Y comments written" indicator for a class arm — total
@@ -200,8 +224,8 @@ export class ReportCommentController {
   }
 
   @Get()
-  findAll(@Query("studentId") studentId?: string, @Query("termId") termId?: string) {
-    return this.service.findAll({ studentId, termId });
+  findAll(@CurrentUser() user: RequestUser, @Query("studentId") studentId?: string, @Query("termId") termId?: string) {
+    return this.service.findAll({ studentId, termId }, user);
   }
 
   @Get("progress")

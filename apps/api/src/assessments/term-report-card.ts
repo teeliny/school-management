@@ -33,6 +33,7 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { NotificationService } from "../notifications/notification";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { GenerateTermReportCardDto } from "./dto/generate-term-report-card.dto";
 import { GenerateClassReportCardsDto } from "./dto/generate-class-report-cards.dto";
 
@@ -353,12 +354,20 @@ export class TermReportCardService {
     const orConditions: Prisma.TermReportCardWhereInput[] = [];
 
     if (user.roles.includes("STAFF")) {
-      // PRD §5: Principal/Headteacher hold a school-wide assignment, not a
-      // per-class one — same carve-out StudentService.scopeWhereForUser
-      // applies, otherwise they'd see zero report cards (no CLASS_TEACHER/
-      // SUBJECT_TEACHER assignment to scope by).
-      if (await this.staffAssignments.hasActiveSchoolWideAssignment(user.id)) {
-        orConditions.push(classArmId ? { student: { currentClassId: classArmId } } : {});
+      // PRD §5: a Principal/Headteacher-held assignment is school-wide, not
+      // per-class, but scoped to that title's own section (JSS/SSS vs.
+      // Creche/Reception/Nursery/Primary) rather than every report card —
+      // same carve-out StudentService.scopeWhereForUser applies, otherwise
+      // they'd see zero report cards (no CLASS_TEACHER/SUBJECT_TEACHER
+      // assignment to scope by).
+      const categories = resolvePrincipalHeadteacherCategories(user);
+      if (categories) {
+        orConditions.push({
+          student: {
+            currentClass: { classLevel: { category: { in: categories } } },
+            ...(classArmId ? { currentClassId: classArmId } : {}),
+          },
+        });
       } else {
         // PRD §5: class/subject teacher see report cards for their own
         // class(es) — not published-only, unlike parent/student, since staff
