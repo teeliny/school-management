@@ -11,7 +11,11 @@ const logger = new Logger("RedisClient");
     {
       provide: REDIS_CLIENT,
       useFactory: (config: ConfigService) => {
-        const client = new Redis(config.getOrThrow<string>("REDIS_URL"));
+        // maxRetriesPerRequest: null is required so this instance can be
+        // shared with BullMQ (see app.module.ts) — BullMQ's blocking Worker
+        // connections throw at startup otherwise. Harmless for the plain
+        // commands this client also serves (auth tokens, health checks).
+        const client = new Redis(config.getOrThrow<string>("REDIS_URL"), { maxRetriesPerRequest: null });
         // Without this, ioredis falls back to a bare console.error on any
         // connection error (its own internal "Unhandled error event"
         // guard) instead of going through the app's real logger.

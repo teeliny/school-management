@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Module } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
+import { ConfigModule } from "@nestjs/config";
 import { APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
+import type Redis from "ioredis";
 import { LoggerModule } from "nestjs-pino";
 import { SentryGlobalFilter, SentryModule } from "@sentry/nestjs/setup";
 import { CommonModule } from "./common/common.module";
@@ -11,7 +12,7 @@ import { PrismaExceptionFilter } from "./common/prisma-exception.filter";
 import { HealthModule } from "./health/health.module";
 import { MetricsModule } from "./metrics/metrics.module";
 import { PrismaModule } from "./prisma/prisma.module";
-import { RedisModule } from "./redis/redis.module";
+import { RedisModule, REDIS_CLIENT } from "./redis/redis.module";
 import { MailerModule } from "./mailer/mailer.module";
 import { CaslModule } from "./casl/casl.module";
 import { IdentityModule } from "./identity/identity.module";
@@ -79,13 +80,21 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
     WarmupModule,
     StorageModule,
     // First producer-side BullMQ usage in apps/api (Phase 4 M4 — Admin-
-    // triggered FULL_TERM report generation). Connection config duplicated
-    // from apps/worker's own BullModule.forRootAsync, same REDIS_URL env var
-    // — same duplication-not-sharing precedent as parseCorsOrigins().
+    // triggered FULL_TERM report generation). Shares RedisModule's REDIS_CLIENT
+    // instance rather than opening a new connection per registered queue —
+    // BullMQ only reuses a connection when handed an actual ioredis instance
+    // (not raw {url} options), which is what was blowing through Render's
+    // free-tier 50-connection cap. defaultJobOptions caps job retention so
+    // completed/failed job data (previously kept forever) stops filling the
+    // 25MB memory limit.
     BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: { url: config.getOrThrow<string>("REDIS_URL") },
+      inject: [REDIS_CLIENT],
+      useFactory: (redis: Redis) => ({
+        connection: redis,
+        defaultJobOptions: {
+          removeOnComplete: { count: 500 },
+          removeOnFail: { count: 2000 },
+        },
       }),
     }),
     MailerModule,
