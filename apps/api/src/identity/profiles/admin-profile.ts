@@ -15,6 +15,7 @@ import { CheckPolicies } from "../../casl/check-policies.decorator";
 import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { AbilityFactory } from "../../casl/ability.factory";
+import { Audited } from "../../audit/audited.decorator";
 import { UpdateAdminProfileDto } from "./dto/admin-profile.dto";
 
 @Injectable()
@@ -62,6 +63,7 @@ export class AdminProfileController {
   }
 
   @Patch(":id")
+  @Audited("AdminProfile", "adminProfile")
   async update(
     @Param("id") id: string,
     @Body() dto: UpdateAdminProfileDto,

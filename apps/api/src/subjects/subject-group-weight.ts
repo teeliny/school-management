@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateSubjectGroupWeightDto, UpdateSubjectGroupWeightDto } from "./dto/subject-group-weight.dto";
 
 // Standalone CRUD for post-hoc weight adjustment — the initial set of
@@ -39,6 +40,7 @@ export class SubjectGroupWeightController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "SubjectGroupWeight"))
+  @Audited("SubjectGroupWeight")
   create(@Body() dto: CreateSubjectGroupWeightDto) {
     return this.service.create(dto);
   }
@@ -50,12 +52,14 @@ export class SubjectGroupWeightController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "SubjectGroupWeight"))
+  @Audited("SubjectGroupWeight", "subjectGroupWeight")
   update(@Param("id") id: string, @Body() dto: UpdateSubjectGroupWeightDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "SubjectGroupWeight"))
+  @Audited("SubjectGroupWeight", "subjectGroupWeight")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

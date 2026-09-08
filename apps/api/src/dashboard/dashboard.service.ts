@@ -166,7 +166,7 @@ export class DashboardService {
     };
   }
 
-  /** PRD FR9.4: recent AuditLog rows — no read endpoint exists anywhere else for this table (see audit.interceptor.ts, write-only). */
+  /** PRD FR9.4: recent AuditLog rows for the dashboard's compact "highlights" widget — the full filterable listing is AuditLogController (audit/audit-log.ts). */
   async auditHighlights(user: RequestUser, take: number) {
     this.assertSuperAdmin(user);
 

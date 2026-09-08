@@ -20,6 +20,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
+import { Audited } from "../audit/audited.decorator";
 import { CreateSubjectDto, CreateSubjectGroupChildDto, CreateSubjectGroupDto, UpdateSubjectDto } from "./dto/subject.dto";
 
 const SUBJECT_DETAIL_INCLUDE = {
@@ -222,18 +223,21 @@ export class SubjectController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  @Audited("Subject")
   create(@Body() dto: CreateSubjectDto) {
     return this.service.create(dto);
   }
 
   @Post("groups")
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  @Audited("Subject")
   createGroup(@Body() dto: CreateSubjectGroupDto) {
     return this.service.createGroup(dto);
   }
 
   @Post(":id/children")
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  @Audited("Subject", "subject")
   addGroupChild(@Param("id") id: string, @Body() dto: CreateSubjectGroupChildDto) {
     return this.service.addGroupChild(id, dto);
   }
@@ -264,6 +268,7 @@ export class SubjectController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  @Audited("Subject", "subject")
   update(@Param("id") id: string, @Body() dto: UpdateSubjectDto) {
     return this.service.update(id, dto);
   }
@@ -276,6 +281,7 @@ export class SubjectController {
   // ClassSubject rows (see the onDelete: Cascade relations in schema.prisma)
   // and is reserved for the owner, same pattern as
   // TermReportCardController.remove.
+  @Audited("Subject", "subject")
   remove(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
       throw new ForbiddenException("Only the Super-Admin can delete a subject");
@@ -285,12 +291,14 @@ export class SubjectController {
 
   @Patch(":id/disable")
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  @Audited("Subject", "subject")
   disable(@Param("id") id: string) {
     return this.service.setActive(id, false);
   }
 
   @Patch(":id/enable")
   @CheckPolicies((ability) => ability.can("manage", "Subject"))
+  @Audited("Subject", "subject")
   enable(@Param("id") id: string) {
     return this.service.setActive(id, true);
   }

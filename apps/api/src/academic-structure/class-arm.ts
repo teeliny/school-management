@@ -6,6 +6,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
+import { Audited } from "../audit/audited.decorator";
 import { CreateClassArmDto, UpdateClassArmDto } from "./dto/class-arm.dto";
 
 const CLASS_ARM_DETAIL_INCLUDE = { classLevel: { select: { name: true, category: true } } } as const;
@@ -78,6 +79,7 @@ export class ClassArmController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("ClassArm")
   create(@Body() dto: CreateClassArmDto) {
     return this.service.create(dto);
   }
@@ -98,12 +100,14 @@ export class ClassArmController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("ClassArm", "classArm")
   update(@Param("id") id: string, @Body() dto: UpdateClassArmDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("ClassArm", "classArm")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

@@ -173,7 +173,7 @@ export default function GradebookPage() {
           title="Select class, subject, term, and component"
           sub={isAdmin ? "Admin override — any status is selectable" : "Only components currently OPEN for entry are shown"}
         />
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <Label htmlFor="gb-class-arm">Class arm</Label>
             <Select

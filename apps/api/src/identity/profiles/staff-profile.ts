@@ -16,6 +16,7 @@ import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { AbilityFactory } from "../../casl/ability.factory";
 import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
+import { Audited } from "../../audit/audited.decorator";
 import { UpdateStaffProfileDto } from "./dto/staff-profile.dto";
 
 @Injectable()
@@ -105,6 +106,7 @@ export class StaffProfileController {
   }
 
   @Patch(":id")
+  @Audited("StaffProfile", "staffProfile")
   async update(
     @Param("id") id: string,
     @Body() dto: UpdateStaffProfileDto,

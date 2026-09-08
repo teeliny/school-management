@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
   SUBJECT_TERM_RESULT_RECOMPUTE: "subject-term-result-recompute",
   SCHEDULING_SOLVE_DISPATCH: "scheduling-solve-dispatch",
   SCHEDULING_TIMEOUT_SWEEP: "scheduling-timeout-sweep",
+  AUDIT_LOG_RETENTION: "audit-log-retention",
 } as const;
 
 export interface ReportCardGenerationJob {

@@ -15,11 +15,21 @@ const KNOWN_VERBS = ["approve", "reject", "revoke", "resend", "sync", "accept", 
  * alone. The handler itself (which already knows, having looked the row up
  * before writing) stashes the answer on the request; the interceptor
  * prefers it over its own derivation when present. See
- * assessments/score-entry.ts's enter() for the one current use.
+ * assessments/score-entry.ts's enter() for that use.
+ *
+ * `auditAfter` is the same idea for the other direction: a route whose
+ * client-facing response is bigger than what's worth persisting in the
+ * audit trail — AttendanceSessionController.create's response embeds every
+ * student's AttendanceRecord for the roster (`include: { records: true }`),
+ * which the client needs but which would otherwise duplicate that table's
+ * own rows into every single register-taking audit entry. The handler
+ * stashes a leaner summary instead; the interceptor logs that in place of
+ * the real response, which is still returned to the client unchanged.
  */
 export interface AuditRequestOverrides {
   auditAction?: string;
   auditBefore?: unknown;
+  auditAfter?: unknown;
 }
 
 /**
@@ -73,6 +83,7 @@ export class AuditInterceptor implements NestInterceptor {
             const overrides = request as AuditRequestOverrides;
             const action = overrides.auditAction ?? this.deriveAction(method, routePath);
             const resolvedBefore = "auditBefore" in overrides ? overrides.auditBefore : before;
+            const resolvedAfter = "auditAfter" in overrides ? overrides.auditAfter : response;
             this.prisma.auditLog
               .create({
                 data: {
@@ -81,7 +92,7 @@ export class AuditInterceptor implements NestInterceptor {
                   entityType: options.entityType,
                   entityId: id ?? (response as { id?: string } | undefined)?.id ?? null,
                   before: (resolvedBefore ?? undefined) as Prisma.InputJsonValue | undefined,
-                  after: (response ?? undefined) as Prisma.InputJsonValue | undefined,
+                  after: (resolvedAfter ?? undefined) as Prisma.InputJsonValue | undefined,
                   route: `${method} ${routePath}`,
                 },
               })

@@ -57,7 +57,11 @@ export type Subject =
   | "SchedulingConstraint"
   | "ScheduleGenerationRequest"
   | "AdmissionInquiry"
-  | "CareerContactInquiry";
+  | "CareerContactInquiry"
+  // No branch below grants this explicitly — only reachable via
+  // SUPER_ADMIN's "manage all" above, same as SchoolProfile. Backs the
+  // AuditLogController read endpoint (audit/audit-log.ts).
+  | "AuditLog";
 export type AppAbility = MongoAbility<
   [Action, Subject | { invitedRole: string } | { assignmentType: string } | { type: string }]
 >;

@@ -9,6 +9,7 @@ import {
   Param,
   Post,
   Query,
+  Req,
   UseGuards,
 } from "@nestjs/common";
 import { subject } from "@casl/ability";
@@ -21,6 +22,8 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { SchoolProfileService } from "../academic-structure/school-profile";
+import { Audited } from "../audit/audited.decorator";
+import type { AuditRequestOverrides } from "../audit/audit.interceptor";
 import { AttendanceRecordInputDto, CreateAttendanceSessionDto } from "./dto/attendance-session.dto";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -262,9 +265,22 @@ export class AttendanceSessionController {
   ) {}
 
   @Post()
-  create(@Body() dto: CreateAttendanceSessionDto, @CurrentUser() user: RequestUser) {
+  @Audited("AttendanceSession")
+  async create(
+    @Body() dto: CreateAttendanceSessionDto,
+    @CurrentUser() user: RequestUser,
+    @Req() request: AuditRequestOverrides,
+  ) {
     const ability = this.abilityFactory.createForUser(user);
-    return this.service.create(dto, user, ability);
+    const session = await this.service.create(dto, user, ability);
+    // The client needs every created record (registers the whole roster in
+    // one response) but the audit trail doesn't — those rows already live
+    // in AttendanceRecord itself, so logging them again on every single
+    // register-taking action would just duplicate that table's bytes into
+    // audit_logs. See AuditRequestOverrides.auditAfter's doc comment.
+    const { records, ...sessionSummary } = session;
+    request.auditAfter = { ...sessionSummary, recordCount: records.length };
+    return session;
   }
 
   @Get()

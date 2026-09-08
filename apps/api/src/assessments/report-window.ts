@@ -17,6 +17,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
+import { Audited } from "../audit/audited.decorator";
 import { CreateReportWindowDto, UpdateReportWindowDto } from "./dto/report-window.dto";
 
 @Injectable()
@@ -59,6 +60,7 @@ export class ReportWindowController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "ReportWindow"))
+  @Audited("ReportWindow")
   create(@Body() dto: CreateReportWindowDto, @CurrentUser() user: RequestUser) {
     return this.service.create(dto, user.id);
   }
@@ -75,24 +77,28 @@ export class ReportWindowController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "ReportWindow"))
+  @Audited("ReportWindow", "reportWindow")
   update(@Param("id") id: string, @Body() dto: UpdateReportWindowDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "ReportWindow"))
+  @Audited("ReportWindow", "reportWindow")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }
 
   @Patch(":id/force-open")
   @CheckPolicies((ability) => ability.can("manage", "ReportWindow"))
+  @Audited("ReportWindow", "reportWindow")
   forceOpen(@Param("id") id: string) {
     return this.service.forceOpen(id);
   }
 
   @Patch(":id/force-close")
   @CheckPolicies((ability) => ability.can("manage", "ReportWindow"))
+  @Audited("ReportWindow", "reportWindow")
   forceClose(@Param("id") id: string) {
     return this.service.forceClose(id);
   }

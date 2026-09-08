@@ -16,6 +16,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateStudentDepartmentDto, UpdateStudentDepartmentDto } from "./dto/student-department.dto";
 
 // PRD §3.2/§3.3: assigns a student to a department for a session — only
@@ -63,6 +64,7 @@ export class StudentDepartmentController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "StudentDepartment"))
+  @Audited("StudentDepartment")
   create(@Body() dto: CreateStudentDepartmentDto) {
     return this.service.create(dto);
   }
@@ -74,12 +76,14 @@ export class StudentDepartmentController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "StudentDepartment"))
+  @Audited("StudentDepartment", "studentDepartment")
   update(@Param("id") id: string, @Body() dto: UpdateStudentDepartmentDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "StudentDepartment"))
+  @Audited("StudentDepartment", "studentDepartment")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateDepartmentDto, UpdateDepartmentDto } from "./dto/department.dto";
 
 @Injectable()
@@ -37,6 +38,7 @@ export class DepartmentController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Department")
   create(@Body() dto: CreateDepartmentDto) {
     return this.service.create(dto);
   }
@@ -53,12 +55,14 @@ export class DepartmentController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Department", "department")
   update(@Param("id") id: string, @Body() dto: UpdateDepartmentDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Department", "department")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateClassSubjectDto, UpdateClassSubjectDto } from "./dto/class-subject.dto";
 import { SetChildPeriodsDto } from "./dto/class-subject-child-periods.dto";
 import { StudentSubjectEnrollmentService } from "./student-subject-enrollment";
@@ -220,6 +221,7 @@ export class ClassSubjectController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubject")
   create(@Body() dto: CreateClassSubjectDto) {
     return this.service.create(dto);
   }
@@ -236,24 +238,28 @@ export class ClassSubjectController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubject", "classSubject")
   update(@Param("id") id: string, @Body() dto: UpdateClassSubjectDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubject", "classSubject")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }
 
   @Patch(":id/children/:childSubjectId/periods")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectChildPeriods", "classSubject")
   setChildPeriods(@Param("id") id: string, @Param("childSubjectId") childSubjectId: string, @Body() dto: SetChildPeriodsDto) {
     return this.service.setChildPeriods(id, childSubjectId, dto);
   }
 
   @Delete(":id/children/:childSubjectId/periods")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectChildPeriods", "classSubject")
   clearChildPeriods(@Param("id") id: string, @Param("childSubjectId") childSubjectId: string) {
     return this.service.clearChildPeriods(id, childSubjectId);
   }

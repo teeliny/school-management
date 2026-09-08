@@ -22,6 +22,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CreateBulkEnrollmentDto, CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 import { ClassSubjectTermStatusService } from "./class-subject-term-status";
 import { ClassSubjectLevelStatusService } from "./class-subject-level-status";
+import { Audited } from "../audit/audited.decorator";
 
 type Tx = Prisma.TransactionClient;
 
@@ -343,12 +344,14 @@ export class StudentSubjectEnrollmentController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "StudentSubjectEnrollment"))
+  @Audited("StudentSubjectEnrollment")
   enroll(@Body() dto: CreateEnrollmentDto) {
     return this.service.enroll(dto);
   }
 
   @Post("bulk")
   @CheckPolicies((ability) => ability.can("manage", "StudentSubjectEnrollment"))
+  @Audited("StudentSubjectEnrollment")
   enrollMany(@Body() dto: CreateBulkEnrollmentDto) {
     return this.service.enrollMany(dto);
   }
@@ -364,6 +367,7 @@ export class StudentSubjectEnrollmentController {
 
   @Patch(":id/drop")
   @CheckPolicies((ability) => ability.can("manage", "StudentSubjectEnrollment"))
+  @Audited("StudentSubjectEnrollment", "studentSubjectEnrollment")
   drop(@Param("id") id: string) {
     return this.service.drop(id);
   }

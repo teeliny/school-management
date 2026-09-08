@@ -9,6 +9,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { SchoolProfileService } from "../academic-structure/school-profile";
+import { Audited } from "../audit/audited.decorator";
 import { UpdateAttendanceRecordDto } from "./dto/attendance-record.dto";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -105,6 +106,7 @@ export class AttendanceRecordController {
   ) {}
 
   @Patch(":id")
+  @Audited("AttendanceRecord", "attendanceRecord")
   update(@Param("id") id: string, @Body() dto: UpdateAttendanceRecordDto, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     return this.service.update(id, dto, user, ability);

@@ -19,7 +19,26 @@ export type AuditModelKey =
   | "invigilationAssignment"
   | "dutyAssignment"
   | "scheduleGenerationRequest"
-  | "parentProfile";
+  | "parentProfile"
+  | "staffProfile"
+  | "adminProfile"
+  | "studentProfile"
+  | "academicSession"
+  | "classArm"
+  | "classLevel"
+  | "department"
+  | "schoolEvent"
+  | "studentDepartment"
+  | "term"
+  | "subject"
+  | "classSubject"
+  | "subjectGroupWeight"
+  | "studentSubjectEnrollment"
+  | "attendanceRecord"
+  | "schoolHoliday"
+  | "gradeScale"
+  | "reportWindow"
+  | "notification";
 
 export interface AuditOptions {
   entityType: string;

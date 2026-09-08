@@ -22,6 +22,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { withDisplayName } from "../academic-structure/class-arm";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
+import { Audited } from "../audit/audited.decorator";
 import { CreateTimetableSlotDto, UpdateTimetableSlotDto } from "./dto/timetable-slot.dto";
 
 interface ConflictCheckInput {
@@ -231,6 +232,7 @@ export class TimetableSlotController {
   ) {}
 
   @Post()
+  @Audited("TimetableSlot")
   create(@Body() dto: CreateTimetableSlotDto, @CurrentUser() user: RequestUser) {
     this.assertCanManage(user);
     return this.service.create(dto, user.id);
@@ -263,12 +265,14 @@ export class TimetableSlotController {
   }
 
   @Patch(":id")
+  @Audited("TimetableSlot", "timetableSlot")
   update(@Param("id") id: string, @Body() dto: UpdateTimetableSlotDto, @CurrentUser() user: RequestUser) {
     this.assertCanManage(user);
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
+  @Audited("TimetableSlot", "timetableSlot")
   remove(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     this.assertCanManage(user);
     return this.service.remove(id);

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
+import { Audited } from "../audit/audited.decorator";
 import { UpdateNotificationPreferenceDto } from "./dto/notification-preference.dto";
 
 export interface EffectiveNotificationPreference {
@@ -65,6 +66,7 @@ export class NotificationPreferenceController {
   }
 
   @Patch(":type")
+  @Audited("NotificationPreference")
   update(
     @Param("type") type: NotificationType,
     @Body() dto: UpdateNotificationPreferenceDto,

@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateSchoolHolidayDto, UpdateSchoolHolidayDto } from "./dto/school-holiday.dto";
 
 @Injectable()
@@ -37,6 +38,7 @@ export class SchoolHolidayController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "SchoolHoliday"))
+  @Audited("SchoolHoliday")
   create(@Body() dto: CreateSchoolHolidayDto) {
     return this.service.create(dto);
   }
@@ -53,12 +55,14 @@ export class SchoolHolidayController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "SchoolHoliday"))
+  @Audited("SchoolHoliday", "schoolHoliday")
   update(@Param("id") id: string, @Body() dto: UpdateSchoolHolidayDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "SchoolHoliday"))
+  @Audited("SchoolHoliday", "schoolHoliday")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

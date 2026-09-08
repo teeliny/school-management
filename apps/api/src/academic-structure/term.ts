@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateTermDto, UpdateTermDto } from "./dto/term.dto";
 
 @Injectable()
@@ -101,6 +102,7 @@ export class TermController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Term")
   create(@Body() dto: CreateTermDto) {
     return this.service.create(dto);
   }
@@ -117,18 +119,21 @@ export class TermController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Term", "term")
   update(@Param("id") id: string, @Body() dto: UpdateTermDto) {
     return this.service.update(id, dto);
   }
 
   @Patch(":id/set-current")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Term", "term")
   setCurrent(@Param("id") id: string) {
     return this.service.setCurrent(id);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("Term", "term")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

@@ -13,6 +13,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateAcademicSessionDto, UpdateAcademicSessionDto } from "./dto/academic-session.dto";
 
 @Injectable()
@@ -65,6 +66,7 @@ export class AcademicSessionController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("AcademicSession")
   create(@Body() dto: CreateAcademicSessionDto) {
     return this.service.create(dto);
   }
@@ -81,18 +83,21 @@ export class AcademicSessionController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("AcademicSession", "academicSession")
   update(@Param("id") id: string, @Body() dto: UpdateAcademicSessionDto) {
     return this.service.update(id, dto);
   }
 
   @Patch(":id/set-current")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("AcademicSession", "academicSession")
   setCurrent(@Param("id") id: string) {
     return this.service.setCurrent(id);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "AcademicStructure"))
+  @Audited("AcademicSession", "academicSession")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

@@ -6,6 +6,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
+import { Audited } from "../audit/audited.decorator";
 
 type Tx = Prisma.TransactionClient | PrismaService;
 
@@ -128,6 +129,7 @@ export class ClassSubjectTermStatusController {
 
   @Patch("disable")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectTermStatus")
   disable(
     @Param("id") id: string,
     @Param("termId") termId: string,
@@ -139,6 +141,7 @@ export class ClassSubjectTermStatusController {
 
   @Patch("enable")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectTermStatus")
   enable(
     @Param("id") id: string,
     @Param("termId") termId: string,

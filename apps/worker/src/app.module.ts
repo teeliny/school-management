@@ -19,6 +19,7 @@ import { EmailModule } from "./email/email.module";
 import { InvoiceOverdueSweepModule } from "./invoice-overdue-sweep/invoice-overdue-sweep.module";
 import { SchedulingSolveDispatchModule } from "./scheduling-solve-dispatch/scheduling-solve-dispatch.module";
 import { SchedulingTimeoutSweepModule } from "./scheduling-timeout-sweep/scheduling-timeout-sweep.module";
+import { AuditLogRetentionModule } from "./audit-log-retention/audit-log-retention.module";
 
 // instrument.ts (imported first in main.ts, before this module) already
 // loaded .env by the time this decorator evaluates — see
@@ -68,6 +69,7 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
     InvoiceOverdueSweepModule,
     SchedulingSolveDispatchModule,
     SchedulingTimeoutSweepModule,
+    AuditLogRetentionModule,
     HealthModule,
     MetricsModule,
   ],

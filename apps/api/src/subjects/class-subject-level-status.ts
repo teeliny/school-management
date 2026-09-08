@@ -6,6 +6,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
+import { Audited } from "../audit/audited.decorator";
 
 type Tx = Prisma.TransactionClient | PrismaService;
 
@@ -117,12 +118,14 @@ export class ClassSubjectLevelStatusController {
 
   @Patch("disable")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectLevelStatus")
   disable(@Param("id") id: string, @Param("classLevelId") classLevelId: string, @CurrentUser() user: RequestUser) {
     return this.service.setStatus({ classSubjectId: id, classLevelId }, false, user.id);
   }
 
   @Patch("enable")
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectLevelStatus")
   enable(@Param("id") id: string, @Param("classLevelId") classLevelId: string, @CurrentUser() user: RequestUser) {
     return this.service.setStatus({ classSubjectId: id, classLevelId }, true, user.id);
   }

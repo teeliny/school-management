@@ -29,6 +29,7 @@ import { InvitationService } from "../invitations/invitation.service";
 import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
 import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../../storage/storage-adapter";
+import { Audited } from "../../audit/audited.decorator";
 import { CreateStudentDto, GuardianInputDto } from "./dto/create-student.dto";
 import { UpdateStudentDto } from "./dto/update-student.dto";
 
@@ -674,6 +675,7 @@ export class StudentController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "StudentProfile"))
+  @Audited("StudentProfile")
   create(@Body() dto: CreateStudentDto) {
     return this.service.create(dto);
   }
@@ -710,6 +712,7 @@ export class StudentController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "StudentProfile"))
+  @Audited("StudentProfile", "studentProfile")
   update(@Param("id") id: string, @Body() dto: UpdateStudentDto) {
     return this.service.update(id, dto);
   }

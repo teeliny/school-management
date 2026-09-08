@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateClassSubjectConcurrencyGroupDto } from "./dto/class-subject-concurrency-group.dto";
 
 // "Options column" groups (PRD §3.3 follow-up, see schema.prisma's
@@ -36,6 +37,7 @@ export class ClassSubjectConcurrencyGroupController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "ClassSubject"))
+  @Audited("ClassSubjectConcurrencyGroup")
   create(@Body() dto: CreateClassSubjectConcurrencyGroupDto) {
     return this.service.create(dto);
   }

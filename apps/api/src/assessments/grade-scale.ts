@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { CreateGradeScaleDto, UpdateGradeScaleDto } from "./dto/grade-scale.dto";
 
 @Injectable()
@@ -33,6 +34,7 @@ export class GradeScaleController {
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "AssessmentComponent"))
+  @Audited("GradeScale")
   create(@Body() dto: CreateGradeScaleDto) {
     return this.service.create(dto);
   }
@@ -44,12 +46,14 @@ export class GradeScaleController {
 
   @Patch(":id")
   @CheckPolicies((ability) => ability.can("manage", "AssessmentComponent"))
+  @Audited("GradeScale", "gradeScale")
   update(@Param("id") id: string, @Body() dto: UpdateGradeScaleDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(":id")
   @CheckPolicies((ability) => ability.can("manage", "AssessmentComponent"))
+  @Audited("GradeScale", "gradeScale")
   remove(@Param("id") id: string) {
     return this.service.remove(id);
   }

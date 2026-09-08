@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
@@ -10,6 +11,7 @@ import { ProgressBar } from "../molecules/progress-bar";
 import { DonutChart, LineChart } from "../molecules/chart";
 import { StatCard } from "../atoms/stat-card";
 import { Badge } from "../atoms/badge";
+import { Button } from "../atoms/button";
 import { PendingApprovalsQueue } from "./pending-approvals-queue";
 
 interface FinanceOverview {
@@ -75,7 +77,7 @@ export function SuperAdminDashboard({ user }: { user: CurrentUser }) {
   });
   const { data: audit } = useQuery({
     queryKey: ["dashboard", "audit-highlights"],
-    queryFn: () => apiFetch<AuditHighlight[]>("/dashboard/audit-highlights?take=10", { auth: true }),
+    queryFn: () => apiFetch<AuditHighlight[]>("/dashboard/audit-highlights?take=5", { auth: true }),
   });
   const { data: invitationTrend } = useQuery({
     queryKey: ["dashboard", "invitation-trend"],
@@ -207,7 +209,15 @@ export function SuperAdminDashboard({ user }: { user: CurrentUser }) {
       )}
 
       <Card>
-        <CardHeader title="Audit log highlights" sub="Most recent sensitive writes" />
+        <CardHeader
+          title="Audit log highlights"
+          sub="Most recent sensitive writes"
+          action={
+            <Button asChild variant="outline" size="sm">
+              <Link href="/audit-log">View all</Link>
+            </Button>
+          }
+        />
         {audit && audit.length > 0 ? (
           <div className="space-y-1.5">
             {audit.map((row) => (

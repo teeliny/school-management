@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { Audited } from "../audit/audited.decorator";
 import { UpdateNotificationTemplateDto } from "./dto/notification-template.dto";
 
 /**
@@ -39,6 +40,7 @@ export class NotificationTemplateController {
 
   @Patch(":key")
   @CheckPolicies((ability) => ability.can("manage", "NotificationTemplate"))
+  @Audited("NotificationTemplate")
   update(@Param("key") key: NotificationType, @Body() dto: UpdateNotificationTemplateDto) {
     return this.service.update(key, dto);
   }

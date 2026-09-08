@@ -19,6 +19,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
+import { Audited } from "../audit/audited.decorator";
 import { UpdateSchoolProfileDto } from "./dto/school-profile.dto";
 
 // Same "store the freshly-signed URL, not the key" convention as
@@ -71,12 +72,14 @@ export class SchoolProfileController {
 
   @Patch()
   @CheckPolicies((ability) => ability.can("manage", "SchoolProfile"))
+  @Audited("SchoolProfile")
   update(@Body() dto: UpdateSchoolProfileDto) {
     return this.service.update(dto);
   }
 
   @Post("logo")
   @CheckPolicies((ability) => ability.can("manage", "SchoolProfile"))
+  @Audited("SchoolProfile")
   @UseInterceptors(
     FileInterceptor("file", {
       storage: memoryStorage(),

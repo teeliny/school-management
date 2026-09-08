@@ -8,6 +8,7 @@ import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { NotificationsGateway } from "./notifications.gateway";
+import { Audited } from "../audit/audited.decorator";
 
 /**
  * PRD §3.10, FR8.1–FR8.6: the generic notify/deliver mechanism — every
@@ -148,11 +149,13 @@ export class NotificationController {
   }
 
   @Patch(":id/read")
+  @Audited("Notification", "notification")
   markRead(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     return this.service.markRead(user.id, id);
   }
 
   @Patch("read-all")
+  @Audited("Notification")
   markAllRead(@CurrentUser() user: RequestUser) {
     return this.service.markAllRead(user.id);
   }

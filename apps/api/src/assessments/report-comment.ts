@@ -8,6 +8,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
+import { Audited } from "../audit/audited.decorator";
 import { CreateReportCommentDto } from "./dto/report-comment.dto";
 
 @Injectable()
@@ -217,6 +218,7 @@ export class ReportCommentController {
   ) {}
 
   @Post()
+  @Audited("ReportComment")
   write(@Body() dto: CreateReportCommentDto, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     const isOverride = ability.can("manage", "ReportComment");

@@ -24,6 +24,7 @@ import {
   Bell,
   Inbox,
   Settings,
+  History,
   Menu,
   type LucideIcon,
 } from "lucide-react";
@@ -226,6 +227,14 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         // check (ability.factory.ts's "manage SchoolProfile", granted only
         // via SUPER_ADMIN's "manage all", not the ADMIN/Principal/
         // Headteacher "manage AcademicStructure" grant).
+        visible: ({ user }) => user.roles.includes("SUPER_ADMIN"),
+      },
+      {
+        href: "/audit-log",
+        label: "Audit log",
+        icon: History,
+        // Matches the backend CASL check (ability.factory.ts's "read
+        // AuditLog", only reachable via SUPER_ADMIN's "manage all").
         visible: ({ user }) => user.roles.includes("SUPER_ADMIN"),
       },
     ],
