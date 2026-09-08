@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { parse } from "csv-parse/sync";
 import { Gender, GuardianRelationship, Role } from "@prisma/client";
 import { PrismaService } from "../../../prisma/prisma.service";
@@ -70,7 +70,10 @@ export class LegacyImportService {
   ) {}
 
   async importCsv(buffer: Buffer, termId: string): Promise<LegacyImportReport> {
-    await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
+    const term = await this.prisma.term.findUnique({ where: { id: termId } });
+    if (!term) {
+      throw new NotFoundException(`Term with id "${termId}" not found`);
+    }
 
     let records: Record<string, string>[];
     try {

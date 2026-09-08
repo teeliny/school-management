@@ -7,6 +7,7 @@ import { BullModule } from "@nestjs/bullmq";
 import { LoggerModule } from "nestjs-pino";
 import { SentryGlobalFilter, SentryModule } from "@sentry/nestjs/setup";
 import { CommonModule } from "./common/common.module";
+import { PrismaExceptionFilter } from "./common/prisma-exception.filter";
 import { HealthModule } from "./health/health.module";
 import { MetricsModule } from "./metrics/metrics.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -107,6 +108,13 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
     MetricsModule,
     DashboardModule,
   ],
-  providers: [...(sentryEnabled ? [{ provide: APP_FILTER, useClass: SentryGlobalFilter }] : [])],
+  // Nest tries globally-bound APP_FILTERs in reverse registration order, so
+  // PrismaExceptionFilter (registered last) gets first look at an exception
+  // — mapping a PrismaClientKnownRequestError to a proper HttpException
+  // before it ever reaches SentryGlobalFilter's catch-all default handling.
+  providers: [
+    ...(sentryEnabled ? [{ provide: APP_FILTER, useClass: SentryGlobalFilter }] : []),
+    { provide: APP_FILTER, useClass: PrismaExceptionFilter },
+  ],
 })
 export class AppModule {}
