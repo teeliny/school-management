@@ -5,7 +5,7 @@ export const ACCESS_COOKIE = "accessToken";
 export const REFRESH_COOKIE = "refreshToken";
 
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60; // must match apps/api/src/auth/auth.module.ts signOptions.expiresIn
-const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // must match apps/api/src/auth/auth.service.ts REFRESH_TOKEN_TTL_SECONDS
+const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // must match apps/api/src/auth/auth.service.ts REFRESH_TOKEN_TTL_SECONDS
 
 function baseCookieOptions() {
   return {

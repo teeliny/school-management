@@ -10,7 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UserService } from "../identity/users/user.service";
 import { NotificationService } from "../notifications/notification";
 
-const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 const REFRESH_KEY_PREFIX = "refresh:";
 const REUSE_KEY_PREFIX = "refresh:used:";
 // PRD FR1.8: "expires in 1 hour" — shorter than Invitation's 7 days either
