@@ -23,6 +23,15 @@ function getRedis(): Redis {
     // handled or a Redis outage can crash the Next.js server process.
     client.on("error", () => {});
     globalThis.__warmupRedis = client;
+    // Without this, a container restart (deploy, Render recycling the
+    // instance, etc.) kills the process via SIGTERM without ever closing
+    // this connection — Redis has no idle-client timeout configured, so the
+    // orphaned connection just sits there forever. Confirmed in production:
+    // CLIENT LIST showed a handful of commands each from many distinct
+    // container IPs, all idle — one leaked connection per restart.
+    const shutdown = () => void client.quit();
+    process.once("SIGTERM", shutdown);
+    process.once("SIGINT", shutdown);
   }
   return globalThis.__warmupRedis;
 }
