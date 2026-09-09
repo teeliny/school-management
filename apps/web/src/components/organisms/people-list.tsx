@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { User as UserIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, User as UserIcon } from "lucide-react";
 import type { ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -66,6 +66,8 @@ export function PeopleList({
   const [students, setStudents] = useState<StudentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [nameSort, setNameSort] = useState<"asc" | "desc">("asc");
 
   const load = useCallback(() => {
     const query = classLevelId ? `?classLevelId=${classLevelId}` : "";
@@ -81,13 +83,19 @@ export function PeopleList({
   const filteredStudents = useMemo(() => {
     if (!students) return students;
     const term = search.trim().toLowerCase();
-    if (!term) return students;
-    return students.filter(
-      (student) =>
+    const filtered = students.filter((student) => {
+      const matchesTerm =
+        !term ||
         student.admissionNumber.toLowerCase().includes(term) ||
-        `${student.user.firstName} ${student.user.lastName}`.toLowerCase().includes(term),
-    );
-  }, [students, search]);
+        `${student.user.firstName} ${student.user.lastName}`.toLowerCase().includes(term);
+      const matchesStatus = !statusFilter || student.status === statusFilter;
+      return matchesTerm && matchesStatus;
+    });
+    return [...filtered].sort((a, b) => {
+      const cmp = `${a.user.firstName} ${a.user.lastName}`.localeCompare(`${b.user.firstName} ${b.user.lastName}`);
+      return nameSort === "asc" ? cmp : -cmp;
+    });
+  }, [students, search, statusFilter, nameSort]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!students) return <p className="text-sm text-muted">Loading…</p>;
@@ -116,6 +124,18 @@ export function PeopleList({
             ))}
           </SelectContent>
         </Select>
+        <Select value={statusFilter || "ALL"} onValueChange={(v) => setStatusFilter(v === "ALL" ? "" : v)}>
+          <SelectTrigger className="sm:w-44" aria-label="Filter by status">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All statuses</SelectItem>
+            <SelectItem value="ACTIVE">Active</SelectItem>
+            <SelectItem value="GRADUATED">Graduated</SelectItem>
+            <SelectItem value="WITHDRAWN">Withdrawn</SelectItem>
+            <SelectItem value="SUSPENDED">Suspended</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       {students.length === 0 ? (
         <p className="text-sm text-muted">
@@ -126,8 +146,18 @@ export function PeopleList({
         <table className="w-full text-left text-[12.5px]">
           <thead>
             <tr className="border-b border-border text-muted">
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">S/N</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Admission #</th>
-              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Name</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">
+                <button
+                  type="button"
+                  onClick={() => setNameSort((d) => (d === "asc" ? "desc" : "asc"))}
+                  className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-foreground"
+                >
+                  Name
+                  {nameSort === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </button>
+              </th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Class</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Parent phone</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
@@ -137,13 +167,14 @@ export function PeopleList({
           <tbody>
             {filteredStudents?.length === 0 && (
               <tr>
-                <td colSpan={6} className="py-3 text-muted">
-                  No students match &ldquo;{search}&rdquo;.
+                <td colSpan={7} className="py-3 text-muted">
+                  No students match the current filters.
                 </td>
               </tr>
             )}
-            {filteredStudents?.map((student) => (
+            {filteredStudents?.map((student, index) => (
               <tr key={student.id} className="border-b border-border/60 last:border-none">
+                <td className="py-2.5 pr-4 text-muted">{index + 1}</td>
                 <td className="py-2.5 pr-4 font-mono text-muted">{student.admissionNumber}</td>
                 <td className="py-2.5 pr-4 font-medium">
                   <span className="inline-flex items-center gap-1.5">
