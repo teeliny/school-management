@@ -32,7 +32,6 @@ import { NotificationsModule } from "./notifications/notifications.module";
 import { PublicInquiriesModule } from "./public-inquiries/public-inquiries.module";
 import { AuditModule } from "./audit/audit.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
-import { WarmupModule } from "./warmup/warmup.module";
 
 // instrument.ts (imported first in main.ts, before this module) already
 // loaded .env by the time this decorator evaluates, so this reads the real
@@ -77,7 +76,6 @@ const sentryEnabled = Boolean(process.env.SENTRY_DSN);
     PrismaModule,
     AuditModule,
     RedisModule,
-    WarmupModule,
     StorageModule,
     // First producer-side BullMQ usage in apps/api (Phase 4 M4 — Admin-
     // triggered FULL_TERM report generation). Shares RedisModule's REDIS_CLIENT

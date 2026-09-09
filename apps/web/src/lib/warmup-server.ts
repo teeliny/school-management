@@ -1,47 +1,22 @@
 import "server-only";
-import Redis from "ioredis";
 
-// Must match apps/api/src/warmup/warmup.interceptor.ts's LAST_ACTIVE_KEY
-// exactly — duplicated, not shared, same as parseCorsOrigins().
-const LAST_ACTIVE_KEY = "api:last-active";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 const HEALTH_PROBE_TIMEOUT_MS = 5000;
+// How long a confirmed-warm result is trusted before re-probing. This app
+// runs on Vercel (serverless functions), not a persistent container — a
+// previous version cached a persistent ioredis connection in globalThis to
+// share "is the API warm" state via Redis across instances, but Vercel
+// recycles function instances without a reliable shutdown hook reaching user
+// code, so that connection leaked on every recycle (confirmed in production:
+// CLIENT LIST showed dozens of idle orphaned connections from distinct
+// container IPs). An in-memory cache scoped to this instance's own lifetime
+// avoids holding any persistent external connection at all — the only cost
+// is a fresh instance doing one extra health probe on its first request
+// instead of reusing another instance's knowledge.
+const WARM_CACHE_TTL_MS = 60_000;
 
 declare global {
-  // Survives dev-mode HMR module re-evaluation, avoiding a new Redis connection per file save.
-  var __warmupRedis: Redis | undefined;
-}
-
-function getRedis(): Redis {
-  if (!globalThis.__warmupRedis) {
-    const client = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
-      maxRetriesPerRequest: 1,
-      connectTimeout: 2000,
-      lazyConnect: true,
-    });
-    // ioredis emits unhandled 'error' events on a persistent client; must be
-    // handled or a Redis outage can crash the Next.js server process.
-    client.on("error", () => {});
-    globalThis.__warmupRedis = client;
-    // Without this, a container restart (deploy, Render recycling the
-    // instance, etc.) kills the process via SIGTERM without ever closing
-    // this connection — Redis has no idle-client timeout configured, so the
-    // orphaned connection just sits there forever. Confirmed in production:
-    // CLIENT LIST showed a handful of commands each from many distinct
-    // container IPs, all idle — one leaked connection per restart.
-    const shutdown = () => void client.quit();
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
-  }
-  return globalThis.__warmupRedis;
-}
-
-export async function isApiWarm(): Promise<boolean> {
-  try {
-    return (await getRedis().get(LAST_ACTIVE_KEY)) !== null;
-  } catch {
-    return false;
-  }
+  var __apiWarmUntil: number | undefined;
 }
 
 export async function probeApiAlive(): Promise<boolean> {
@@ -57,6 +32,8 @@ export async function probeApiAlive(): Promise<boolean> {
 }
 
 export async function checkApiReachable(): Promise<boolean> {
-  if (await isApiWarm()) return true;
-  return probeApiAlive();
+  if (globalThis.__apiWarmUntil && Date.now() < globalThis.__apiWarmUntil) return true;
+  const alive = await probeApiAlive();
+  if (alive) globalThis.__apiWarmUntil = Date.now() + WARM_CACHE_TTL_MS;
+  return alive;
 }

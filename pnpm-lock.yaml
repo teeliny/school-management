@@ -232,9 +232,6 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      ioredis:
-        specifier: ^5.4.0
-        version: 5.11.1(supports-color@8.1.1)
       lucide-react:
         specifier: ^0.469.0
         version: 0.469.0(react@19.2.8)
