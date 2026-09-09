@@ -37,10 +37,11 @@ interface StudentDepartmentRow {
 //
 // The create endpoint only takes one studentId per call (no bulk route), so
 // picking several students here just fires one POST per student via
-// Promise.allSettled — that also means a partial failure (e.g. one of the
-// picked students already has a department for this session — @@unique on
-// [studentId, academicSessionId]) reports per-student instead of losing the
-// whole batch.
+// Promise.allSettled — that also means a partial failure reports per-student
+// instead of losing the whole batch. POST doubles as re-assign: the API
+// upserts on [studentId, academicSessionId], so picking a student who
+// already has a department for this session just moves them to the new one
+// instead of 409ing.
 export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void }) {
   const { data: departments = [] } = useQuery({
     queryKey: ["departments"],

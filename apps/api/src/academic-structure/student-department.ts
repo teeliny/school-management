@@ -23,6 +23,11 @@ import { CreateStudentDepartmentDto, UpdateStudentDepartmentDto } from "./dto/st
 // valid when the student's current ClassLevel.category = SSS. Service-layer
 // check, not a DB constraint (same precedent as StaffAssignment's
 // class-teacher rule).
+//
+// @@unique([studentId, academicSessionId]) means a student can only ever
+// have one department row per session, so "assign" doubles as "re-assign":
+// upsert on that key rather than a plain create, otherwise picking a new
+// department for an already-assigned student 409s instead of updating it.
 @Injectable()
 export class StudentDepartmentService {
   constructor(private readonly prisma: PrismaService) {}
@@ -37,7 +42,13 @@ export class StudentDepartmentService {
       throw new BadRequestException("Department assignment is only valid for students in an SSS class level");
     }
 
-    return this.prisma.studentDepartment.create({ data: dto });
+    return this.prisma.studentDepartment.upsert({
+      where: {
+        studentId_academicSessionId: { studentId: dto.studentId, academicSessionId: dto.academicSessionId },
+      },
+      create: dto,
+      update: { departmentId: dto.departmentId },
+    });
   }
 
   findAll(filters: { studentId?: string; academicSessionId?: string }) {
