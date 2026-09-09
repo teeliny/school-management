@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Label } from "../atoms/label";
-import { StudentCombobox } from "../molecules/student-combobox";
+import { StudentMultiCombobox } from "../molecules/student-multi-combobox";
 import {
   Select,
   SelectContent,
@@ -28,11 +28,19 @@ interface StudentDepartmentRow {
   department: { name: string };
 }
 
-// PRD §3.2/§3.3: assigns a student to a department for a session — the API
-// rejects this unless the student's current class level is SSS. The student
-// picker is scoped to SSS up front (StudentCombobox's classLevelCategory),
-// but the backend check stays the real authority — same "narrow the UI, but
-// don't trust it alone" precedent as everywhere else in this app.
+// PRD §3.2/§3.3: assigns students to a department for a session — the API
+// rejects this unless a student's current class level is SSS. The student
+// picker is scoped to SSS up front (StudentMultiCombobox's
+// classLevelCategory), but the backend check stays the real authority —
+// same "narrow the UI, but don't trust it alone" precedent as everywhere
+// else in this app.
+//
+// The create endpoint only takes one studentId per call (no bulk route), so
+// picking several students here just fires one POST per student via
+// Promise.allSettled — that also means a partial failure (e.g. one of the
+// picked students already has a department for this session — @@unique on
+// [studentId, academicSessionId]) reports per-student instead of losing the
+// whole batch.
 export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void }) {
   const { data: departments = [] } = useQuery({
     queryKey: ["departments"],
@@ -43,7 +51,8 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
     queryFn: () => apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true }),
   });
   const [existingAssignments, setExistingAssignments] = useState<StudentDepartmentRow[]>([]);
-  const [studentId, setStudentId] = useState("");
+  const [studentIds, setStudentIds] = useState<string[]>([]);
+  const [studentLabels, setStudentLabels] = useState<string[]>([]);
   const [departmentId, setDepartmentId] = useState("");
   const [academicSessionId, setAcademicSessionId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -80,18 +89,37 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
     setSuccess(null);
     setSubmitting(true);
     try {
-      await apiFetch("/student-departments", {
-        method: "POST",
-        auth: true,
-        body: { studentId, departmentId, academicSessionId },
-      });
-      setSuccess("Department assigned.");
+      const results = await Promise.allSettled(
+        studentIds.map((studentId) =>
+          apiFetch("/student-departments", {
+            method: "POST",
+            auth: true,
+            body: { studentId, departmentId, academicSessionId },
+          }),
+        ),
+      );
+      const failures = results
+        .map((result, i) => ({ result, label: studentLabels[i] }))
+        .filter(
+          (entry): entry is { result: PromiseRejectedResult; label: string } => entry.result.status === "rejected",
+        );
+
+      if (failures.length === 0) {
+        setSuccess(`Assigned department to ${studentIds.length} student${studentIds.length === 1 ? "" : "s"}.`);
+        setStudentIds([]);
+        setStudentLabels([]);
+      } else if (failures.length < studentIds.length) {
+        const failedNames = failures.map((f) => f.label).join(", ");
+        setError(`Assigned ${studentIds.length - failures.length} of ${studentIds.length}. Failed: ${failedNames}`);
+      } else {
+        const reason = failures[0]?.result.reason;
+        setError(reason instanceof ApiError ? reason.message : "Something went wrong");
+      }
+
       apiFetch<StudentDepartmentRow[]>(`/student-departments?academicSessionId=${academicSessionId}`, { auth: true })
         .then(setExistingAssignments)
         .catch(() => {});
       onAssigned?.();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
     } finally {
       setSubmitting(false);
     }
@@ -120,12 +148,15 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
       </div>
 
       <div>
-        <Label htmlFor="sd-student">Student (SSS only)</Label>
-        <StudentCombobox
+        <Label htmlFor="sd-student">Students (SSS only)</Label>
+        <StudentMultiCombobox
           id="sd-student"
           classLevelCategory="SSS"
-          value={studentId}
-          onValueChange={(id) => setStudentId(id)}
+          value={studentIds}
+          onValueChange={(ids, labels) => {
+            setStudentIds(ids);
+            setStudentLabels(labels);
+          }}
           extraLabelsByStudentId={currentDepartmentByStudentId}
           className="mt-1"
         />
@@ -147,8 +178,12 @@ export function StudentDepartmentForm({ onAssigned }: { onAssigned?: () => void 
         </Select>
       </div>
 
-      <Button type="submit" disabled={submitting} className="w-full">
-        {submitting ? "Assigning…" : "Assign department"}
+      <Button type="submit" disabled={submitting || studentIds.length === 0} className="w-full">
+        {submitting
+          ? "Assigning…"
+          : studentIds.length > 1
+            ? `Assign department to ${studentIds.length} students`
+            : "Assign department"}
       </Button>
     </form>
   );
