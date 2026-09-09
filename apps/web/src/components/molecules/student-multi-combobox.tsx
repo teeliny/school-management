@@ -43,11 +43,16 @@ export function StudentMultiCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const [labelById, setLabelById] = useState<Record<string, string>>({});
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
   const { students, total, loading, error, hasMore, search, setSearch, loadMore } = usePaginatedStudents({
     classArmId,
     classLevelCategory,
   });
-  const sentinelRef = useInfiniteScroll({ onLoadMore: loadMore, hasMore, loading, root: null });
+  // The scrollable list lives inside a Radix Portal with fixed positioning,
+  // so `root: null` (the browser viewport) can't reliably track when the
+  // sentinel scrolls into view — observe against the actual scroll
+  // container instead.
+  const sentinelRef = useInfiniteScroll({ onLoadMore: loadMore, hasMore, loading, root: scrollContainer });
   const scoped = Boolean(classArmId || classLevelCategory);
 
   function toggle(studentId: string, label: string) {
@@ -110,7 +115,7 @@ export function StudentMultiCombobox({
               className="h-8 pl-8 text-[12.5px]"
             />
           </div>
-          <div className="max-h-[220px] overflow-y-auto p-1">
+          <div ref={setScrollContainer} className="max-h-[220px] overflow-y-auto p-1">
             {error && <p className="px-2 py-1.5 text-[12px] text-danger">{error}</p>}
             {!error && students.length === 0 && !loading && (
               <p className="px-2 py-1.5 text-[12px] text-muted">No students found</p>
