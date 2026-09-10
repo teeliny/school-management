@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "../components/providers/theme-provider";
 import { QueryProvider } from "../components/providers/query-provider";
 import { ApiWarmupBanner } from "../components/organisms/api-warmup-banner";
+import { BrowserSupportBanner } from "../components/organisms/browser-support-banner";
 import { cn } from "../lib/cn";
 import { siteContent } from "../lib/site-content";
 import { SITE_URL } from "../lib/site-url";
@@ -64,7 +65,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <QueryProvider>
           <ThemeProvider>
-            <ApiWarmupBanner />
+            <div className="fixed inset-x-0 top-0 z-50 flex flex-col">
+              <BrowserSupportBanner />
+              <ApiWarmupBanner />
+            </div>
             {children}
           </ThemeProvider>
         </QueryProvider>
