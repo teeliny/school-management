@@ -147,8 +147,17 @@ export function OutstandingBalancesList({
     onTotalChange?.(total);
   }, [total, onTotalChange]);
 
+  // Explicit `root` (the actual scroll container), via a callback-ref-backed
+  // state rather than a plain useRef — see invoice-list.tsx's matching
+  // comment for why.
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
   const hasMore = rows.length < total;
-  const sentinelRef = useInfiniteScroll({ onLoadMore: () => loadPage(rows.length), hasMore, loading });
+  const sentinelRef = useInfiniteScroll({
+    onLoadMore: () => loadPage(rows.length),
+    hasMore,
+    loading,
+    root: scrollContainer,
+  });
 
   async function confirmExcuse() {
     if (!excusingId) return;
@@ -273,7 +282,7 @@ export function OutstandingBalancesList({
       {rows.length === 0 && loading ? (
         <SkeletonTable rows={4} columns={5} />
       ) : (
-        <div className="max-h-[480px] overflow-auto">
+        <div ref={setScrollContainer} className="max-h-[480px] overflow-auto">
           <table className="w-full text-left text-[12.5px]">
             <thead>
               <tr className="border-b border-border text-muted">

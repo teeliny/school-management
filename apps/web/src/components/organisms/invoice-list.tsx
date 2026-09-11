@@ -147,8 +147,26 @@ export function InvoiceList({
     onTotalChange?.(total);
   }, [total, onTotalChange]);
 
+  // Explicit `root` (the actual scroll container) rather than the default
+  // `root: null` (viewport) — IntersectionObserver is spec'd to account for
+  // clipping by an ancestor `overflow` container even when root is the
+  // viewport, but that's been unreliable in practice on some browsers when
+  // the target sits inside a fixed-height `overflow-auto` div like this
+  // one; passing the container directly sidesteps that entirely. State (via
+  // a callback ref), not a plain useRef — a plain ref read during render
+  // reflects the *previous* commit, so right after this div first mounts
+  // (e.g. the loading→loaded transition) `root` would read one render
+  // stale (still null) instead of the just-mounted node; a callback ref
+  // schedules a re-render exactly when the node changes, so `root` is
+  // never behind.
+  const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null);
   const hasMore = invoices.length < total;
-  const sentinelRef = useInfiniteScroll({ onLoadMore: () => loadPage(invoices.length), hasMore, loading });
+  const sentinelRef = useInfiniteScroll({
+    onLoadMore: () => loadPage(invoices.length),
+    hasMore,
+    loading,
+    root: scrollContainer,
+  });
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (invoices.length === 0 && loading) return <SkeletonTable rows={4} columns={5} />;
@@ -234,7 +252,7 @@ export function InvoiceList({
         </div>
       )}
 
-      <div className="max-h-[420px] overflow-auto">
+      <div ref={setScrollContainer} className="max-h-[420px] overflow-auto">
         <table className="w-full text-left text-[12.5px]">
           <thead>
             <tr className="border-b border-border text-muted">
