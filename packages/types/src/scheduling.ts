@@ -67,6 +67,24 @@ export interface DefaultSchedulingConstraint {
 export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   { scope: "CLASS_TIMETABLE", key: "CALCULATION_SUBJECTS_MORNING", value: true },
 
+  // SSS's "options column" (ClassSubjectConcurrencyGroup, e.g. Physics/
+  // Financial Accounting/Literature in English) is already forced onto one
+  // shared (day, period) slot within each class arm — these two keys extend
+  // that to align the slot across every arm of the SAME ClassLevel (e.g. all
+  // of SSS 1's arms) so students from different arms can combine into one
+  // physical elective class, PROVIDED that ClassLevel is small enough
+  // (≤ MAX_ARM_COUNT arms) for a combined teacher/room to be realistic —
+  // by design decision, SSS only (not JSS, even though concurrency groups
+  // can exist there too, e.g. Government/Geography) and per-ClassLevel (SSS 1
+  // checked on its own arm count, independently of SSS 2/SSS 3), so no
+  // classLevelCategoryGroup scoping (JSS_SSS would wrongly also cover JSS) —
+  // apps/worker's buildClassTimetablePayload hardcodes the SSS-only filter
+  // and does the per-ClassLevel arm count itself. Stays global (no group
+  // override), same "one flat pair of keys" shape as CALCULATION_SUBJECTS_
+  // MORNING above.
+  { scope: "CLASS_TIMETABLE", key: "SYNC_SSS_ELECTIVE_BLOCKS_ACROSS_ARMS", value: true },
+  { scope: "CLASS_TIMETABLE", key: "SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT", value: 3 },
+
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIODS_PER_DAY", value: 10 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIOD_DURATION_MINUTES", value: 40 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "SCHOOL_DAY_START_TIME", value: "08:00" },

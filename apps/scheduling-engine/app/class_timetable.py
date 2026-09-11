@@ -31,6 +31,10 @@ class SubjectPayload(BaseModel):
 
 class ClassArmPayload(BaseModel):
     classArmId: str
+    # Lets _solve_group key a synced elective-block bundle (see
+    # GroupPayload.syncedElectiveClassLevelIds) by ClassLevel instead of
+    # ClassArm.
+    classLevelId: str
     subjects: list[SubjectPayload]
     blockedPeriods: dict[str, list[int]]
 
@@ -57,6 +61,12 @@ class GroupPayload(BaseModel):
     days: list[str]
     classArms: list[ClassArmPayload]
     staffBlockedPeriods: dict[str, dict[str, list[int]]]
+    # ClassLevel ids whose concurrency-group ("elective block") members
+    # should share one slot across EVERY arm of that ClassLevel, not just
+    # within each arm — apps/worker only ever populates this with SSS
+    # ClassLevels at or under SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT arms.
+    # Empty list = today's per-arm-independent behavior for every arm.
+    syncedElectiveClassLevelIds: list[str] = []
 
 
 SOLVE_TIME_LIMIT_SECONDS = 20.0
@@ -104,39 +114,52 @@ def _solve_group(
             return False
         return not (calculation_subjects_morning and subject.requiresCalculation and period > group.breakAfterPeriod)
 
+    arm_blocked_by_id: dict[str, dict[str, set[int]]] = {}
     for arm in group.classArms:
-        arm_blocked = {day: set(periods_) for day, periods_ in arm.blockedPeriods.items()}
+        arm_blocked_by_id[arm.classArmId] = {day: set(periods_) for day, periods_ in arm.blockedPeriods.items()}
         for subject in arm.subjects:
             staff_by_arm_subject[(arm.classArmId, subject.subjectId)] = subject.staffId
             subject_by_arm_id[(arm.classArmId, subject.subjectId)] = subject
 
-        # Group this arm's subjects by "options column" membership — an
-        # ungrouped subject is its own singleton group (keyed by its own id),
-        # so the same code path below covers both cases.
-        groups: dict[str, list[SubjectPayload]] = {}
+    # Group subjects into "options column" bundles — an ungrouped subject is
+    # its own singleton bundle (keyed by its own id). Bundles normally key by
+    # (arm, group_key) so each arm chooses its own slot independently; a
+    # ClassLevel listed in syncedElectiveClassLevelIds instead keys its real
+    # concurrency-group bundles by (classLevel, group_key) alone, pooling
+    # every arm's members of that bundle into ONE bundle so they're forced
+    # onto the exact same slot across the whole ClassLevel, not just within
+    # one arm. Singleton (non-concurrency-group) subjects always stay keyed
+    # per-arm even on a synced ClassLevel — there's nothing to align them
+    # with.
+    bundles: dict[str, list[tuple[str, SubjectPayload]]] = {}
+    for arm in group.classArms:
         for subject in arm.subjects:
-            groups.setdefault(subject.concurrencyGroupId or subject.subjectId, []).append(subject)
+            group_key = subject.concurrencyGroupId or subject.subjectId
+            is_synced = subject.concurrencyGroupId is not None and arm.classLevelId in group.syncedElectiveClassLevelIds
+            bundle_key = f"level:{arm.classLevelId}:{group_key}" if is_synced else f"arm:{arm.classArmId}:{group_key}"
+            bundles.setdefault(bundle_key, []).append((arm.classArmId, subject))
 
-        for group_key, members in groups.items():
-            for day in group.days:
-                for period in periods_for_day(day):
-                    # A bundle only gets a slot when it's open for EVERY
-                    # member (arm-blocked ∪ that member's own staff-blocked ∪
-                    # the calc-morning restriction, whichever member(s)
-                    # require it) — otherwise one member would end up with no
-                    # variable at that slot while its bundle-mates did.
-                    if not all(is_open(arm_blocked, member, day, period) for member in members):
-                        continue
-                    # Every member points at the SAME BoolVar object rather
-                    # than each getting its own — this is what forces bundle-
-                    # mates onto the identical slot with zero extra
-                    # constraints: every per-subject constraint below
-                    # (periodsPerWeek sum, ≤1/day, teacher conflict) already
-                    # reads variables[(arm, subject, day, period)] on its own,
-                    # so sharing the object keeps them all in lockstep.
-                    shared_var = model.new_bool_var(f"x_{arm.classArmId}_{group_key}_{day}_{period}")
-                    for member in members:
-                        variables[(arm.classArmId, member.subjectId, day, period)] = shared_var
+    for bundle_key, members in bundles.items():
+        for day in group.days:
+            for period in periods_for_day(day):
+                # A bundle only gets a slot when it's open for EVERY member
+                # (arm-blocked ∪ that member's own staff-blocked ∪ the
+                # calc-morning restriction, whichever member(s) require it,
+                # each checked against ITS OWN arm's blocked periods) —
+                # otherwise one member would end up with no variable at that
+                # slot while its bundle-mates did.
+                if not all(is_open(arm_blocked_by_id[arm_id], subject, day, period) for arm_id, subject in members):
+                    continue
+                # Every member points at the SAME BoolVar object rather than
+                # each getting its own — this is what forces bundle-mates
+                # onto the identical slot with zero extra constraints: every
+                # per-subject constraint below (periodsPerWeek sum, ≤1/day,
+                # teacher conflict) already reads
+                # variables[(arm, subject, day, period)] on its own, so
+                # sharing the object keeps them all in lockstep.
+                shared_var = model.new_bool_var(f"x_{bundle_key}_{day}_{period}")
+                for arm_id, subject in members:
+                    variables[(arm_id, subject.subjectId, day, period)] = shared_var
 
     # At most one subject (or, for a bundle, one shared slot) per class arm
     # per period — deduped by concurrencyGroupId so an N-member bundle counts
@@ -182,7 +205,15 @@ def _solve_group(
                 if day_vars:
                     model.add(sum(day_vars) <= 1)
 
-    # No teacher double-booked across class arms within this solve.
+    # No teacher double-booked across class arms within this solve — deduped
+    # by variable identity (not just by (arm, subject) pair) so a staff
+    # member teaching a synced elective bundle in more than one arm of the
+    # same ClassLevel isn't flagged against themselves: those pairs already
+    # share the exact same BoolVar object (bundles above), so without this
+    # dedupe summing it twice would force it to always be 0 (2v ≤ 1 with
+    # boolean v), banning the very slot the sync is supposed to enable. A
+    # genuine double-booking — the same staff member on two DIFFERENT
+    # variables at the same slot — still gets its ≤1 constraint as before.
     staff_keys: dict[str, list[tuple[str, str]]] = {}
     for (arm_id, subject_id), staff_id in staff_by_arm_subject.items():
         staff_keys.setdefault(staff_id, []).append((arm_id, subject_id))
@@ -191,11 +222,14 @@ def _solve_group(
             continue
         for day in group.days:
             for period in periods_for_day(day):
-                vars_here = [
-                    variables[(arm_id, subject_id, day, period)]
-                    for (arm_id, subject_id) in arm_subject_pairs
-                    if (arm_id, subject_id, day, period) in variables
-                ]
+                seen_var_ids: set[int] = set()
+                vars_here = []
+                for arm_id, subject_id in arm_subject_pairs:
+                    v = variables.get((arm_id, subject_id, day, period))
+                    if v is None or id(v) in seen_var_ids:
+                        continue
+                    seen_var_ids.add(id(v))
+                    vars_here.append(v)
                 if len(vars_here) > 1:
                     model.add(sum(vars_here) <= 1)
 

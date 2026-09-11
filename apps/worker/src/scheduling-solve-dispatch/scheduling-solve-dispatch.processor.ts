@@ -48,6 +48,9 @@ interface ResolvedSubject {
 
 interface ClassArmPayload {
   classArmId: string;
+  // Lets the solver key a synced elective-block bundle (see
+  // syncedElectiveClassLevelIds below) by ClassLevel instead of ClassArm.
+  classLevelId: string;
   subjects: ResolvedSubject[];
   blockedPeriods: Record<string, number[]>;
 }
@@ -57,6 +60,14 @@ interface GroupPayload extends PeriodStructure {
   days: DayOfWeek[];
   classArms: ClassArmPayload[];
   staffBlockedPeriods: Record<string, Record<string, number[]>>;
+  // ClassLevel ids (always SSS, and only within this group when it's
+  // JSS_SSS) whose arm count is within SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT
+  // — for these, the Python solver forces every arm's concurrency-group
+  // members onto one shared slot per the whole ClassLevel rather than one
+  // per arm. Empty for CRECHE_NURSERY_PRIMARY groups and for any SSS
+  // ClassLevel over the threshold, which keep today's per-arm-independent
+  // behavior.
+  syncedElectiveClassLevelIds: string[];
 }
 
 interface ExamSubjectPayload {
@@ -225,6 +236,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     ]);
     const calculationSubjectsMorning = globalConstraints.find((c) => c.key === "CALCULATION_SUBJECTS_MORNING")
       ?.value as boolean | undefined;
+    const syncSssElectiveBlocksAcrossArms =
+      (globalConstraints.find((c) => c.key === "SYNC_SSS_ELECTIVE_BLOCKS_ACROSS_ARMS")?.value as boolean | undefined) ?? true;
+    const syncSssElectiveBlocksMaxArmCount = Number(
+      globalConstraints.find((c) => c.key === "SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT")?.value ?? 3,
+    );
 
     const groups: GroupPayload[] = [];
     for (const [group, arms] of armsByGroup) {
@@ -233,6 +249,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       // same for every class arm in the group, unlike the per-arm/per-staff
       // TimetableSlot-based blocks below, so resolved once per group.
       const specialPeriodBlocks = await this.resolveSpecialPeriodBlocks(group);
+      const syncedElectiveClassLevelIds = syncSssElectiveBlocksAcrossArms
+        ? await this.resolveSyncedElectiveClassLevelIds(arms, term.academicSessionId, syncSssElectiveBlocksMaxArmCount)
+        : [];
       const classArmPayloads: ClassArmPayload[] = [];
       const staffBlockedPeriods: Record<string, Record<string, number[]>> = {};
 
@@ -241,6 +260,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         const armSlots = existingSlots.filter((s) => s.classArmId === arm.id);
         classArmPayloads.push({
           classArmId: arm.id,
+          classLevelId: arm.classLevelId,
           subjects,
           blockedPeriods: this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
         });
@@ -252,7 +272,14 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         }
       }
 
-      groups.push({ group, ...structure, days: DAYS_OF_WEEK, classArms: classArmPayloads, staffBlockedPeriods });
+      groups.push({
+        group,
+        ...structure,
+        days: DAYS_OF_WEEK,
+        classArms: classArmPayloads,
+        staffBlockedPeriods,
+        syncedElectiveClassLevelIds,
+      });
     }
 
     return {
@@ -263,6 +290,31 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       callbackUrl,
       callbackToken: request.callbackToken,
     };
+  }
+
+  /**
+   * Which SSS ClassLevels among `arms` qualify for cross-arm elective-block
+   * syncing — each one's real arm count (queried directly for the whole
+   * ClassLevel, not just how many of its arms happen to be included in this
+   * particular solve) at or below `maxArmCount`. JSS ClassLevels are
+   * excluded even though they're part of the same JSS_SSS group — SSS-only
+   * is a design decision, not derived from anything in the schema (see
+   * SYNC_SSS_ELECTIVE_BLOCKS_ACROSS_ARMS's comment in packages/types/src/scheduling.ts).
+   */
+  private async resolveSyncedElectiveClassLevelIds(
+    arms: { classLevelId: string; classLevel: { category: ClassLevelCategory } }[],
+    academicSessionId: string,
+    maxArmCount: number,
+  ): Promise<string[]> {
+    const sssClassLevelIds = [...new Set(arms.filter((a) => a.classLevel.category === "SSS").map((a) => a.classLevelId))];
+    if (sssClassLevelIds.length === 0) return [];
+
+    const armCounts = await this.prisma.classArm.groupBy({
+      by: ["classLevelId"],
+      where: { academicSessionId, classLevelId: { in: sssClassLevelIds } },
+      _count: { _all: true },
+    });
+    return armCounts.filter((row) => row._count._all <= maxArmCount).map((row) => row.classLevelId);
   }
 
   /**
