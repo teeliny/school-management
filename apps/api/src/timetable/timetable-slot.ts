@@ -132,12 +132,16 @@ export class TimetableSlotService {
   }
 
   // PRD §5 footnote 6: the whole-school "all classes" overview (no single
-  // classArmId requested) scopes Principal to JSS/SSS and Headteacher to
-  // Creche/Nursery/Primary — Super-Admin/Admin/Registrar stay unscoped. A
-  // request for one specific class arm is checked separately, in findAll
-  // below (assertClassArmInScope), rather than through this method.
+  // classArmId requested) scopes Principal/Vice Principal to JSS/SSS and
+  // Headteacher to Creche/Nursery/Primary — Super-Admin/Admin/Registrar stay
+  // unscoped. Vice Principal is included here (this is manual TimetableSlot
+  // management, not the AI-scheduling domain it's excluded from) but not in
+  // the exam-schedule.ts copy of this same method, which backs the
+  // AI-scheduling-generated ExamSchedule instead. A request for one specific
+  // class arm is checked separately, in findAll below
+  // (assertClassArmInScope), rather than through this method.
   private async resolveCategoryGroupScopedClassArmIds(user: RequestUser): Promise<string[] | null> {
-    const isPrincipal = user.assignmentTypes.includes("PRINCIPAL");
+    const isPrincipal = user.assignmentTypes.includes("PRINCIPAL") || user.assignmentTypes.includes("VICE_PRINCIPAL");
     const isHeadteacher = user.assignmentTypes.includes("HEADTEACHER");
     if (!isPrincipal && !isHeadteacher) return null;
     if (user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("REGISTRAR")) return null;

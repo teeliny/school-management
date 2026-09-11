@@ -21,12 +21,12 @@ export default function SubjectsPage() {
   }
   if (!user) return null;
 
-  // Matches the backend CASL grant: Principal/Headteacher get `manage
-  // Subject/ClassSubject/StudentDepartment` too (ability.factory.ts).
+  // Matches the backend CASL grant: Principal/Headteacher/Vice Principal get
+  // `manage Subject/ClassSubject/StudentDepartment` too (ability.factory.ts).
   const canManage =
     user.roles.includes("SUPER_ADMIN") ||
     user.roles.includes("ADMIN") ||
-    ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
+    ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t));
   // Deleting a subject cascades onto ScoreEntry/StudentSubjectEnrollment/
   // ClassSubject rows, so it's Super-Admin-only — narrower than canManage
   // above, same carve-out as SubjectController.remove on the backend.

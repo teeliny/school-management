@@ -54,13 +54,13 @@ function AssessmentSetupPageInner() {
   }
   if (!user) return null;
 
-  // Matches the backend CASL grant: Principal/Headteacher get `manage
-  // AssessmentComponent/SkillAssessmentItem/ReportWindow` too (also covers
-  // Grade Scale, which reuses the AssessmentComponent grant server-side).
+  // Matches the backend CASL grant: Principal/Headteacher/Vice Principal get
+  // `manage AssessmentComponent/SkillAssessmentItem/ReportWindow` too (also
+  // covers Grade Scale, which reuses the AssessmentComponent grant server-side).
   const canManage =
     user.roles.includes("SUPER_ADMIN") ||
     user.roles.includes("ADMIN") ||
-    ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
+    ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t));
 
   if (!canManage) {
     return (

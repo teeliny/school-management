@@ -39,9 +39,10 @@ export class AdmissionInquiryService {
   }
 
   // Super-Admin/Admin get every admission inquiry; whoever currently holds
-  // an active REGISTRAR/PRINCIPAL/HEADTEACHER assignment gets it too — the
-  // user-facing distinction from CareerContactInquiryService.notifyStaff,
-  // which only notifies Super-Admin/Admin.
+  // an active REGISTRAR/PRINCIPAL/HEADTEACHER/VICE_PRINCIPAL assignment gets
+  // it too — the user-facing distinction from
+  // CareerContactInquiryService.notifyStaff, which only notifies
+  // Super-Admin/Admin.
   private async notifyStaff(inquiry: {
     id: string;
     parentFullName: string;
@@ -57,7 +58,9 @@ export class AdmissionInquiryService {
       }),
       this.prisma.staffAssignment.findMany({
         where: {
-          assignmentType: { in: [AssignmentType.REGISTRAR, AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER] },
+          assignmentType: {
+            in: [AssignmentType.REGISTRAR, AssignmentType.PRINCIPAL, AssignmentType.HEADTEACHER, AssignmentType.VICE_PRINCIPAL],
+          },
           isActive: true,
         },
         select: { staff: { select: { userId: true } } },

@@ -208,11 +208,23 @@ describe("ReportCommentService.write — PRINCIPAL comments (role-scoped only, n
     );
   });
 
-  it("rejects a caller holding neither assignment", async () => {
+  it("allows a caller holding an active VICE_PRINCIPAL assignment instead", async () => {
+    staffAssignments.findActiveAssignment.mockImplementation(({ assignmentType }) =>
+      Promise.resolve(assignmentType === AssignmentType.VICE_PRINCIPAL ? { staffId: "staff-3" } : null),
+    );
+
+    await service.write(buildDto({ commentType: ReportCommentType.PRINCIPAL }), USER, false);
+
+    expect(prisma.reportComment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ authorStaffId: "staff-3" }) }),
+    );
+  });
+
+  it("rejects a caller holding none of the three assignments", async () => {
     staffAssignments.findActiveAssignment.mockResolvedValue(null);
 
     await expect(service.write(buildDto({ commentType: ReportCommentType.PRINCIPAL }), USER, false)).rejects.toThrow(
-      /PRINCIPAL or HEADTEACHER/,
+      /PRINCIPAL, HEADTEACHER, or VICE_PRINCIPAL/,
     );
   });
 });

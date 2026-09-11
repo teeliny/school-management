@@ -95,7 +95,8 @@ export default function BroadsheetPage() {
   const requestId = useRef(0);
 
   const canView = user
-    ? user.roles.includes("SUPER_ADMIN") || ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t))
+    ? user.roles.includes("SUPER_ADMIN") ||
+      ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t))
     : false;
 
   useEffect(() => {

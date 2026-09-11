@@ -276,6 +276,45 @@ export class AbilityFactory {
       can("read", "AdmissionInquiry");
     }
 
+    // Vice Principal: by product decision, the same operational grants as
+    // Principal (scoped to JSS/SSS, via resolvePrincipalHeadteacherCategories
+    // treating VICE_PRINCIPAL the same as PRINCIPAL) EXCEPT the AI-scheduling
+    // domain — no "manage ScheduleGenerationRequest" grant, so
+    // ScheduleGenerationRequestService.assertCanTrigger's CASL check fails
+    // for VP outright, and the exam-schedule/duty-assignment/invigilation-
+    // assignment controllers' assertCanManage actor lists deliberately don't
+    // include VICE_PRINCIPAL either (those are separate hand-checks, not
+    // CASL-gated, so omission there is what keeps VP out). Duplicated rather
+    // than merged into the branch above (same "keep in sync by hand" choice
+    // that branch already made against the ADMIN branch) so the one grant
+    // that's withheld is easy to see by diffing the two blocks.
+    if (user.assignmentTypes?.includes("VICE_PRINCIPAL")) {
+      can("manage", "AcademicStructure");
+
+      can("manage", [
+        "Subject",
+        "ClassSubject",
+        "SubjectGroupWeight",
+        "StudentSubjectEnrollment",
+        "StudentDepartment",
+        "TimetableSlot",
+      ]);
+
+      can("read", "StaffProfile");
+
+      can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
+
+      can("manage", ["SkillAssessmentItem", "ReportWindow", "SkillRating", "ReportComment"]);
+
+      can("manage", ["AttendanceSession", "AttendanceRecord", "SchoolHoliday"]);
+
+      can("manage", "NotificationTemplate");
+
+      can("read", "Broadsheet");
+
+      can("read", "AdmissionInquiry");
+    }
+
     return build();
   }
 }

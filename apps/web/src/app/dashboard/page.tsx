@@ -73,7 +73,7 @@ export default function DashboardPage() {
       {user.roles.includes("ADMIN") && <AdminDashboard user={user} />}
       {user.staffProfileId && <TeachingStaffDashboard user={user} />}
       {user.staffProfileId && <ClassTeacherAdditions user={user} />}
-      {(user.assignmentTypes.includes("PRINCIPAL") || user.assignmentTypes.includes("HEADTEACHER")) && (
+      {["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t)) && (
         <PrincipalHeadteacherAdditions user={user} />
       )}
       {user.assignmentTypes.includes("REGISTRAR") && <RegistrarAdditions user={user} />}

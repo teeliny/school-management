@@ -74,7 +74,7 @@ function SkillsCommentsPageInner() {
   const isAdmin = user
     ? user.roles.includes("SUPER_ADMIN") ||
       user.roles.includes("ADMIN") ||
-      ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t))
+      ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t))
     : false;
 
   const myClassTeacherAssignments = useMemo(
@@ -89,7 +89,7 @@ function SkillsCommentsPageInner() {
   const showClassTeacherSection = isAdmin || myClassTeacherAssignments.length > 0;
   const showSubjectSection = isAdmin || mySubjectTeacherAssignments.length > 0;
   const showPrincipalSection =
-    isAdmin || (user ? ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t)) : false);
+    isAdmin || (user ? ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t)) : false);
 
   const classTeacherClassArmOptions = isAdmin
     ? classArms

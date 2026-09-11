@@ -19,10 +19,10 @@ export default function InquiriesPage() {
 
   const isAdmin = user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
   // Matches AdmissionInquiryService.notifyStaff / the CASL "read" grant in
-  // ability.factory.ts — Registrar/Principal/Headteacher see admission
-  // inquiries only, never Careers & Contact.
+  // ability.factory.ts — Registrar/Principal/Headteacher/Vice Principal see
+  // admission inquiries only, never Careers & Contact.
   const canSeeAdmissions =
-    isAdmin || ["REGISTRAR", "PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t));
+    isAdmin || ["REGISTRAR", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t));
 
   if (!canSeeAdmissions) {
     return (

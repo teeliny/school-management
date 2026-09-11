@@ -33,9 +33,9 @@ export class ReportCommentService {
    * AssessmentComponents all being CLOSED/PUBLISHED — the same "scoring is
    * effectively done" point SubjectTermResultService aggregates on, not a
    * ReportWindow), CLASS_TEACHER (the class teacher, gated on ReportWindow
-   * being OPEN), PRINCIPAL (role-scoped only, no date gate; covers either a
-   * PRINCIPAL or HEADTEACHER StaffAssignment, per the schema's
-   * ReportCommentType comment) — or Admin/Super-Admin, any time, as
+   * being OPEN), PRINCIPAL (role-scoped only, no date gate; covers a
+   * PRINCIPAL, HEADTEACHER, or VICE_PRINCIPAL StaffAssignment, per the
+   * schema's ReportCommentType comment) — or Admin/Super-Admin, any time, as
    * override.
    */
   async write(dto: CreateReportCommentDto, user: RequestUser, isOverride: boolean) {
@@ -132,10 +132,16 @@ export class ReportCommentService {
           userId: user.id,
           assignmentType: AssignmentType.HEADTEACHER,
         }));
-      if (!headteacher) {
-        throw new ForbiddenException("You must hold an active PRINCIPAL or HEADTEACHER assignment");
+      const vicePrincipal =
+        headteacher ??
+        (await this.staffAssignments.findActiveAssignment({
+          userId: user.id,
+          assignmentType: AssignmentType.VICE_PRINCIPAL,
+        }));
+      if (!vicePrincipal) {
+        throw new ForbiddenException("You must hold an active PRINCIPAL, HEADTEACHER, or VICE_PRINCIPAL assignment");
       }
-      authorStaffId = headteacher.staffId;
+      authorStaffId = vicePrincipal.staffId;
     }
 
     // SUBJECT (non-null subjectId) can use the compound-unique upsert

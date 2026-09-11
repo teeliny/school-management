@@ -79,14 +79,16 @@ function ReportCardsPageInner() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Matches the backend CASL grant (ability.factory.ts): SUPER_ADMIN, ADMIN,
-  // and a STAFF user with an active PRINCIPAL/HEADTEACHER assignment can all
-  // generate/regenerate/publish report cards — deleting stays Super-Admin-only
-  // (term-report-card.ts's `remove` is a hardcoded role check, not CASL).
+  // and a STAFF user with an active PRINCIPAL/HEADTEACHER/VICE_PRINCIPAL
+  // assignment can all generate/regenerate/publish report cards — deleting
+  // stays Super-Admin-only (term-report-card.ts's `remove` is a hardcoded
+  // role check, not CASL).
   const canManageReports = user
     ? user.roles.includes("SUPER_ADMIN") ||
       user.roles.includes("ADMIN") ||
       user.assignmentTypes.includes("PRINCIPAL") ||
-      user.assignmentTypes.includes("HEADTEACHER")
+      user.assignmentTypes.includes("HEADTEACHER") ||
+      user.assignmentTypes.includes("VICE_PRINCIPAL")
     : false;
   const isSuperAdmin = user ? user.roles.includes("SUPER_ADMIN") : false;
   // The "browse everything, pick any class" card below is reserved for this
@@ -99,7 +101,8 @@ function ReportCardsPageInner() {
       user.roles.includes("ADMIN") ||
       user.assignmentTypes.includes("REGISTRAR") ||
       user.assignmentTypes.includes("PRINCIPAL") ||
-      user.assignmentTypes.includes("HEADTEACHER")
+      user.assignmentTypes.includes("HEADTEACHER") ||
+      user.assignmentTypes.includes("VICE_PRINCIPAL")
     : false;
 
   useEffect(() => {

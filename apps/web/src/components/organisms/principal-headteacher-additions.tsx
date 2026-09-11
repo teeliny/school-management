@@ -37,35 +37,46 @@ const SCOPE_LABEL: Record<ScheduleApprovalRow["scope"], string> = {
 };
 
 /**
- * PRD FR9.6 PRINCIPAL/HEADTEACHER additions. The broadsheet snapshot is
- * deliberately live-computed, not cached (see DashboardService.
- * broadsheetSnapshot's comment on why) — "last updated" always reads as the
- * request time, honestly. Only the overall average/grade is shown per
- * student, not a full subject-by-subject grid — the merged top-5/bottom-5
- * spans every class level in the caller's group (e.g. JSS1 through SSS3 for
- * a Principal), which don't share one subject column set, so a single
- * unified "subject avg columns" table doesn't apply here the way it does on
- * the full /broadsheet page (linked out to for the real per-subject grid).
+ * PRD FR9.6 PRINCIPAL/HEADTEACHER additions, also shown to VICE_PRINCIPAL.
+ * The broadsheet snapshot is deliberately live-computed, not cached (see
+ * DashboardService.broadsheetSnapshot's comment on why) — "last updated"
+ * always reads as the request time, honestly. Only the overall average/grade
+ * is shown per student, not a full subject-by-subject grid — the merged
+ * top-5/bottom-5 spans every class level in the caller's group (e.g. JSS1
+ * through SSS3 for a Principal), which don't share one subject column set,
+ * so a single unified "subject avg columns" table doesn't apply here the way
+ * it does on the full /broadsheet page (linked out to for the real
+ * per-subject grid).
+ *
+ * Vice Principal shares Principal's JSS_SSS scope for the broadsheet
+ * snapshot and duty-roster read (both backed by
+ * resolvePrincipalHeadteacherCategories, which treats VP the same as
+ * Principal) but is deliberately excluded from the schedule generation/
+ * approval queue card — that's the AI-scheduling domain, gated server-side
+ * by DashboardService.scheduleApprovalsSummary's own Principal/Headteacher-
+ * only check, which VP doesn't pass.
  */
 export function PrincipalHeadteacherAdditions({ user }: { user: CurrentUser }) {
   const { termId } = useCurrentTerm();
 
   const isPrincipal = user.assignmentTypes.includes("PRINCIPAL");
+  const isVicePrincipal = user.assignmentTypes.includes("VICE_PRINCIPAL");
   const isHeadteacher = user.assignmentTypes.includes("HEADTEACHER");
-  const isPrincipalOrHeadteacher = isPrincipal || isHeadteacher;
+  const canSeeBroadsheetAndDuty = isPrincipal || isVicePrincipal || isHeadteacher;
+  const canSeeScheduleApprovals = isPrincipal || isHeadteacher;
 
   const { data: snapshot } = useQuery({
     queryKey: ["dashboard", "broadsheet-snapshot", termId],
     queryFn: () => apiFetch<BroadsheetSnapshot>(`/dashboard/broadsheet-snapshot?termId=${termId}`, { auth: true }),
-    enabled: Boolean(termId) && isPrincipalOrHeadteacher,
+    enabled: Boolean(termId) && canSeeBroadsheetAndDuty,
   });
   const { data: scheduleApprovals } = useQuery({
     queryKey: ["dashboard", "schedule-approvals-summary"],
     queryFn: () => apiFetch<ScheduleApprovalRow[]>("/dashboard/schedule-approvals-summary", { auth: true }),
-    enabled: isPrincipalOrHeadteacher,
+    enabled: canSeeScheduleApprovals,
   });
 
-  const dutyGroup = isPrincipal ? "JSS_SSS" : "CRECHE_NURSERY_PRIMARY";
+  const dutyGroup = isPrincipal || isVicePrincipal ? "JSS_SSS" : "CRECHE_NURSERY_PRIMARY";
   const dutyToday = new Date().toISOString().slice(0, 10);
   const { data: duties } = useQuery({
     queryKey: ["duty-assignments", { classLevelCategoryGroup: dutyGroup, weekStartDateFrom: dutyToday }],
@@ -73,10 +84,10 @@ export function PrincipalHeadteacherAdditions({ user }: { user: CurrentUser }) {
       apiFetch<DutyAssignmentRow[]>(`/duty-assignments?classLevelCategoryGroup=${dutyGroup}&weekStartDateFrom=${dutyToday}`, {
         auth: true,
       }),
-    enabled: isPrincipalOrHeadteacher,
+    enabled: canSeeBroadsheetAndDuty,
   });
 
-  if (!isPrincipal && !isHeadteacher) return null;
+  if (!canSeeBroadsheetAndDuty) return null;
 
   return (
     <div className="mt-4 space-y-4">
@@ -100,25 +111,27 @@ export function PrincipalHeadteacherAdditions({ user }: { user: CurrentUser }) {
         )}
       </Card>
 
-      <Card>
-        <CardHeader title="Schedule generation/approval queue" sub="Scoped to your class-level group" />
-        {scheduleApprovals ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {scheduleApprovals.map((row) => (
-              <a
-                key={row.scope}
-                href="/planner"
-                className="rounded-lg border border-border p-3 text-center transition hover:border-primary/40"
-              >
-                <div className="font-display text-[22px] font-semibold">{row.pendingCount}</div>
-                <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted">{SCOPE_LABEL[row.scope]}</div>
-              </a>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted">Loading…</p>
-        )}
-      </Card>
+      {canSeeScheduleApprovals && (
+        <Card>
+          <CardHeader title="Schedule generation/approval queue" sub="Scoped to your class-level group" />
+          {scheduleApprovals ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {scheduleApprovals.map((row) => (
+                <a
+                  key={row.scope}
+                  href="/planner"
+                  className="rounded-lg border border-border p-3 text-center transition hover:border-primary/40"
+                >
+                  <div className="font-display text-[22px] font-semibold">{row.pendingCount}</div>
+                  <div className="mt-0.5 text-[11px] uppercase tracking-wide text-muted">{SCOPE_LABEL[row.scope]}</div>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted">Loading…</p>
+          )}
+        </Card>
+      )}
 
       <Card>
         <CardHeader title="Duty roster upcoming" sub="Next weeks, your class-level group" />

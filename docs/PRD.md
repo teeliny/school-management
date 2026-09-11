@@ -216,7 +216,8 @@ Distinct from the base `UserRole = STAFF`, a staff member holds one or more **fu
 | isActive | boolean | |
 
 - A `SUBJECT_TEACHER` assignment ties a staff member to a specific `Subject` + `ClassArm` pair — this is what grants score-entry permission (§5.2).
-- Administrative titles (`PRINCIPAL`, `VICE_PRINCIPAL`, `HEADTEACHER`, `REGISTRAR`, `BURSAR`) carry elevated, module-specific permissions (e.g. `BURSAR` → fee module write access) defined in the permission matrix (§5). `BURSAR` and `REGISTRAR` are a special case: they report organizationally to Super-Admin rather than Admin, so their `StaffAssignment` can only be created or revoked by Super-Admin (§6.3), and their respective domains (finance; exam schedules & academic records) are invisible to Admin entirely (§5).
+- Administrative titles (`PRINCIPAL`, `VICE_PRINCIPAL`, `HEADTEACHER`, `REGISTRAR`, `BURSAR`) carry elevated, module-specific permissions (e.g. `BURSAR` → fee module write access) defined in the permission matrix (§5). `BURSAR` and `REGISTRAR` are a special case: they report organizationally to Super-Admin rather than Admin, so their `StaffAssignment` can only be created or revoked by Super-Admin (§6.3), and their respective domains (finance; exam schedules & academic records) are invisible to Admin entirely (§5). `VICE_PRINCIPAL` deliberately shares `PRINCIPAL`'s JSS/SSS-scoped academic/operational grants (it assists the Principal specifically, not the Headteacher's section) everywhere in §5 **except** triggering or manually editing AI-generated schedules, which stays Principal/Headteacher-only — see footnote 5.
+- `SUPER_ADMIN`/Admin, and any of `PRINCIPAL`/`HEADTEACHER`/`VICE_PRINCIPAL`, may all hold multiple assignments at once (a Vice Principal is very likely also a `SUBJECT_TEACHER` or `CLASS_TEACHER` elsewhere) — the elevated title only adds permissions on top of whatever assignment-scoped ones the staff member's other rows already grant.
 - A staff member can simultaneously hold `CLASS_TEACHER` (SSS1 Gold), `SUBJECT_TEACHER` (Mathematics, multiple arms), and `BURSAR` — all represented as separate `StaffAssignment` rows.
 
 ### 3.5 Student Titles
@@ -368,9 +369,9 @@ User 1—* Notification
 | Open/close assessment components | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Enter scores | ✅ (override) | ✅ (override) | ❌ (unless also subject teacher) | ✅ (own subject/class only) | ❌ | ❌ | ❌ |
 | Enter subject/class comments | ✅ (override) | ✅ (override) | ✅ (class comment, own class) | ✅ (subject comment, own subject/class) | ❌ | ❌ | ❌ |
-| Publish report cards | ✅ | ✅ | ❌ (unless also Principal or Headteacher⁵) | ❌ (unless also Principal or Headteacher⁵) | ❌ | ❌ | ❌ |
+| Publish report cards | ✅ | ✅ | ❌ (unless also Principal, Headteacher, or Vice Principal⁵ ⁸) | ❌ (unless also Principal, Headteacher, or Vice Principal⁵ ⁸) | ❌ | ❌ | ❌ |
 | View report cards | ✅ (all) | ✅ (all) | ✅ (own class) | ✅ (own subject entries) | ❌ | ✅ (own wards, published only) | ✅ (self, published only) |
-| View broadsheet (whole-class grade grid)⁷ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| View broadsheet (whole-class grade grid)⁷ ⁸ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | View/manage academic & exam records (entire school)³ | ✅ | ❌ | ❌ | ❌ | ✅ (Registrar) | ❌ | ❌ |
 | Manage fee structure / invoices³ | ✅ | ❌ | ❌ | ❌ | ✅ (Bursar) | ❌ | ❌ |
 | Configure payment gateway credentials³ | ✅ | ❌ | ❌ | ❌ | ✅ (Bursar) | ❌ | ❌ |
@@ -404,7 +405,9 @@ User 1—* Notification
 
 ⁶ Unlike triggering generation (footnote 5), the whole-school timetable overview is available to Admin generally — not gated behind holding a Principal/Headteacher title. However, a user whose active `StaffAssignment` includes `PRINCIPAL` sees only `JSS`/`SSS` class arms in this view, and `HEADTEACHER` sees only `CRECHE`/`NURSERY`/`PRIMARY` arms — narrower than the unscoped view a plain Admin (holding neither title), Super-Admin, or Registrar gets. Defaults to a **by-day** view (Monday–Friday, every in-scope class's periods for that day, side by side) with a toggle to a **by-class** view (one selected class's full week). This is distinct from FR6.7's read-only per-user view (a student/parent/staff member's own class/assignments only) — this is the multi-class administrative overview.
 
-⁷ The one capability in this table that isn't "Super-Admin plus a subset for Admin" — the Broadsheet's table cell says ❌ for every role column above, but a STAFF user whose active `StaffAssignment` includes `PRINCIPAL` or `HEADTEACHER` can view it too (same "covers both StaffAssignment types" precedent as the `ReportComment.PRINCIPAL` comment type, §3.6), granted directly rather than through a table column since neither title has its own column here. Admin — unlike almost everywhere else in this matrix — does not get it at all, not even scoped.
+⁷ The one capability in this table that isn't "Super-Admin plus a subset for Admin" — the Broadsheet's table cell says ❌ for every role column above, but a STAFF user whose active `StaffAssignment` includes `PRINCIPAL`, `HEADTEACHER`, or `VICE_PRINCIPAL` can view it too (same "covers both/all three StaffAssignment types" precedent as the `ReportComment.PRINCIPAL` comment type, §3.6), granted directly rather than through a table column since none of these titles has its own column here. Admin — unlike almost everywhere else in this matrix — does not get it at all, not even scoped.
+
+⁸ `VICE_PRINCIPAL` is folded into every "Principal or Headteacher" carve-out in this table **except** the AI-scheduling rows (footnotes 4 and 5: triggering/manually-editing generation, and the "Manage exam schedule (manual)" row) — a product decision that Vice Principal assists the Principal's day-to-day academic/operational work (curriculum, assessment, report cards, comments, attendance, timetable slots, broadsheet, admission-inquiry visibility) without inheriting the AI-scheduling generation/draft-editing authority. Wherever Vice Principal *is* included, it shares Principal's `JSS`/`SSS` scope specifically (never Headteacher's Creche/Nursery/Primary scope) — see `resolvePrincipalHeadteacherCategories` (`apps/api/src/common/class-level-category-scope.ts`), which treats `VICE_PRINCIPAL` identically to `PRINCIPAL`.
 
 Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CASL (attribute-based access control) or custom guards — role alone is insufficient for scoped rules like "class teacher sees only her class," which require row-level ownership checks (staff's active `StaffAssignment` records) evaluated per-request, not just role name.
 
@@ -451,7 +454,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR4.8: Report card PDF generation runs as an async job (BullMQ); parent/student sees "generating" state until complete.
 - FR4.9: Published report cards trigger notification (in-app + email) to student and all linked guardians.
 - FR4.10: All `AssessmentComponent`/`ReportWindow` dates are surfaced on the Academic Calendar (§3.11) as soon as Admin sets them, regardless of current status.
-- FR4.11 (added post-Phase-4): Super-Admin or a staff member holding an active `PRINCIPAL`/`HEADTEACHER` assignment (not plain Admin, §5) can view a **broadsheet** — every student in scope × every subject the scoped `ClassLevel` is offered (respecting `ClassSubjectLevelStatus` — a subject disabled for this specific `ClassLevel` doesn't get a column, even if the rest of its class group has it), one grid. Scoped to a `ClassLevel` by default (every arm combined) or a single `ClassArm`; and to one `Term` or a whole `AcademicSession` ("Overall," each cell averaged across whichever terms actually have a result, missing terms excluded rather than treated as zero — same rule as the annual-average report card grading in §3.6). Sortable by any subject, overall average, or overall position, and paginated — both computed server-side, with position always ranked over the full scope before any page is sliced out of it.
+- FR4.11 (added post-Phase-4): Super-Admin or a staff member holding an active `PRINCIPAL`/`HEADTEACHER`/`VICE_PRINCIPAL` assignment (not plain Admin, §5) can view a **broadsheet** — every student in scope × every subject the scoped `ClassLevel` is offered (respecting `ClassSubjectLevelStatus` — a subject disabled for this specific `ClassLevel` doesn't get a column, even if the rest of its class group has it), one grid. Scoped to a `ClassLevel` by default (every arm combined) or a single `ClassArm`; and to one `Term` or a whole `AcademicSession` ("Overall," each cell averaged across whichever terms actually have a result, missing terms excluded rather than treated as zero — same rule as the annual-average report card grading in §3.6). Sortable by any subject, overall average, or overall position, and paginated — both computed server-side, with position always ranked over the full scope before any page is sliced out of it.
 
 ### 6.5 Attendance
 
@@ -556,12 +559,12 @@ The tables below specify format and rationale per stat, by role. Roles/titles ma
 | Comments outstanding | List of student names missing a comment | Actionable, low volume |
 | Class attendance summary | Line chart (daily % over the term) | Trend over time |
 
-*`PRINCIPAL`/`HEADTEACHER` additions:*
+*`PRINCIPAL`/`HEADTEACHER` additions (`VICE_PRINCIPAL` gets the first and third rows only — see §5 footnote 8 — never the schedule queue, which is the AI-scheduling domain it's excluded from):*
 
 | Stat | Format | Why |
 | --- | --- | --- |
 | Broadsheet snapshot (cached, last-viewed) | Compact table (top 5 / bottom 5 students, subject avg columns) with "last updated" timestamp + "View full broadsheet" link | Shows cached data plainly rather than implying it's live (FR9.3) |
-| Schedule generation/approval queue (scoped per §5 footnote 5) | Card grid, same as Admin's | Consistency |
+| Schedule generation/approval queue (scoped per §5 footnote 5; Principal/Headteacher only, not Vice Principal) | Card grid, same as Admin's | Consistency |
 | Duty roster upcoming | List (week, date range) | Simple chronological list |
 
 *`REGISTRAR` additions:*

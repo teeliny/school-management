@@ -380,23 +380,29 @@ export class DashboardService {
   /**
    * PRD FR9.3/FR9.6 Principal/Headteacher addition: top-5/bottom-5 across
    * every class level in the caller's own class-level-category group
-   * (JSS_SSS for Principal, CRECHE_NURSERY_PRIMARY for Headteacher),
-   * computed live via BroadsheetService.build per class level and merged —
-   * see the plan's explicit callout on why this is live-computed rather
-   * than a stored cache (no persisted broadsheet snapshot exists anywhere
-   * in the schema, and BUILD_PLAN.md forbids adding a new source-of-truth
-   * table just to satisfy FR9.3's "cached" wording literally).
+   * (JSS_SSS for Principal/Vice Principal, CRECHE_NURSERY_PRIMARY for
+   * Headteacher), computed live via BroadsheetService.build per class level
+   * and merged — see the plan's explicit callout on why this is
+   * live-computed rather than a stored cache (no persisted broadsheet
+   * snapshot exists anywhere in the schema, and BUILD_PLAN.md forbids adding
+   * a new source-of-truth table just to satisfy FR9.3's "cached" wording
+   * literally). Vice Principal gets this (matches its "read Broadsheet" CASL
+   * grant) but NOT scheduleApprovalsSummary below — that one stays
+   * Principal/Headteacher-only, part of the AI-scheduling domain VP is
+   * deliberately excluded from.
    */
   async broadsheetSnapshot(user: RequestUser, termId: string) {
     const isPrincipal = user.assignmentTypes.includes("PRINCIPAL");
+    const isVicePrincipal = user.assignmentTypes.includes("VICE_PRINCIPAL");
     const isHeadteacher = user.assignmentTypes.includes("HEADTEACHER");
-    if (!isPrincipal && !isHeadteacher) {
-      throw new ForbiddenException("Only an active Principal or Headteacher can view the broadsheet snapshot");
+    if (!isPrincipal && !isVicePrincipal && !isHeadteacher) {
+      throw new ForbiddenException("Only an active Principal, Vice Principal, or Headteacher can view the broadsheet snapshot");
     }
 
-    const categories: ClassLevelCategory[] = isPrincipal
-      ? [ClassLevelCategory.JSS, ClassLevelCategory.SSS]
-      : [ClassLevelCategory.CRECHE, ClassLevelCategory.RECEPTION, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY];
+    const categories: ClassLevelCategory[] =
+      isPrincipal || isVicePrincipal
+        ? [ClassLevelCategory.JSS, ClassLevelCategory.SSS]
+        : [ClassLevelCategory.CRECHE, ClassLevelCategory.RECEPTION, ClassLevelCategory.NURSERY, ClassLevelCategory.PRIMARY];
     const classLevels = await this.prisma.classLevel.findMany({ where: { category: { in: categories } } });
 
     const allRows = (

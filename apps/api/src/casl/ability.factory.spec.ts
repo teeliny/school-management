@@ -100,10 +100,11 @@ describe("AbilityFactory", () => {
     expect(ability.can("read", "StaffProfile")).toBe(false);
   });
 
-  it("Broadsheet is readable by SUPER_ADMIN and by a PRINCIPAL/HEADTEACHER assignment, but not by ADMIN or a bare STAFF/REGISTRAR", () => {
+  it("Broadsheet is readable by SUPER_ADMIN and by a PRINCIPAL/HEADTEACHER/VICE_PRINCIPAL assignment, but not by ADMIN or a bare STAFF/REGISTRAR", () => {
     expect(factory.createForUser(userWith(["SUPER_ADMIN"])).can("read", "Broadsheet")).toBe(true);
     expect(factory.createForUser(userWith(["STAFF"], ["PRINCIPAL"])).can("read", "Broadsheet")).toBe(true);
     expect(factory.createForUser(userWith(["STAFF"], ["HEADTEACHER"])).can("read", "Broadsheet")).toBe(true);
+    expect(factory.createForUser(userWith(["STAFF"], ["VICE_PRINCIPAL"])).can("read", "Broadsheet")).toBe(true);
     expect(factory.createForUser(userWith(["ADMIN"])).can("read", "Broadsheet")).toBe(false);
     expect(factory.createForUser(userWith(["STAFF"])).can("read", "Broadsheet")).toBe(false);
     expect(factory.createForUser(userWith(["STAFF"], ["REGISTRAR"])).can("read", "Broadsheet")).toBe(false);
@@ -140,6 +141,39 @@ describe("AbilityFactory", () => {
       // Still no access to the fee/finance domain — Bursar/Super-Admin only.
       expect(ability.can("manage", "Invoice")).toBe(false);
     }
+  });
+
+  it("Vice Principal gets the same operational grants as Principal/Headteacher, except ScheduleGenerationRequest", () => {
+    const vp = factory.createForUser(userWith(["STAFF"], ["VICE_PRINCIPAL"]));
+
+    expect(vp.can("manage", "AcademicStructure")).toBe(true);
+    expect(vp.can("manage", "Subject")).toBe(true);
+    expect(vp.can("manage", "TimetableSlot")).toBe(true);
+    expect(vp.can("read", "StaffProfile")).toBe(true);
+    expect(vp.can("manage", "AssessmentComponent")).toBe(true);
+    expect(vp.can("manage", "ScoreEntry")).toBe(true);
+    expect(vp.can("manage", "TermReportCard")).toBe(true);
+    expect(vp.can("manage", "SkillAssessmentItem")).toBe(true);
+    expect(vp.can("manage", "ReportWindow")).toBe(true);
+    expect(vp.can("manage", "AttendanceSession")).toBe(true);
+    expect(vp.can("manage", "SchoolHoliday")).toBe(true);
+    expect(vp.can("manage", "NotificationTemplate")).toBe(true);
+    expect(vp.can("read", "Broadsheet")).toBe(true);
+    expect(vp.can("read", "AdmissionInquiry")).toBe(true);
+
+    // The deliberate delta from Principal/Headteacher: no AI-scheduling
+    // trigger/manual-edit authority (product decision — VP assists with
+    // day-to-day academics, not schedule generation).
+    expect(vp.can("manage", "ScheduleGenerationRequest")).toBe(false);
+
+    // Same exclusions as Principal/Headteacher.
+    expect(vp.can("manage", "StaffProfile")).toBe(false);
+    expect(vp.can("manage", "ParentProfile")).toBe(false);
+    expect(vp.can("manage", "StudentProfile")).toBe(false);
+    expect(vp.can("manage", "AdminProfile")).toBe(false);
+    expect(vp.can("manage", "StaffAssignment")).toBe(false);
+    expect(vp.can("invite", "Invitation")).toBe(false);
+    expect(vp.can("manage", "Invoice")).toBe(false);
   });
 
   // PRD §3.7/§6.5 (Phase 5 slice 1 — Attendance)

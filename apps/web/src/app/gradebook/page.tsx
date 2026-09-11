@@ -72,13 +72,13 @@ export default function GradebookPage() {
       .catch(() => setMyAssignments([]));
   }, []);
 
-  // Matches the backend CASL grant: Principal/Headteacher get `manage
-  // ScoreEntry`/`AssessmentComponent` too (ability.factory.ts), i.e. the
-  // same score-entry override this flag already grants Admin below.
+  // Matches the backend CASL grant: Principal/Headteacher/Vice Principal get
+  // `manage ScoreEntry`/`AssessmentComponent` too (ability.factory.ts), i.e.
+  // the same score-entry override this flag already grants Admin below.
   const isAdmin = user
     ? user.roles.includes("SUPER_ADMIN") ||
       user.roles.includes("ADMIN") ||
-      ["PRINCIPAL", "HEADTEACHER"].some((t) => user.assignmentTypes.includes(t))
+      ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t))
     : false;
 
   // A non-admin only ever sees the class arms / subjects their own active

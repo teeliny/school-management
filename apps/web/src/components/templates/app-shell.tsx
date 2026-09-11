@@ -68,11 +68,12 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         label: "Inquiries",
         icon: Inbox,
         // Matches AdmissionInquiryService.notifyStaff's recipient set —
-        // Admin sees both tabs, Registrar/Principal/Headteacher see the
-        // Admissions tab only (enforced inside the page itself).
+        // Admin sees both tabs, Registrar/Principal/Headteacher/Vice
+        // Principal see the Admissions tab only (enforced inside the page
+        // itself).
         visible: ({ isAdmin, user }) =>
           isAdmin ||
-          ["REGISTRAR", "PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["REGISTRAR", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
@@ -108,7 +109,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         // ability.factory.ts's near-Admin-parity grant.
         visible: ({ isAdmin, user }) =>
           isAdmin ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
@@ -118,7 +119,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         icon: BookOpen,
         visible: ({ isAdmin, user }) =>
           isAdmin ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
@@ -149,7 +150,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           user.assignmentTypes.includes("REGISTRAR") ||
           user.assignmentTypes.includes("CLASS_TEACHER") ||
           user.assignmentTypes.includes("SUBJECT_TEACHER") ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
@@ -175,7 +176,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         icon: ClipboardList,
         visible: ({ isAdmin, user }) =>
           isAdmin ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
@@ -186,7 +187,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         visible: ({ isAdmin, user }) =>
           isAdmin ||
           user.assignmentTypes.includes("SUBJECT_TEACHER") ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
@@ -196,7 +197,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         icon: MessageSquare,
         visible: ({ isAdmin, user }) =>
           isAdmin ||
-          ["CLASS_TEACHER", "SUBJECT_TEACHER", "PRINCIPAL", "HEADTEACHER"].some(
+          ["CLASS_TEACHER", "SUBJECT_TEACHER", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some(
             (t) => user.assignmentTypes.includes(t),
           ),
       },
@@ -209,7 +210,7 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         // this one (matches the backend CASL grant in ability.factory.ts).
         visible: ({ user }) =>
           user.roles.includes("SUPER_ADMIN") ||
-          ["PRINCIPAL", "HEADTEACHER"].some((t) =>
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
