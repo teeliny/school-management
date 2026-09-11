@@ -147,7 +147,7 @@ export function InvoiceDetail({
           </thead>
           <tbody>
             {invoice.lineItems.map((line) => (
-              <tr key={line.id} className="border-b border-border/60 last:border-none">
+              <tr key={line.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                 <td className="py-2 pr-4">{line.description}</td>
                 <td className={`py-2 font-mono whitespace-nowrap ${line.type === "DISCOUNT" ? "text-success" : ""}`}>
                   {formatCurrency(line.amount)}

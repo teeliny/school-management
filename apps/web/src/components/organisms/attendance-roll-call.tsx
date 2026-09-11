@@ -245,7 +245,7 @@ export function AttendanceRollCall({
               </tr>
             )}
             {roster?.map((person) => (
-              <tr key={person.id} className="border-b border-border/60 last:border-none">
+              <tr key={person.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                 <td className="py-2.5 pr-4 font-medium">
                   {person.primaryLabel} <span className="font-mono text-muted">({person.secondaryLabel})</span>
                 </td>

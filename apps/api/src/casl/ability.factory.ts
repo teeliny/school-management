@@ -53,6 +53,7 @@ export type Subject =
   | "Receipt"
   | "PaymentGatewayConfig"
   | "DiscountRequest"
+  | "OutstandingBalanceSummary"
   | "NotificationTemplate"
   | "SchedulingConstraint"
   | "ScheduleGenerationRequest"
@@ -143,6 +144,14 @@ export class AbilityFactory {
       // read-only grant on AdmissionInquiry alone, below — matching exactly
       // who AdmissionInquiryService.notifyStaff notifies.
       can("manage", ["AdmissionInquiry", "CareerContactInquiry"]);
+
+      // One narrow, deliberate exception to the "fee/finance domain is
+      // invisible to Admin" rule below: read-only visibility into who's in
+      // arrears (OutstandingBalanceController), so Admin can see the same
+      // list Principal/Headteacher see for deciding who's still allowed in
+      // class pending payment. No grant on Invoice/Payment/etc itself — this
+      // is a purpose-built aggregate view, not general fees access.
+      can("read", "OutstandingBalanceSummary");
     }
 
     // PRD §5: Registrar manages the class timetable even though it's not a
@@ -193,11 +202,13 @@ export class AbilityFactory {
 
     // PRD §3.9/§5: the entire fee/finance domain is invisible to Admin —
     // deliberately no grant for any of these six Subjects anywhere in the
-    // ADMIN branch above. Bursar (StaffAssignment.assignmentType = BURSAR)
-    // gets an unconditioned domain-wide grant; Super-Admin already has it
-    // for free via "manage all". No CASL condition is used here at all —
-    // unlike Attendance, per-row scoping (which parent can see which
-    // invoice) is done entirely at the service layer, sidestepping the
+    // ADMIN branch above (its one exception, OutstandingBalanceSummary, is a
+    // narrow read-only aggregate view, not access to Invoice/Payment/etc
+    // itself). Bursar (StaffAssignment.assignmentType = BURSAR) gets an
+    // unconditioned domain-wide grant; Super-Admin already has it for free
+    // via "manage all". No CASL condition is used here at all — unlike
+    // Attendance, per-row scoping (which parent can see which invoice) is
+    // done entirely at the service layer, sidestepping the
     // bare-string-vs-conditioned-grant pitfall that pattern hit.
     if (user.assignmentTypes?.includes("BURSAR")) {
       can("manage", [
@@ -208,6 +219,7 @@ export class AbilityFactory {
         "Payment",
         "Receipt",
         "DiscountRequest",
+        "OutstandingBalanceSummary",
       ]);
 
       // PRD FR7.7, Phase 5 Slice 2b: gateway credentials configuration is
@@ -274,6 +286,14 @@ export class AbilityFactory {
       // read grant, kept narrower than Admin's "manage" on purpose (no
       // mark-reviewed action, and no CareerContactInquiry visibility).
       can("read", "AdmissionInquiry");
+
+      // Read-only visibility into who's in arrears — scoped to this title's
+      // own section (JSS/SSS for Principal, Creche/Reception/Nursery/Primary
+      // for Headteacher) at the service layer via
+      // resolvePrincipalHeadteacherCategories, same as every other row-level
+      // restriction that function already backs. No excuse-toggle grant —
+      // that stays Super-Admin/Bursar only.
+      can("read", "OutstandingBalanceSummary");
     }
 
     // Vice Principal: by product decision, the same operational grants as
@@ -313,6 +333,10 @@ export class AbilityFactory {
       can("read", "Broadsheet");
 
       can("read", "AdmissionInquiry");
+
+      // Same JSS/SSS-scoped read-only arrears visibility as the Principal
+      // branch above (VP shares Principal's section).
+      can("read", "OutstandingBalanceSummary");
     }
 
     return build();

@@ -142,7 +142,7 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                 </thead>
                 <tbody>
                   {pendingPayments.map((p) => (
-                    <tr key={p.id} className="border-t border-border">
+                    <tr key={p.id} className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3">
                         {p.invoice.student.user.firstName} {p.invoice.student.user.lastName}
                       </td>
@@ -180,7 +180,7 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                 </thead>
                 <tbody>
                   {discountRequests.map((d) => (
-                    <tr key={d.id} className="border-t border-border">
+                    <tr key={d.id} className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3">
                         {d.invoice.student.user.firstName} {d.invoice.student.user.lastName}
                       </td>

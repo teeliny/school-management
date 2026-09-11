@@ -48,7 +48,7 @@ export default function AdmissionsPage() {
             <table className="w-full text-[13px]">
               <tbody>
                 {siteContent.keyDates.map((date) => (
-                  <tr key={date.label} className="border-b border-border/60 last:border-none">
+                  <tr key={date.label} className="border-b border-border/60 last:border-none even:bg-card-inset">
                     <td className="py-2.5 text-muted">{date.label}</td>
                     <td className="py-2.5 text-right font-mono">{date.value}</td>
                   </tr>

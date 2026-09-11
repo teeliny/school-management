@@ -265,7 +265,7 @@ export const SchedulingApprovalsQueue = forwardRef<{ refresh: () => void }, { ca
             </thead>
             <tbody>
               {groups.map((group) => (
-                <tr key={group.requestId} className="border-b border-border align-top">
+                <tr key={group.requestId} className="border-b border-border align-top even:bg-card-inset">
                   {canAct && (
                     <td className="py-2">
                       <Checkbox

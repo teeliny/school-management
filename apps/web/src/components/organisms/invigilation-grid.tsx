@@ -182,7 +182,7 @@ export function InvigilationGrid({
                 const lead = rows.find((r) => r.examScheduleId === examScheduleId && r.role === "LEAD");
                 const assistant = rows.find((r) => r.examScheduleId === examScheduleId && r.role === "ASSISTANT");
                 return (
-                  <tr key={examScheduleId} className="border-b border-border align-top">
+                  <tr key={examScheduleId} className="border-b border-border align-top even:bg-card-inset">
                     <td className="py-2 pr-3">{new Date(info.date).toLocaleDateString()}</td>
                     <td className="py-2 pr-3 font-mono">
                       {info.startTime}–{info.endTime}

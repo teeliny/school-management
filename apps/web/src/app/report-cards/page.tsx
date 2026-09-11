@@ -310,7 +310,7 @@ function ReportCardsPageInner() {
                       {classReadiness.students
                         .filter((s) => !s.ready)
                         .map((s) => (
-                          <tr key={s.studentId} className="border-b border-border/60 last:border-none">
+                          <tr key={s.studentId} className="border-b border-border/60 last:border-none even:bg-card-inset">
                             <td className="py-1.5 px-2 align-top font-medium">{s.studentName}</td>
                             <td className="py-1.5 px-2 align-top text-muted">
                               <ul className="list-disc space-y-0.5 pl-4">

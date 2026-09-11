@@ -168,7 +168,7 @@ export function DutyGrid({
             </thead>
             <tbody>
               {weeks.map(([weekStartDate, weekRows]) => (
-                <tr key={weekStartDate} className="border-b border-border align-top">
+                <tr key={weekStartDate} className="border-b border-border align-top even:bg-card-inset">
                   <td className="whitespace-nowrap py-2 pr-3">{new Date(weekStartDate).toLocaleDateString()}</td>
                   <td className="py-2 pr-0">
                     <div className="flex flex-wrap gap-2">

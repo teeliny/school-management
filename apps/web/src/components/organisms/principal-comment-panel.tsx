@@ -256,7 +256,7 @@ export function PrincipalCommentPanel({
                 </thead>
                 <tbody>
                   {visibleSubjects.map(({ subject, cell }) => (
-                    <tr key={subject.id} className="border-b border-border/60 last:border-none">
+                    <tr key={subject.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                       <td className="py-1.5 pr-4">{subject.name}</td>
                       <td className="py-1.5 pr-4 font-mono">
                         {cell?.totalScore == null ? <span className="text-muted">—</span> : cell.totalScore.toFixed(2)}

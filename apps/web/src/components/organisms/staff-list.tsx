@@ -139,7 +139,7 @@ export function StaffList({
                 </tr>
               )}
               {filteredStaff?.map((member, index) => (
-                <tr key={member.id} className="border-b border-border/60 last:border-none">
+                <tr key={member.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                   <td className="py-2.5 pr-4 text-muted">{index + 1}</td>
                   <td className="py-2.5 pr-4 font-medium">
                     <span className="inline-flex items-center gap-1.5">

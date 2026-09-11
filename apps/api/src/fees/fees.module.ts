@@ -8,6 +8,7 @@ import { FeeStructureStudentAssignmentController, FeeStructureStudentAssignmentS
 import { InvoiceController, InvoiceService } from "./invoice";
 import { PaymentController, PaymentService } from "./payment";
 import { DiscountRequestController, DiscountRequestService } from "./discount-request";
+import { OutstandingBalanceController, OutstandingBalanceService } from "./outstanding-balance";
 import { PaymentGatewayWebhookController } from "./payment-gateway-webhook";
 import { PaymentGatewayConfigController, PaymentGatewayConfigService } from "./gateway/payment-gateway-config";
 import { PaymentGatewayCredentialsService } from "./gateway/payment-gateway-credentials";
@@ -33,6 +34,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     InvoiceController,
     PaymentController,
     DiscountRequestController,
+    OutstandingBalanceController,
     PaymentGatewayWebhookController,
     PaymentGatewayConfigController,
   ],
@@ -42,6 +44,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     InvoiceService,
     PaymentService,
     DiscountRequestService,
+    OutstandingBalanceService,
     PaymentGatewayConfigService,
     PaymentGatewayCredentialsService,
     { provide: MONNIFY_ADAPTER, useValue: new MonnifyAdapter() },

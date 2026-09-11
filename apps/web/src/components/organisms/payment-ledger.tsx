@@ -119,7 +119,7 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
               </tr>
             )}
             {payments.map((payment) => (
-              <tr key={payment.id} className="border-b border-border/60 last:border-none">
+              <tr key={payment.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                 {canManageFees && (
                   <td className="py-2.5 pr-4 font-medium">
                     {payment.invoice.student.user.firstName} {payment.invoice.student.user.lastName}{" "}

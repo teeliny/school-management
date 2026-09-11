@@ -216,7 +216,7 @@ export function SubjectList({
               const isExpanded = hasChildren && expanded.has(subject.id);
               return (
                 <Fragment key={subject.id}>
-                  <tr className="border-b border-border/60 last:border-none">
+                  <tr className="border-b border-border/60 last:border-none even:bg-card-inset">
                     <td className="py-2.5 pr-4 font-mono text-muted">{subject.code}</td>
                     <td className="py-1.5 pr-4 font-medium">
                       {hasChildren ? (

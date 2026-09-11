@@ -333,8 +333,8 @@ export default function BroadsheetPage() {
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.studentId} className="border-b border-border/60 last:border-none">
-                    <td className="sticky left-0 z-10 bg-card py-2.5 pr-4">
+                  <tr key={row.studentId} className="border-b border-border/60 last:border-none even:bg-card-inset">
+                    <td className="sticky left-0 z-10 bg-card py-2.5 pr-4 [tr:nth-child(even)_&]:bg-card-inset">
                       <div className="font-medium">{row.studentName}</div>
                       <div className="font-mono text-[11px] text-muted">{row.admissionNumber}</div>
                     </td>

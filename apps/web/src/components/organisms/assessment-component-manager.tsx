@@ -284,7 +284,7 @@ export function AssessmentComponentManager({ terms }: { terms: TermOption[] }) {
               </thead>
               <tbody>
                 {components.map((component) => (
-                  <tr key={component.id} className="border-b border-border/60 last:border-none">
+                  <tr key={component.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                     <td className="py-2.5 pr-3 font-medium">{component.name}</td>
                     <td className="py-2.5 pr-3">{component.type}</td>
                     <td className="py-2.5 pr-3 font-mono text-muted">{component.sequence}</td>

@@ -283,7 +283,7 @@ function WardSection({
                 </thead>
                 <tbody>
                   {payments.map((p) => (
-                    <tr key={p.id} className="border-t border-border">
+                    <tr key={p.id} className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3 font-mono text-muted">{new Date(p.createdAt).toLocaleDateString()}</td>
                       <td className="py-1.5 pr-3 font-mono">{formatCurrency(p.amount)}</td>
                       <td className="py-1.5 pr-3">{p.method}</td>

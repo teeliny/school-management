@@ -162,7 +162,7 @@ function BroadsheetMiniTable({ title, rows }: { title: string; rows: BroadsheetR
         <table className="w-full text-[12.5px]">
           <tbody>
             {rows.map((row) => (
-              <tr key={row.studentId} className="border-t border-border">
+              <tr key={row.studentId} className="border-t border-border even:bg-card-inset">
                 <td className="py-1 pr-2">
                   {row.studentName} <span className="text-muted">({row.classArmName})</span>
                 </td>

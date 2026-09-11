@@ -158,11 +158,18 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
         href: "/fees",
         label: "Fees",
         icon: Wallet,
-        // Deliberately narrower than `isAdmin` — a plain Admin has zero
-        // visibility into the fees domain (matches the backend CASL grant).
+        // Admin/Principal/Vice-Principal/Headteacher get in here too, but
+        // only ever see the read-only Outstanding Balances tab once inside
+        // (apps/web/src/app/fees/page.tsx's visibleTabKeys) — the rest of
+        // the fees domain (invoices, fee structures, payments, etc.) stays
+        // Bursar/Super-Admin-only, matching the backend CASL grant.
         visible: ({ user }) =>
           user.roles.includes("SUPER_ADMIN") ||
+          user.roles.includes("ADMIN") ||
           user.assignmentTypes.includes("BURSAR") ||
+          user.assignmentTypes.includes("PRINCIPAL") ||
+          user.assignmentTypes.includes("VICE_PRINCIPAL") ||
+          user.assignmentTypes.includes("HEADTEACHER") ||
           user.roles.includes("PARENT"),
       },
     ],

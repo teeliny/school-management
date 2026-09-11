@@ -308,7 +308,7 @@ export function AdminDashboard({ user }: { user: CurrentUser }) {
               </thead>
               <tbody>
                 {invitations.map((inv) => (
-                  <tr key={inv.id} className="border-t border-border">
+                  <tr key={inv.id} className="border-t border-border even:bg-card-inset">
                     <td className="py-1.5 pr-3">{inv.email}</td>
                     <td className="py-1.5 pr-3">{inv.invitedRole}</td>
                     <td className="py-1.5 pr-3">

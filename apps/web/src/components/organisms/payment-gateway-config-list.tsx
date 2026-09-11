@@ -66,7 +66,7 @@ export function PaymentGatewayConfigList() {
         </thead>
         <tbody>
           {configs.map((config) => (
-            <tr key={config.id} className="border-b border-border/60 last:border-none">
+            <tr key={config.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
               <td className="py-2.5 pr-4 font-medium">
                 <span className="inline-flex items-center gap-2">
                   {config.provider}

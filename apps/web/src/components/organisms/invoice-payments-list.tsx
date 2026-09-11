@@ -65,7 +65,7 @@ export function InvoicePaymentsList({ invoiceId, refreshKey }: { invoiceId: stri
       </thead>
       <tbody>
         {payments.map((payment) => (
-          <tr key={payment.id} className="border-b border-border/60 last:border-none">
+          <tr key={payment.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
             <td className="py-2.5 pr-4">{METHOD_LABEL[payment.method]}</td>
             <td className="py-2.5 pr-4 font-mono">{formatCurrency(payment.amount)}</td>
             <td className="py-2.5 pr-4">

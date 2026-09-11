@@ -79,7 +79,7 @@ export function PendingInvitationsList({ refreshKey }: { refreshKey?: unknown })
         </thead>
         <tbody>
           {invitations.map((invitation) => (
-            <tr key={invitation.id} className="border-b border-border/60 last:border-none">
+            <tr key={invitation.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
               <td className="py-2.5 pr-4 font-medium">{invitation.email}</td>
               <td className="py-2.5 pr-4">{invitation.invitedRole}</td>
               <td className="py-2.5 pr-4">

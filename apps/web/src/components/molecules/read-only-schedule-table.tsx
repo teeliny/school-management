@@ -31,7 +31,7 @@ export function ReadOnlyScheduleTable({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} className="border-b border-border">
+            <tr key={row.id} className="border-b border-border even:bg-card-inset">
               {row.cells.map((cell, i) => (
                 <td key={i} className="py-1.5 pr-3">
                   {cell}

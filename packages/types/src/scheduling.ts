@@ -26,6 +26,11 @@ export function categoryToGroup(category: ClassLevelCategory): ClassLevelCategor
   return category === "JSS" || category === "SSS" ? "JSS_SSS" : "CRECHE_NURSERY_PRIMARY";
 }
 
+/** Reverse of {@link categoryToGroup} — expands a section filter back into its concrete categories. */
+export function groupToCategories(group: ClassLevelCategoryGroup): ClassLevelCategory[] {
+  return group === "JSS_SSS" ? ["JSS", "SSS"] : ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
+}
+
 export interface DefaultSchedulingConstraint {
   scope: ScheduleScope;
   // null/omitted = applies to the whole scope; set = per-group override —

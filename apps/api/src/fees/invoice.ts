@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Injectable, Param, Post, Query, UseGuards, ForbiddenException } from "@nestjs/common";
 import { InvoiceStatus, Prisma, StudentStatus } from "@prisma/client";
-import { computeOutstandingBalance } from "@school/types";
+import { computeOutstandingBalance, groupToCategories, type ClassLevelCategoryGroup } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -189,17 +189,54 @@ export class InvoiceService {
   async findAllForUser(
     user: RequestUser,
     ability: AppAbility,
-    filters: { studentId?: string; termId?: string; status?: InvoiceStatus; skip?: number; take?: number } = {},
+    filters: {
+      studentId?: string;
+      termId?: string;
+      status?: InvoiceStatus;
+      classLevelId?: string;
+      classLevelCategoryGroup?: ClassLevelCategoryGroup;
+      search?: string;
+      skip?: number;
+      take?: number;
+    } = {},
   ) {
     const scopeWhere = await this.scopeWhereForUser(user, ability);
     if (scopeWhere === null) return filters.take !== undefined ? { data: [], total: 0 } : [];
 
-    const where: Prisma.InvoiceWhereInput = {
-      ...scopeWhere,
-      studentId: filters.studentId,
-      termId: filters.termId,
-      status: filters.status,
-    };
+    const studentClassWhere: Prisma.ClassArmWhereInput = {};
+    if (filters.classLevelId) studentClassWhere.classLevelId = filters.classLevelId;
+    if (filters.classLevelCategoryGroup) {
+      studentClassWhere.classLevel = { category: { in: groupToCategories(filters.classLevelCategoryGroup) } };
+    }
+
+    // Composed via a Prisma `AND` array, not a flat object spread —
+    // scopeWhere may itself key on `student` (a Parent's guardians
+    // restriction, below), and a flat spread would let a caller-supplied
+    // classLevelId/classLevelCategoryGroup/search silently *replace* that
+    // restriction instead of narrowing within it. Same precedent as
+    // StudentService.findAllForUser's own `conditions` array.
+    const conditions: Prisma.InvoiceWhereInput[] = [
+      scopeWhere,
+      ...(filters.studentId ? [{ studentId: filters.studentId }] : []),
+      ...(filters.termId ? [{ termId: filters.termId }] : []),
+      ...(filters.status ? [{ status: filters.status }] : []),
+      ...(Object.keys(studentClassWhere).length > 0 ? [{ student: { currentClass: studentClassWhere } }] : []),
+      ...(filters.search
+        ? [
+            {
+              student: {
+                OR: [
+                  { admissionNumber: { contains: filters.search, mode: "insensitive" as const } },
+                  { user: { firstName: { contains: filters.search, mode: "insensitive" as const } } },
+                  { user: { lastName: { contains: filters.search, mode: "insensitive" as const } } },
+                ],
+              },
+            },
+          ]
+        : []),
+    ].filter((c) => Object.keys(c).length > 0);
+    const where: Prisma.InvoiceWhereInput | undefined =
+      conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { AND: conditions };
 
     if (filters.take === undefined) {
       const invoices = await this.prisma.invoice.findMany({
@@ -292,6 +329,9 @@ export class InvoiceController {
     @Query("studentId") studentId?: string,
     @Query("termId") termId?: string,
     @Query("status") status?: InvoiceStatus,
+    @Query("classLevelId") classLevelId?: string,
+    @Query("classLevelCategoryGroup") classLevelCategoryGroup?: ClassLevelCategoryGroup,
+    @Query("search") search?: string,
     @Query("skip") skip?: string,
     @Query("take") take?: string,
   ) {
@@ -300,6 +340,9 @@ export class InvoiceController {
       studentId,
       termId,
       status,
+      classLevelId,
+      classLevelCategoryGroup,
+      search,
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),
     });

@@ -79,6 +79,7 @@ model User {
   approvedExamSchedules              ExamSchedule[]
   approvedInvigilationAssignments    InvigilationAssignment[]
   approvedDutyAssignments            DutyAssignment[]
+  debtExcusalsGranted                StudentProfile[]            @relation("StudentDebtExcusedBy")
 
   @@map("users")
 }
@@ -423,6 +424,18 @@ model StudentProfile {
   status          StudentStatus @default(ACTIVE)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+
+  // Informational-only flag, unrelated to any Term or Invoice: a Super-Admin
+  // or Bursar can flag a student as excused from debt-collection scrutiny
+  // (e.g. "let this one stay in class for now") without affecting their
+  // outstanding-balance total. Freely reversible — un-excusing clears all
+  // three fields back to null rather than leaving a stale reason/actor
+  // behind. See OutstandingBalanceService.setExcusal.
+  isDebtExcused       Boolean   @default(false)
+  debtExcusedAt       DateTime?
+  debtExcusedReason   String?
+  debtExcusedByUserId String?
+  debtExcusedBy       User?     @relation("StudentDebtExcusedBy", fields: [debtExcusedByUserId], references: [id])
 
   guardians               StudentGuardian[]
   positions               StudentPosition[]

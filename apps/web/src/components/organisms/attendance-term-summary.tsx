@@ -72,7 +72,7 @@ export function AttendanceTermSummary({ classArmId, termId }: { classArmId: stri
               </tr>
             )}
             {data.students.map((student) => (
-              <tr key={student.studentId} className="border-b border-border/60 last:border-none">
+              <tr key={student.studentId} className="border-b border-border/60 last:border-none even:bg-card-inset">
                 <td className="py-2.5 pr-4 font-medium">
                   {student.firstName} {student.lastName}{" "}
                   <span className="font-mono text-muted">({student.admissionNumber})</span>

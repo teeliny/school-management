@@ -265,7 +265,7 @@ export function StudentSubjectEnrollmentManager() {
               </thead>
               <tbody>
                 {enrollments?.map((row) => (
-                  <tr key={row.id} className="border-b border-border/60 last:border-none">
+                  <tr key={row.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                     <td className="py-2.5 pr-4">
                       {row.subject.name} <span className="font-mono text-muted">({row.subject.code})</span>
                     </td>

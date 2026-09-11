@@ -173,7 +173,7 @@ export function PeopleList({
               </tr>
             )}
             {filteredStudents?.map((student, index) => (
-              <tr key={student.id} className="border-b border-border/60 last:border-none">
+              <tr key={student.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                 <td className="py-2.5 pr-4 text-muted">{index + 1}</td>
                 <td className="py-2.5 pr-4 font-mono text-muted">{student.admissionNumber}</td>
                 <td className="py-2.5 pr-4 font-medium">

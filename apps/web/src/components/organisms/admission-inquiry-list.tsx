@@ -53,7 +53,7 @@ export function AdmissionInquiryList({ canManage }: { canManage: boolean }) {
         </thead>
         <tbody>
           {inquiries.map((inquiry) => (
-            <tr key={inquiry.id} className="border-b border-border/60 align-top last:border-none">
+            <tr key={inquiry.id} className="border-b border-border/60 align-top last:border-none even:bg-card-inset">
               <td className="whitespace-nowrap py-2.5 pr-4 font-mono text-muted">
                 {new Date(inquiry.createdAt).toLocaleDateString()}
               </td>

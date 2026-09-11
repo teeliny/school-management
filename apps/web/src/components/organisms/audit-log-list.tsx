@@ -201,7 +201,7 @@ export function AuditLogList() {
                   return (
                     <Fragment key={row.id}>
                       <tr
-                        className={`border-b border-border/60 last:border-none ${hasDiff ? "cursor-pointer" : ""}`}
+                        className={`border-b border-border/60 last:border-none even:bg-card-inset ${hasDiff ? "cursor-pointer" : ""}`}
                         onClick={() => hasDiff && setExpandedId(expanded ? null : row.id)}
                       >
                         <td className="py-2.5 text-muted">

@@ -197,7 +197,7 @@ export function ReportCardList({
         </thead>
         <tbody>
           {cards.map((card) => (
-            <tr key={card.id} className="border-b border-border/60 last:border-none">
+            <tr key={card.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
               <td className="py-2.5 pr-3 font-medium">{studentLabel(card)}</td>
               <td className="py-2.5 pr-3 text-muted">{card.student?.currentClass?.displayName ?? "—"}</td>
               <td className="py-2.5 pr-3">{termLabel(card.termId)}</td>

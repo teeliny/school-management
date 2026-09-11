@@ -175,7 +175,7 @@ export function GradebookTable({
             {students.map((student) => (
               <tr
                 key={`${subjectId}-${assessmentComponentId}-${student.id}`}
-                className="border-b border-border/60 last:border-none"
+                className="border-b border-border/60 last:border-none even:bg-card-inset"
               >
                 <td className="py-2.5 pr-4 font-medium">
                   {student.user.firstName} {student.user.lastName}{" "}

@@ -182,7 +182,7 @@ export function DailyAbsenteeList() {
                 </tr>
               )}
               {rows.map((row) => (
-                <tr key={row.key} className="border-b border-border/60 last:border-none">
+                <tr key={row.key} className="border-b border-border/60 last:border-none even:bg-card-inset">
                   <td className="py-2.5 pr-4 font-medium">
                     {row.firstName} {row.lastName}{" "}
                     {row.admissionNumber && <span className="font-mono text-muted">({row.admissionNumber})</span>}

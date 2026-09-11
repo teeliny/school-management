@@ -487,7 +487,7 @@ export function ClassSubjectAssignment() {
                   edit.concurrencyGroupId !== (row.concurrencyGroupId ?? "");
                 return (
                   <Fragment key={row.id}>
-                    <tr className="border-b border-border/60 last:border-none">
+                    <tr className="border-b border-border/60 last:border-none even:bg-card-inset">
                       <td className="py-2.5 pr-4 align-top">
                         {row.subject.name} <span className="font-mono text-muted">({row.subject.code})</span>
                       </td>
@@ -625,7 +625,7 @@ export function ClassSubjectAssignment() {
                         const childValue = childPeriodEdits[child.id] ?? effectiveDefault;
                         const childDirty = childValue !== effectiveDefault;
                         return (
-                          <tr key={child.id} className="border-b border-border/60 last:border-none">
+                          <tr key={child.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
                             <td className="py-2 pr-4 pl-6 text-muted">
                               — {child.name} <span className="font-mono">({child.code})</span>
                             </td>
