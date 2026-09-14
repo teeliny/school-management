@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { Role } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../../casl/policies.guard";
@@ -27,6 +28,7 @@ export class ParentProfileService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly authService: AuthService,
+    private readonly userService: UserService,
   ) {}
 
   findAll(filters: { emailBounced?: boolean } = {}) {
@@ -77,7 +79,13 @@ export class ParentProfileService {
     const email = UserService.normalizeEmail(newEmail);
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing && existing.id !== profile.userId) {
-      throw new BadRequestException("That email address is already in use by another account.");
+      // The "real" email turns out to already belong to someone else's
+      // account (e.g. this guardian is actually already a Staff/Admin user)
+      // — merge into that account instead of rejecting outright, same
+      // FR1.5 "one person, one account" reuse StudentService.resolveGuardian
+      // already does when a brand-new guardian entry's email matches an
+      // existing user.
+      return this.mergeIntoExistingAccount(profile.id, existing.id);
     }
 
     await this.prisma.$transaction([
@@ -88,6 +96,42 @@ export class ParentProfileService {
     await this.authService.forgotPassword(email);
 
     return this.prisma.parentProfile.findUniqueOrThrow({ where: { id }, include: { user: true } });
+  }
+
+  /**
+   * Re-points every StudentGuardian currently on `sourceProfileId` to the
+   * existing user's ParentProfile (granting the PARENT role first if it
+   * doesn't already have it), rather than changing the source profile's own
+   * email to one that's already taken. The source ParentProfile/User row is
+   * deliberately left in place afterward, just unlinked from any student —
+   * it's usually a placeholder account from a legacy import, but it isn't
+   * this method's place to decide it's safe to delete.
+   */
+  private async mergeIntoExistingAccount(sourceProfileId: string, existingUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.userService.grantRole(existingUserId, Role.PARENT, tx);
+
+      const destProfile =
+        (await tx.parentProfile.findUnique({ where: { userId: existingUserId } })) ??
+        (await tx.parentProfile.create({ data: { userId: existingUserId } }));
+
+      const links = await tx.studentGuardian.findMany({ where: { parentId: sourceProfileId } });
+      for (const link of links) {
+        const duplicate = await tx.studentGuardian.findUnique({
+          where: { studentId_parentId: { studentId: link.studentId, parentId: destProfile.id } },
+        });
+        if (duplicate) {
+          // This student already separately lists the existing account as a
+          // guardian — drop the now-redundant link rather than collide with
+          // StudentGuardian's [studentId, parentId] uniqueness.
+          await tx.studentGuardian.delete({ where: { id: link.id } });
+        } else {
+          await tx.studentGuardian.update({ where: { id: link.id }, data: { parentId: destProfile.id } });
+        }
+      }
+
+      return tx.parentProfile.findUniqueOrThrow({ where: { id: destProfile.id }, include: { user: true } });
+    });
   }
 }
 
