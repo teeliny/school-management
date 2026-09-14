@@ -148,9 +148,19 @@ export function AttendanceRollCall({
   function setStatus(personId: string, status: AttendanceStatus) {
     if (existingSessionId) {
       const recordId = recordIdByPerson[personId];
-      if (!recordId) return;
       setRowState((s) => ({ ...s, [personId]: "saving" }));
-      apiFetch(`/attendance-records/${recordId}`, { method: "PATCH", auth: true, body: { status } })
+      // A roster person with no record on this session yet (record missing
+      // or never created) gets one created on the spot instead of the click
+      // silently doing nothing — same write-access/backdate-window checks
+      // apply server-side either way.
+      const request = recordId
+        ? apiFetch(`/attendance-records/${recordId}`, { method: "PATCH", auth: true, body: { status } })
+        : apiFetch<{ id: string }>("/attendance-records", {
+            method: "POST",
+            auth: true,
+            body: { attendanceSessionId: existingSessionId, personId, status },
+          }).then((created) => setRecordIdByPerson((m) => ({ ...m, [personId]: created.id })));
+      request
         .then(() => {
           setStatusByPerson((s) => ({ ...s, [personId]: status }));
           setRowState((s) => ({ ...s, [personId]: "saved" }));

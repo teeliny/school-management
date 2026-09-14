@@ -1,6 +1,14 @@
-import { Body, Controller, ForbiddenException, Injectable, Param, Patch, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, ForbiddenException, Injectable, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { subject } from "@casl/ability";
-import { AssignmentType, AttendanceSession, AttendanceSessionKind, AttendanceSessionType } from "@prisma/client";
+import {
+  AssignmentType,
+  AttendancePersonType,
+  AttendanceSession,
+  AttendanceSessionKind,
+  AttendanceSessionType,
+  StaffStatus,
+  StudentStatus,
+} from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -10,7 +18,7 @@ import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { SchoolProfileService } from "../academic-structure/school-profile";
 import { Audited } from "../audit/audited.decorator";
-import { UpdateAttendanceRecordDto } from "./dto/attendance-record.dto";
+import { CreateAttendanceRecordDto, UpdateAttendanceRecordDto } from "./dto/attendance-record.dto";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -41,6 +49,55 @@ export class AttendanceRecordService {
     }
 
     return this.prisma.attendanceRecord.update({ where: { id }, data: dto });
+  }
+
+  /**
+   * Creates a record for a roster person missing one in an already-taken
+   * session (e.g. never created, or lost) — gated by the exact same
+   * write-access and back-date checks as `update`, so a person can't be
+   * added to a session any more permissively than an existing record on it
+   * can be corrected.
+   */
+  async create(dto: CreateAttendanceRecordDto, user: RequestUser, ability: AppAbility) {
+    const session = await this.prisma.attendanceSession.findUniqueOrThrow({
+      where: { id: dto.attendanceSessionId },
+    });
+
+    const isAdminOverride = this.checkIsAdminOverride(ability);
+    if (!isAdminOverride) {
+      await this.assertCanWriteSession(session, user, ability);
+      await this.assertWithinBackdateWindow(session.date);
+    }
+
+    const personType = await this.assertPersonBelongsToSession(session, dto.personId);
+
+    return this.prisma.attendanceRecord.create({
+      data: {
+        attendanceSessionId: session.id,
+        personId: dto.personId,
+        personType,
+        status: dto.status,
+        remark: dto.remark,
+      },
+    });
+  }
+
+  private async assertPersonBelongsToSession(session: AttendanceSession, personId: string): Promise<AttendancePersonType> {
+    if (session.type === AttendanceSessionType.STAFF) {
+      const staff = await this.prisma.staffProfile.findFirst({ where: { id: personId, status: StaffStatus.ACTIVE } });
+      if (!staff) {
+        throw new BadRequestException("This staff id is not active");
+      }
+      return AttendancePersonType.STAFF;
+    }
+
+    const student = await this.prisma.studentProfile.findFirst({
+      where: { id: personId, currentClassId: session.classArmId, status: StudentStatus.ACTIVE },
+    });
+    if (!student) {
+      throw new BadRequestException("This student is not active in this class");
+    }
+    return AttendancePersonType.STUDENT;
   }
 
   /**
@@ -110,5 +167,12 @@ export class AttendanceRecordController {
   update(@Param("id") id: string, @Body() dto: UpdateAttendanceRecordDto, @CurrentUser() user: RequestUser) {
     const ability = this.abilityFactory.createForUser(user);
     return this.service.update(id, dto, user, ability);
+  }
+
+  @Post()
+  @Audited("AttendanceRecord", "attendanceRecord")
+  create(@Body() dto: CreateAttendanceRecordDto, @CurrentUser() user: RequestUser) {
+    const ability = this.abilityFactory.createForUser(user);
+    return this.service.create(dto, user, ability);
   }
 }
