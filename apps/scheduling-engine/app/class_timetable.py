@@ -212,6 +212,35 @@ def _solve_group(
             bundle_key = f"level:{arm.classLevelId}:{group_key}" if is_synced else f"arm:{arm.classArmId}:{group_key}"
             bundles.setdefault(bundle_key, []).append((arm.classArmId, subject))
 
+    # A bundle forces every member onto the IDENTICAL (day, period) via one
+    # shared variable — meaning is_open()'s teacher-availability check aside,
+    # nothing so far stops two DIFFERENT subjects in the same bundle from
+    # being taught by the SAME staff member, which is physically impossible
+    # (one person can't deliver two different lessons in the same period).
+    # The same staff member repeating the SAME subject across synced arms
+    # (one teacher, one combined session) is fine — that's what the
+    # staff_keys dedupe below already allows — so only split out a member
+    # when its staffId collides with an EARLIER member's staffId under a
+    # DIFFERENT subjectId. ClassSubjectConcurrencyGroup/StaffAssignment data
+    # can end up in this state (e.g. one teacher covering two of a small
+    # department's elective options); rather than building a bundle no
+    # solution can satisfy without double-booking that teacher, the offending
+    # member is pulled back out into its own independent singleton bundle so
+    # it's scheduled at its own slot instead of forced in lockstep with a
+    # subject the same teacher can't simultaneously deliver.
+    for bundle_key in list(bundles.keys()):
+        members = bundles[bundle_key]
+        first_subject_by_staff: dict[str, str] = {}
+        kept: list[tuple[str, SubjectPayload]] = []
+        for arm_id, subject in members:
+            prior_subject_id = first_subject_by_staff.get(subject.staffId)
+            if prior_subject_id is not None and prior_subject_id != subject.subjectId:
+                bundles[f"conflict:{bundle_key}:{arm_id}:{subject.subjectId}"] = [(arm_id, subject)]
+                continue
+            first_subject_by_staff[subject.staffId] = subject.subjectId
+            kept.append((arm_id, subject))
+        bundles[bundle_key] = kept
+
     for bundle_key, members in bundles.items():
         for day in group.days:
             for period in periods_for_day(day):
