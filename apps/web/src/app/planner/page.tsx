@@ -480,7 +480,8 @@ function PlannerPageInner() {
                   </CollapsibleCard>
                   <CollapsibleCard title="Add a slot" defaultOpen={false}>
                     <TimetableSlotForm
-                      classArmId={ctClassArmId}
+                      defaultClassArmId={ctClassArmId}
+                      classArmOptions={classArms}
                       academicSessionId={ctAcademicSessionId}
                       termId={ctTermId}
                       onCreated={() => setCtRefreshKey((k) => k + 1)}

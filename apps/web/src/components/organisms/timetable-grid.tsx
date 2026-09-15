@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import { GripVertical } from "lucide-react";
 import { categoryToGroup, computePeriodTime, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
@@ -272,51 +272,75 @@ export function TimetableGrid({
               // (the trailing-activity label, if configured) instead of
               // rendering columns Friday never uses.
               const lastIndex = day === "FRIDAY" ? fridayCutoff : columns.length - 1;
+              // Friday's own period/break duration (structure.fridayPeriodDurationMinutes/
+              // fridayBreakDurationMinutes) can differ from every other day's — the
+              // header row above is computed off Monday (buildPeriodColumns), so it
+              // would show the WRONG clock times for Friday's own periods whenever
+              // that's the case. A separate Friday-only heading, inserted right below
+              // Thursday's row, shows Friday's real times instead — only rendered when
+              // Friday's period duration actually diverges, so a school running the
+              // same length every day doesn't get a redundant duplicate header.
+              const fridayNeedsOwnHeading = day === "FRIDAY" && structure.fridayPeriodDurationMinutes !== structure.periodDurationMinutes;
               return (
-                <div key={day} className="contents">
-                  <div className="pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{DAY_LABELS[day]}</div>
-                  {columns.slice(0, lastIndex + 1).map((col, i) => {
-                    if (col.kind === "break") {
-                      return <div key={i} className="min-h-[52px] rounded-lg bg-muted/10" />;
-                    }
-                    const special = findSpecialPeriod(specialPeriods, day, col.index);
-                    if (special) {
-                      return (
-                        <div
-                          key={i}
-                          className="flex min-h-[52px] items-center justify-center rounded-lg bg-info-bg px-1 text-center text-[10px] font-medium text-info"
-                        >
-                          {special.label}
+                <Fragment key={day}>
+                  {fridayNeedsOwnHeading && (
+                    <div className="contents">
+                      <div className="pt-1.5 text-[9.5px] font-medium uppercase tracking-wide text-muted">Fri times</div>
+                      {columns.slice(0, lastIndex + 1).map((col, i) => (
+                        <div key={i} className="text-center font-mono text-[9.5px] font-medium text-muted">
+                          {col.kind === "break"
+                            ? "Break"
+                            : `${computePeriodTime(structure, "FRIDAY", col.index).startTime}–${computePeriodTime(structure, "FRIDAY", col.index).endTime}`}
                         </div>
-                      );
-                    }
-                    const slot = slotByCell.get(cellKey(day, col.index));
-                    return (
-                      <DroppableCell key={i} day={day} periodIndex={col.index}>
-                        {slot && (
-                          <SlotCard
-                            slot={slot}
-                            canManage={canManage}
-                            expanded={expandedSlotId === slot.id}
-                            onToggleExpand={() => setExpandedSlotId((cur) => (cur === slot.id ? null : slot.id))}
-                            subjects={selectableSubjects}
-                            staffOptions={staffSelectOptions}
-                            fieldStatus={fieldStatus[slot.id]}
-                            onFieldChange={(field, value) => saveField(slot, field, value)}
-                          />
-                        )}
-                      </DroppableCell>
-                    );
-                  })}
-                  {day === "FRIDAY" && fridayCutoff < columns.length - 1 && (
-                    <div
-                      className="flex min-h-[52px] items-center justify-center rounded-lg bg-muted/10 px-1 text-center text-[10px] font-medium text-muted"
-                      style={{ gridColumn: `span ${columns.length - 1 - fridayCutoff}` }}
-                    >
-                      {fridayTrailingActivity ? `${fridayTrailingActivity.label} · until ${fridayTrailingActivity.endTime}` : "—"}
+                      ))}
+                      {fridayCutoff < columns.length - 1 && <div style={{ gridColumn: `span ${columns.length - 1 - fridayCutoff}` }} />}
                     </div>
                   )}
-                </div>
+                  <div className="contents">
+                    <div className="pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{DAY_LABELS[day]}</div>
+                    {columns.slice(0, lastIndex + 1).map((col, i) => {
+                      if (col.kind === "break") {
+                        return <div key={i} className="min-h-[52px] rounded-lg bg-muted/10" />;
+                      }
+                      const special = findSpecialPeriod(specialPeriods, day, col.index);
+                      if (special) {
+                        return (
+                          <div
+                            key={i}
+                            className="flex min-h-[52px] items-center justify-center rounded-lg bg-info-bg px-1 text-center text-[10px] font-medium text-info"
+                          >
+                            {special.label}
+                          </div>
+                        );
+                      }
+                      const slot = slotByCell.get(cellKey(day, col.index));
+                      return (
+                        <DroppableCell key={i} day={day} periodIndex={col.index}>
+                          {slot && (
+                            <SlotCard
+                              slot={slot}
+                              canManage={canManage}
+                              expanded={expandedSlotId === slot.id}
+                              onToggleExpand={() => setExpandedSlotId((cur) => (cur === slot.id ? null : slot.id))}
+                              subjects={selectableSubjects}
+                              staffOptions={staffSelectOptions}
+                              fieldStatus={fieldStatus[slot.id]}
+                              onFieldChange={(field, value) => saveField(slot, field, value)}
+                            />
+                          )}
+                        </DroppableCell>
+                      );
+                    })}
+                    {day === "FRIDAY" && fridayCutoff < columns.length - 1 && (
+                      <div
+                        className="flex min-h-[52px] items-center justify-center rounded-lg bg-muted/10 px-1 text-center text-[10px] font-medium text-muted"
+                        style={{ gridColumn: `span ${columns.length - 1 - fridayCutoff}` }}
+                      >
+                        {fridayTrailingActivity ? `${fridayTrailingActivity.label} · until ${fridayTrailingActivity.endTime}` : "—"}
+                      </div>
+                    )}
+                  </div>
+                </Fragment>
               );
             })}
           </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { categoryToGroup, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
+import { categoryToGroup, computePeriodTime, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
@@ -204,14 +204,29 @@ export function AllClassesTimetableView({
                     <div className="border-b border-border bg-card-inset px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
                       Class
                     </div>
-                    {columns.slice(0, lastIndex + 1).map((col, i) => (
-                      <div
-                        key={i}
-                        className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
-                      >
-                        {col.kind === "break" ? "Break" : `${col.startTime}–${col.endTime}`}
-                      </div>
-                    ))}
+                    {columns.slice(0, lastIndex + 1).map((col, i) => {
+                      // These headers come from the shared, Monday-derived
+                      // `columns` array (buildPeriodColumns) — accurate for
+                      // every day EXCEPT Friday, whose own period/break
+                      // duration can differ (structure.fridayPeriodDurationMinutes/
+                      // fridayBreakDurationMinutes), so its label is recomputed
+                      // off Friday's own times instead of reusing col.startTime/
+                      // endTime, same fix as TimetableGrid's inserted heading row.
+                      const label =
+                        col.kind === "break"
+                          ? "Break"
+                          : day === "FRIDAY"
+                            ? `${computePeriodTime(structure, "FRIDAY", col.index).startTime}–${computePeriodTime(structure, "FRIDAY", col.index).endTime}`
+                            : `${col.startTime}–${col.endTime}`;
+                      return (
+                        <div
+                          key={i}
+                          className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
+                        >
+                          {label}
+                        </div>
+                      );
+                    })}
                     {trailingSpan > 0 && (
                       <div
                         className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
