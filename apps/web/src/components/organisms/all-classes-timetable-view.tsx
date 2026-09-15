@@ -5,13 +5,16 @@ import { categoryToGroup, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOf
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
+import { summarizePeriodsBySubject } from "../../lib/subject-period-summary";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { ClickReveal } from "../molecules/click-reveal";
+import { ReadOnlyScheduleTable } from "../molecules/read-only-schedule-table";
 
 interface TimetableSlotItem {
   id: string;
   classArmId: string;
+  subjectId: string;
   subject: { name: string; code: string };
   staff: { user: { firstName: string; lastName: string } };
   dayOfWeek: DayOfWeek;
@@ -143,6 +146,18 @@ export function AllClassesTimetableView({
     [structure, columns],
   );
 
+  // Per-arm "how many periods of each subject" — the day-by-day grid above
+  // only ever shows one period per cell, so this is the only place that
+  // count is visible without manually tallying cells.
+  const subjectSummaryByArm = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof summarizePeriodsBySubject>>();
+    if (!rows) return map;
+    for (const arm of classArmsForGroup) {
+      map.set(arm.id, summarizePeriodsBySubject(rows.filter((r) => r.classArmId === arm.id)));
+    }
+    return map;
+  }, [rows, classArmsForGroup]);
+
   if (!academicSessionId || !termId) {
     return <p className="text-sm text-muted">Select a session and term to view the whole-school timetable.</p>;
   }
@@ -170,107 +185,135 @@ export function AllClassesTimetableView({
           FRIDAY_BREAK_DURATION_MINUTES).
         </p>
       ) : (
-        DAYS_OF_WEEK.map((day) => {
-          // Friday may end before the shared column set does — everything
-          // past its real last period collapses into one spanning cell per
-          // row (the trailing-activity label, if configured) instead of
-          // rendering columns Friday never uses.
-          const lastIndex = day === "FRIDAY" ? fridayCutoff : columns.length - 1;
-          const trailingSpan = columns.length - 1 - lastIndex;
-          return (
-            <div key={day}>
-              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">{DAY_LABELS[day]}</div>
-              <div className="overflow-x-auto rounded-lg border border-border">
-                <div
-                  className="grid"
-                  style={{ gridTemplateColumns: `160px repeat(${columns.length}, minmax(78px, 1fr))` }}
-                >
-                  <div className="border-b border-border bg-card-inset px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
-                    Class
-                  </div>
-                  {columns.slice(0, lastIndex + 1).map((col, i) => (
-                    <div
-                      key={i}
-                      className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
-                    >
-                      {col.kind === "break" ? "Break" : `${col.startTime}–${col.endTime}`}
+        <>
+          {DAYS_OF_WEEK.map((day) => {
+            // Friday may end before the shared column set does — everything
+            // past its real last period collapses into one spanning cell per
+            // row (the trailing-activity label, if configured) instead of
+            // rendering columns Friday never uses.
+            const lastIndex = day === "FRIDAY" ? fridayCutoff : columns.length - 1;
+            const trailingSpan = columns.length - 1 - lastIndex;
+            return (
+              <div key={day}>
+                <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">{DAY_LABELS[day]}</div>
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <div
+                    className="grid"
+                    style={{ gridTemplateColumns: `160px repeat(${columns.length}, minmax(78px, 1fr))` }}
+                  >
+                    <div className="border-b border-border bg-card-inset px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
+                      Class
                     </div>
-                  ))}
-                  {trailingSpan > 0 && (
-                    <div
-                      className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
-                      style={{ gridColumn: `span ${trailingSpan}` }}
-                    >
-                      {fridayTrailingActivity ? `${fridayTrailingActivity.label} · until ${fridayTrailingActivity.endTime}` : "—"}
-                    </div>
-                  )}
-
-                  {classArmsForGroup.map((arm) => (
-                    <div key={arm.id} className="contents">
-                      <div className="flex items-center justify-between gap-1.5 border-b border-border px-2 py-2 text-[12px]">
-                        <span className="truncate">{arm.displayName}</span>
-                        <button
-                          type="button"
-                          onClick={() => onViewClass(arm.id)}
-                          className="flex-none text-[10.5px] text-primary underline"
-                        >
-                          Edit
-                        </button>
+                    {columns.slice(0, lastIndex + 1).map((col, i) => (
+                      <div
+                        key={i}
+                        className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
+                      >
+                        {col.kind === "break" ? "Break" : `${col.startTime}–${col.endTime}`}
                       </div>
-                      {columns.slice(0, lastIndex + 1).map((col, i) => {
-                        if (col.kind === "break") {
-                          return <div key={i} className="border-b border-border bg-muted/10" />;
-                        }
-                        const special = findSpecialPeriod(specialPeriods, day, col.index);
-                        if (special) {
+                    ))}
+                    {trailingSpan > 0 && (
+                      <div
+                        className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
+                        style={{ gridColumn: `span ${trailingSpan}` }}
+                      >
+                        {fridayTrailingActivity ? `${fridayTrailingActivity.label} · until ${fridayTrailingActivity.endTime}` : "—"}
+                      </div>
+                    )}
+
+                    {classArmsForGroup.map((arm) => (
+                      <div key={arm.id} className="contents">
+                        <div className="flex items-center justify-between gap-1.5 border-b border-border px-2 py-2 text-[12px]">
+                          <span className="truncate">{arm.displayName}</span>
+                          <button
+                            type="button"
+                            onClick={() => onViewClass(arm.id)}
+                            className="flex-none text-[10.5px] text-primary underline"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                        {columns.slice(0, lastIndex + 1).map((col, i) => {
+                          if (col.kind === "break") {
+                            return <div key={i} className="border-b border-border bg-muted/10" />;
+                          }
+                          const special = findSpecialPeriod(specialPeriods, day, col.index);
+                          if (special) {
+                            return (
+                              <div
+                                key={i}
+                                className="border-b border-border bg-info-bg px-1 py-1.5 text-center text-[10px] font-medium text-info"
+                              >
+                                {special.label}
+                              </div>
+                            );
+                          }
+                          const slot = slotByCell.get(`${arm.id}|${day}|${col.index}`);
                           return (
-                            <div
-                              key={i}
-                              className="border-b border-border bg-info-bg px-1 py-1.5 text-center text-[10px] font-medium text-info"
-                            >
-                              {special.label}
+                            <div key={i} className="border-b border-border px-1 py-1.5">
+                              {slot && (
+                                <ClickReveal
+                                  className={
+                                    slot.approvalStatus === "PENDING_REVIEW"
+                                      ? "rounded border border-dashed border-warning px-1 py-0.5"
+                                      : undefined
+                                  }
+                                  trigger={
+                                    <span className="truncate text-[11px] font-medium">{slot.subject.code || slot.subject.name}</span>
+                                  }
+                                >
+                                  <div className="font-medium">{slot.subject.name}</div>
+                                  <div className="text-muted">
+                                    {slot.staff.user.firstName} {slot.staff.user.lastName}
+                                  </div>
+                                  {slot.venue && <div className="text-muted">{slot.venue}</div>}
+                                  {slot.approvalStatus === "PENDING_REVIEW" && (
+                                    <Badge variant="warning" className="mt-1 text-[9px]">
+                                      Pending
+                                    </Badge>
+                                  )}
+                                </ClickReveal>
+                              )}
                             </div>
                           );
-                        }
-                        const slot = slotByCell.get(`${arm.id}|${day}|${col.index}`);
-                        return (
-                          <div key={i} className="border-b border-border px-1 py-1.5">
-                            {slot && (
-                              <ClickReveal
-                                className={
-                                  slot.approvalStatus === "PENDING_REVIEW"
-                                    ? "rounded border border-dashed border-warning px-1 py-0.5"
-                                    : undefined
-                                }
-                                trigger={
-                                  <span className="truncate text-[11px] font-medium">{slot.subject.code || slot.subject.name}</span>
-                                }
-                              >
-                                <div className="font-medium">{slot.subject.name}</div>
-                                <div className="text-muted">
-                                  {slot.staff.user.firstName} {slot.staff.user.lastName}
-                                </div>
-                                {slot.venue && <div className="text-muted">{slot.venue}</div>}
-                                {slot.approvalStatus === "PENDING_REVIEW" && (
-                                  <Badge variant="warning" className="mt-1 text-[9px]">
-                                    Pending
-                                  </Badge>
-                                )}
-                              </ClickReveal>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {trailingSpan > 0 && (
-                        <div className="border-b border-border bg-muted/10" style={{ gridColumn: `span ${trailingSpan}` }} />
-                      )}
-                    </div>
-                  ))}
+                        })}
+                        {trailingSpan > 0 && (
+                          <div className="border-b border-border bg-muted/10" style={{ gridColumn: `span ${trailingSpan}` }} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
+            );
+          })}
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">Subjects & periods per class</div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {classArmsForGroup.map((arm) => {
+                const summary = subjectSummaryByArm.get(arm.id) ?? [];
+                const total = summary.reduce((sum, s) => sum + s.periodsPerWeek, 0);
+                return (
+                  <div key={arm.id} className="rounded-lg border border-border p-2.5">
+                    <div className="mb-1.5 flex items-center justify-between gap-1.5">
+                      <span className="truncate text-[12.5px] font-medium">{arm.displayName}</span>
+                      <button type="button" onClick={() => onViewClass(arm.id)} className="flex-none text-[10.5px] text-primary underline">
+                        Edit
+                      </button>
+                    </div>
+                    <ReadOnlyScheduleTable
+                      headers={["Subject", "Periods/week"]}
+                      rows={summary.map((s) => ({ id: s.subjectId, cells: [s.name, String(s.periodsPerWeek)] }))}
+                      emptyMessage="No subjects scheduled yet."
+                    />
+                    {summary.length > 0 && <p className="mt-1 text-[11px] text-muted">Total: {total} periods/week</p>}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })
+          </div>
+        </>
       )}
     </div>
   );

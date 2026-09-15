@@ -120,10 +120,16 @@ export class SchedulingCallbackController {
       | InvigilationGeneratedRow[]
       | WeeklyDutyGeneratedRow[];
     let persistedCount = 0;
+    // Only CLASS_TIMETABLE's persist method ever drops individual rows
+    // (see persistClassTimetableRows) — every other scope's persisted count
+    // is still all-or-nothing within its own transaction.
+    let droppedDescriptions: string[] = [];
 
     try {
       if (request.scope === ScheduleScope.CLASS_TIMETABLE) {
-        persistedCount = await this.persistClassTimetableRows(requestId, request.termId, rows as ClassTimetableGeneratedRow[]);
+        const result = await this.persistClassTimetableRows(requestId, request.termId, rows as ClassTimetableGeneratedRow[]);
+        persistedCount = result.persisted;
+        droppedDescriptions = result.droppedDescriptions;
       }
       if (request.scope === ScheduleScope.EXAM_TIMETABLE) {
         persistedCount = await this.persistExamTimetableRows(
@@ -159,11 +165,21 @@ export class SchedulingCallbackController {
       return { received: true };
     }
 
+    // A dropped row means the batch still completed (everything else
+    // persisted fine) but left a real gap in the draft that a human needs to
+    // fill in manually — surfaced via errorMessage (status stays COMPLETED,
+    // not FAILED) since there's no dedicated warnings field on this model.
+    const droppedSummary =
+      droppedDescriptions.length > 0
+        ? `${droppedDescriptions.length} period(s) could not be auto-scheduled due to an unresolved conflict and were skipped — add manually: ${droppedDescriptions.slice(0, 5).join("; ")}${droppedDescriptions.length > 5 ? `; +${droppedDescriptions.length - 5} more` : ""}`
+        : null;
+
     await this.prisma.scheduleGenerationRequest.update({
       where: { id: requestId },
       data: {
         status: ScheduleGenerationStatus.COMPLETED,
         completedAt: new Date(),
+        errorMessage: droppedSummary,
         // Roster-level human review — separate from `status` above. Only
         // enters PENDING_REVIEW once at least one row actually landed; a
         // completed-but-empty run (every row dropped as unparseable) has
@@ -182,20 +198,29 @@ export class SchedulingCallbackController {
    * rows (`generatedBy=AI, approvalStatus=PENDING_REVIEW` — not visible to
    * staff/students/parents until an Admin/Super-Admin approves, FR6.5).
    * Reuses `TimetableSlotService.assertNoConflicts` per row as a final
-   * safety net on top of the solver's own conflict avoidance, inside a
-   * single transaction so each check sees the batch's own prior inserts —
-   * belt-and-suspenders, not the primary defense (that's the CP-SAT model
-   * itself).
+   * safety net on top of the solver's own conflict avoidance — belt-and-
+   * suspenders, not the primary defense (that's the CP-SAT model itself), so
+   * a row that still trips it is dropped individually (logged, and named in
+   * the returned `droppedDescriptions` for the request's errorMessage)
+   * rather than throwing and rolling back the WHOLE batch: one row the
+   * solver got wrong shouldn't cost the admin every other period it got
+   * right. Still one transaction so each check sees the batch's own prior
+   * inserts, not just what's already committed.
    */
-  private async persistClassTimetableRows(requestId: string, termId: string | null, rows: ClassTimetableGeneratedRow[]) {
+  private async persistClassTimetableRows(
+    requestId: string,
+    termId: string | null,
+    rows: ClassTimetableGeneratedRow[],
+  ): Promise<{ persisted: number; droppedDescriptions: string[] }> {
     if (!termId) {
       this.logger.warn("CLASS_TIMETABLE callback with no termId on the request — nothing to persist");
-      return 0;
+      return { persisted: 0, droppedDescriptions: [] };
     }
-    if (rows.length === 0) return 0;
+    if (rows.length === 0) return { persisted: 0, droppedDescriptions: [] };
 
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
     let persisted = 0;
+    const droppedDescriptions: string[] = [];
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
@@ -204,19 +229,29 @@ export class SchedulingCallbackController {
           continue;
         }
 
-        await this.timetableSlots.assertNoConflicts(
-          {
-            staffId: row.staffId,
-            venue: null,
-            dayOfWeek: row.dayOfWeek,
-            academicSessionId: term.academicSessionId,
-            termId,
-            startTime: row.startTime,
-            endTime: row.endTime,
-          },
-          undefined,
-          tx,
-        );
+        try {
+          await this.timetableSlots.assertNoConflicts(
+            {
+              staffId: row.staffId,
+              subjectId: row.subjectId,
+              classArmId: row.classArmId,
+              venue: null,
+              dayOfWeek: row.dayOfWeek,
+              academicSessionId: term.academicSessionId,
+              termId,
+              startTime: row.startTime,
+              endTime: row.endTime,
+            },
+            undefined,
+            tx,
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unresolved conflict";
+          const description = `${row.dayOfWeek} ${row.startTime}-${row.endTime} (classArm ${row.classArmId}, subject ${row.subjectId}): ${message}`;
+          this.logger.warn(`Dropping generated CLASS_TIMETABLE row — ${description}`);
+          droppedDescriptions.push(description);
+          continue;
+        }
 
         await tx.timetableSlot.create({
           data: {
@@ -237,7 +272,7 @@ export class SchedulingCallbackController {
         persisted += 1;
       }
     });
-    return persisted;
+    return { persisted, droppedDescriptions };
   }
 
   /**

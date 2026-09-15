@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   Get,
   Injectable,
+  Logger,
   Param,
   Patch,
   Post,
@@ -27,6 +28,12 @@ import { CreateTimetableSlotDto, UpdateTimetableSlotDto } from "./dto/timetable-
 
 interface ConflictCheckInput {
   staffId: string;
+  // Not used by the conflict check itself (only staffId/day/time/venue are)
+  // — carried through purely so a conflict's warn log can name what the
+  // REJECTED row actually was, since the caller (e.g. the scheduling
+  // callback's persist* methods) already has these on hand.
+  subjectId?: string;
+  classArmId?: string;
   venue?: string | null;
   dayOfWeek: DayOfWeek;
   academicSessionId: string;
@@ -37,6 +44,8 @@ interface ConflictCheckInput {
 
 @Injectable()
 export class TimetableSlotService {
+  private readonly logger = new Logger(TimetableSlotService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -72,6 +81,7 @@ export class TimetableSlotService {
     });
     for (const slot of staffSlots) {
       if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
+        await this.logStaffConflict(input, slot, client);
         throw new BadRequestException(
           `Teacher is already booked from ${slot.startTime} to ${slot.endTime} on this day`,
         );
@@ -89,6 +99,39 @@ export class TimetableSlotService {
           );
         }
       }
+    }
+  }
+
+  /**
+   * Best-effort diagnostic for a staff conflict — resolves the teacher's
+   * name and both subjects' names/codes so a warn log names WHO and WHAT
+   * collided (`this.timetableSlots.assertNoConflicts` is otherwise the only
+   * place that knows both sides of the overlap; the BadRequestException it
+   * throws right after this only carries the existing slot's time). Never
+   * lets a lookup failure block the actual conflict rejection — logging is
+   * strictly informational.
+   */
+  private async logStaffConflict(
+    input: ConflictCheckInput,
+    existingSlot: { subjectId: string; classArmId: string; dayOfWeek: DayOfWeek; startTime: string; endTime: string },
+    client: PrismaService | Prisma.TransactionClient,
+  ) {
+    try {
+      const [staff, newSubject, existingSubject] = await Promise.all([
+        client.staffProfile.findUnique({ where: { id: input.staffId }, include: { user: true } }),
+        input.subjectId ? client.subject.findUnique({ where: { id: input.subjectId } }) : null,
+        client.subject.findUnique({ where: { id: existingSlot.subjectId } }),
+      ]);
+      const staffName = staff ? `${staff.user.firstName} ${staff.user.lastName}` : input.staffId;
+      this.logger.warn(
+        `Timetable staff conflict — teacher "${staffName}" (${input.staffId}): new ` +
+          `${input.dayOfWeek} ${input.startTime}-${input.endTime} slot wants subject ` +
+          `"${newSubject?.name ?? input.subjectId ?? "unknown"}" (classArm ${input.classArmId ?? "n/a"}), ` +
+          `but is already booked ${existingSlot.dayOfWeek} ${existingSlot.startTime}-${existingSlot.endTime} ` +
+          `for subject "${existingSubject?.name ?? existingSlot.subjectId}" (classArm ${existingSlot.classArmId})`,
+      );
+    } catch (err) {
+      this.logger.warn(`Timetable conflict logging failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

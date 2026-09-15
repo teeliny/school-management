@@ -7,8 +7,10 @@ import { categoryToGroup, computePeriodTime, DAYS_OF_WEEK, type ClassLevelCatego
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
+import { summarizePeriodsBySubject } from "../../lib/subject-period-summary";
 import { Badge } from "../atoms/badge";
 import { ClickReveal } from "../molecules/click-reveal";
+import { ReadOnlyScheduleTable } from "../molecules/read-only-schedule-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { cn } from "../../lib/cn";
 
@@ -187,6 +189,12 @@ export function TimetableGrid({
     return [...byId.values()];
   }, [staffOptions, slots]);
 
+  // One row per distinct subject with its weekly period count — the grid
+  // above only ever shows one period per cell, so this is the only place
+  // "how many periods of Maths does this class get" is visible at a glance.
+  const subjectSummary = useMemo(() => summarizePeriodsBySubject(slots ?? []), [slots]);
+  const totalPeriods = useMemo(() => subjectSummary.reduce((sum, s) => sum + s.periodsPerWeek, 0), [subjectSummary]);
+
   // O(1) cell lookup, resolved against each slot's *own* dayOfWeek (Friday's
   // shorter break shifts which period a startTime falls in).
   const slotByCell = useMemo(() => {
@@ -314,6 +322,16 @@ export function TimetableGrid({
           </div>
         </div>
       </DndContext>
+
+      <div className="pt-1.5">
+        <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">Subjects & periods this week</div>
+        <ReadOnlyScheduleTable
+          headers={["Subject", "Periods/week"]}
+          rows={subjectSummary.map((s) => ({ id: s.subjectId, cells: [s.name, String(s.periodsPerWeek)] }))}
+          emptyMessage="No subjects scheduled yet."
+        />
+        {subjectSummary.length > 0 && <p className="mt-1 text-[11px] text-muted">Total: {totalPeriods} periods/week</p>}
+      </div>
     </div>
   );
 }
