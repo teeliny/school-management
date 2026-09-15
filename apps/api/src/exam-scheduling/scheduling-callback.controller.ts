@@ -77,6 +77,15 @@ function isClassLevelCategoryGroup(value: string): value is ClassLevelCategoryGr
   return value === ClassLevelCategoryGroup.JSS_SSS || value === ClassLevelCategoryGroup.CRECHE_NURSERY_PRIMARY;
 }
 
+// Prisma's interactive-transaction default (5000ms) is sized for a handful
+// of writes — a whole-school generation run can persist a couple hundred
+// rows in ONE transaction (each check needs to see the batch's own prior
+// inserts, so it can't split into independent per-row transactions the way
+// invoice.ts's batch does), each a network round-trip to Postgres, easily
+// exceeding that default. Same explicit-timeout precedent as
+// identity/students/student.ts's batch create.
+const TRANSACTION_OPTIONS = { timeout: 60_000 };
+
 /**
  * ARCHITECTURE.md §9: the solver calls back here when it finishes. Public —
  * no JWT guard — the scheduling-engine authenticates via the per-request
@@ -271,7 +280,7 @@ export class SchedulingCallbackController {
         });
         persisted += 1;
       }
-    });
+    }, TRANSACTION_OPTIONS);
     return { persisted, droppedDescriptions };
   }
 
@@ -326,7 +335,7 @@ export class SchedulingCallbackController {
         });
         persisted += 1;
       }
-    });
+    }, TRANSACTION_OPTIONS);
     return persisted;
   }
 
@@ -363,7 +372,7 @@ export class SchedulingCallbackController {
         });
         persisted += 1;
       }
-    });
+    }, TRANSACTION_OPTIONS);
     return persisted;
   }
 
@@ -407,7 +416,7 @@ export class SchedulingCallbackController {
         });
         persisted += 1;
       }
-    });
+    }, TRANSACTION_OPTIONS);
     return persisted;
   }
 }

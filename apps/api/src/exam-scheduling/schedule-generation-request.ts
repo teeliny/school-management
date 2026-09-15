@@ -539,6 +539,11 @@ export class ScheduleGenerationRequestService {
    * transaction, alongside the request's own reviewStatus.
    */
   async approve(id: string, userId: string) {
+    // Prisma's interactive-transaction default (5000ms) is sized for a
+    // handful of writes — approving a whole-school roster in one action
+    // (FR6's "one approval per roster, not per row") can re-check and flip
+    // a couple hundred rows here, each a network round-trip to Postgres —
+    // same reasoning as SchedulingCallbackController's TRANSACTION_OPTIONS.
     return this.prisma.$transaction(async (tx) => {
       const request = await tx.scheduleGenerationRequest.findUniqueOrThrow({ where: { id } });
       if (request.reviewStatus !== TimetableApprovalStatus.PENDING_REVIEW) {
@@ -575,7 +580,7 @@ export class ScheduleGenerationRequestService {
         where: { id },
         data: { reviewStatus: TimetableApprovalStatus.APPROVED, reviewedByUserId: userId, reviewedAt: approvedAt },
       });
-    });
+    }, { timeout: 60_000 });
   }
 
   /** Rejects every still-PENDING_REVIEW row this run produced, in one transaction. */

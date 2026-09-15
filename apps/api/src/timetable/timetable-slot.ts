@@ -81,7 +81,7 @@ export class TimetableSlotService {
     });
     for (const slot of staffSlots) {
       if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
-        await this.logStaffConflict(input, slot, client);
+        void this.logStaffConflict(input, slot);
         throw new BadRequestException(
           `Teacher is already booked from ${slot.startTime} to ${slot.endTime} on this day`,
         );
@@ -109,18 +109,22 @@ export class TimetableSlotService {
    * place that knows both sides of the overlap; the BadRequestException it
    * throws right after this only carries the existing slot's time). Never
    * lets a lookup failure block the actual conflict rejection — logging is
-   * strictly informational.
+   * strictly informational. Deliberately fire-and-forget (the caller doesn't
+   * await this) and always reads via `this.prisma`, never a caller's `tx` —
+   * a batch-insert conflict check runs inside an interactive transaction
+   * with its own tight wall-clock budget (assertNoConflicts's own doc
+   * comment), and this lookup has nothing to do with that transaction's
+   * correctness, so it must never add to its elapsed time.
    */
   private async logStaffConflict(
     input: ConflictCheckInput,
     existingSlot: { subjectId: string; classArmId: string; dayOfWeek: DayOfWeek; startTime: string; endTime: string },
-    client: PrismaService | Prisma.TransactionClient,
   ) {
     try {
       const [staff, newSubject, existingSubject] = await Promise.all([
-        client.staffProfile.findUnique({ where: { id: input.staffId }, include: { user: true } }),
-        input.subjectId ? client.subject.findUnique({ where: { id: input.subjectId } }) : null,
-        client.subject.findUnique({ where: { id: existingSlot.subjectId } }),
+        this.prisma.staffProfile.findUnique({ where: { id: input.staffId }, include: { user: true } }),
+        input.subjectId ? this.prisma.subject.findUnique({ where: { id: input.subjectId } }) : null,
+        this.prisma.subject.findUnique({ where: { id: existingSlot.subjectId } }),
       ]);
       const staffName = staff ? `${staff.user.firstName} ${staff.user.lastName}` : input.staffId;
       this.logger.warn(
