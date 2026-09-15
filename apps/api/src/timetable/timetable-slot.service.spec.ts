@@ -10,6 +10,9 @@ function buildPrismaMock() {
       create: jest.fn(),
       update: jest.fn(),
     },
+    classArm: {
+      findUnique: jest.fn(),
+    },
   };
 }
 
@@ -89,6 +92,48 @@ describe("TimetableSlotService — double-booking conflicts", () => {
         }),
       }),
     );
+  });
+
+  it("allows the same subject/teacher at an overlapping time in a sibling arm of the same class level (elective block)", async () => {
+    // The existing slot is for a DIFFERENT class arm ("arm-2") than the one
+    // being created ("arm-1" via buildDto's default), same subjectId.
+    prisma.timetableSlot.findMany.mockResolvedValueOnce([
+      { id: "existing-1", startTime: "08:00", endTime: "08:40", subjectId: "subj-1", classArmId: "arm-2" },
+    ]);
+    prisma.classArm.findUnique.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+      Promise.resolve({ classLevelId: id === "arm-1" ? "level-1" : "level-1" }),
+    );
+    prisma.timetableSlot.create.mockResolvedValue({ id: "new-slot" });
+
+    await service.create(buildDto({ startTime: "08:20", endTime: "09:00" }), "user-1");
+
+    expect(prisma.timetableSlot.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("still rejects the same subject/teacher at an overlapping time in a DIFFERENT class level", async () => {
+    prisma.timetableSlot.findMany.mockResolvedValueOnce([
+      { id: "existing-1", startTime: "08:00", endTime: "08:40", subjectId: "subj-1", classArmId: "arm-2" },
+    ]);
+    prisma.classArm.findUnique.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+      Promise.resolve({ classLevelId: id === "arm-1" ? "level-1" : "level-2" }),
+    );
+
+    await expect(service.create(buildDto({ startTime: "08:20", endTime: "09:00" }), "user-1")).rejects.toThrow(
+      /Teacher is already booked/,
+    );
+    expect(prisma.timetableSlot.create).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an overlapping slot for a DIFFERENT subject even with the same teacher (not an elective-block match)", async () => {
+    prisma.timetableSlot.findMany.mockResolvedValueOnce([
+      { id: "existing-1", startTime: "08:00", endTime: "08:40", subjectId: "subj-OTHER", classArmId: "arm-2" },
+    ]);
+
+    await expect(service.create(buildDto({ startTime: "08:20", endTime: "09:00" }), "user-1")).rejects.toThrow(
+      /Teacher is already booked/,
+    );
+    expect(prisma.classArm.findUnique).not.toHaveBeenCalled();
+    expect(prisma.timetableSlot.create).not.toHaveBeenCalled();
   });
 
   it("update() excludes the slot's own id from the conflict query", async () => {

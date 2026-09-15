@@ -84,6 +84,10 @@ interface StaffAssignmentItem {
   classArm: { name: string; classLevel: { name: string; category: ClassLevelCategory } } | null;
   subject: { id: string; name: string } | null;
 }
+interface StaffOption {
+  id: string;
+  user: { firstName: string; lastName: string };
+}
 
 // PRD §3.8/§5 footnote 5: same JSS/SSS vs. Creche/Nursery/Primary split
 // used server-side (categoryToGroup, @school/types) — reimplemented inline
@@ -115,6 +119,7 @@ function PlannerPageInner() {
   const [terms, setTerms] = useState<TermOption[]>([]);
   const [components, setComponents] = useState<AssessmentComponentOption[]>([]);
   const [myAssignments, setMyAssignments] = useState<StaffAssignmentItem[]>([]);
+  const [staffProfiles, setStaffProfiles] = useState<StaffOption[]>([]);
   const [wards, setWards] = useState<MyWard[]>([]);
   const [selectedWardId, setSelectedWardId] = useState<string | null>(null);
 
@@ -124,6 +129,11 @@ function PlannerPageInner() {
   const [ctAcademicSessionId, setCtAcademicSessionId] = useState("");
   const [ctTermId, setCtTermId] = useState("");
   const [ctRefreshKey, setCtRefreshKey] = useState(0);
+  // "All classes" view narrowed to one teacher's own periods — diagnostic
+  // tool for "why is this teacher unavailable at this slot" (the AllClassesTimetableView
+  // staffId prop already supported this filter; this is the picker that
+  // actually drives it).
+  const [ctStaffFilter, setCtStaffFilter] = useState("");
 
   // Exam Timetable tab state
   const [etViewMode, setEtViewMode] = useState<"single" | "all">("single");
@@ -149,6 +159,7 @@ function PlannerPageInner() {
       .then((all) => setComponents(all.filter((c) => c.type === "MID_TERM" || c.type === "EXAM")))
       .catch(() => setComponents([]));
     apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true }).then(setMyAssignments).catch(() => setMyAssignments([]));
+    apiFetch<StaffOption[]>("/staff-profiles", { auth: true }).then(setStaffProfiles).catch(() => setStaffProfiles([]));
     apiFetch<MyWard[]>("/students/wards", { auth: true }).then(setWards).catch(() => setWards([]));
   }, []);
 
@@ -457,6 +468,25 @@ function PlannerPageInner() {
 
               {ctViewMode === "all" ? (
                 <CollapsibleCard title="Whole-school timetable">
+                  <div className="mb-3 max-w-xs">
+                    <Label htmlFor="ct-staff-filter">View one teacher's periods only</Label>
+                    <Select value={ctStaffFilter || "ALL"} onValueChange={(v) => setCtStaffFilter(v === "ALL" ? "" : v)}>
+                      <SelectTrigger id="ct-staff-filter" className="mt-1">
+                        <SelectValue placeholder="All teachers" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">All teachers</SelectItem>
+                        {staffProfiles
+                          .slice()
+                          .sort((a, b) => `${a.user.firstName} ${a.user.lastName}`.localeCompare(`${b.user.firstName} ${b.user.lastName}`))
+                          .map((staff) => (
+                            <SelectItem key={staff.id} value={staff.id}>
+                              {staff.user.firstName} {staff.user.lastName}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <AllClassesTimetableView
                     academicSessionId={ctAcademicSessionId}
                     termId={ctTermId}
@@ -465,6 +495,7 @@ function PlannerPageInner() {
                       setCtViewMode("single");
                     }}
                     lockedGroup={scopedGroup ?? undefined}
+                    staffId={ctStaffFilter || undefined}
                   />
                 </CollapsibleCard>
               ) : (

@@ -13,7 +13,14 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { ClassLevelCategoryGroup, DayOfWeek, Prisma, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
+import {
+  AssignmentType,
+  ClassLevelCategoryGroup,
+  DayOfWeek,
+  Prisma,
+  TimetableApprovalStatus,
+  TimetableGeneratedBy,
+} from "@prisma/client";
 import { categoryToGroup, timeRangesOverlap } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -28,10 +35,14 @@ import { CreateTimetableSlotDto, UpdateTimetableSlotDto } from "./dto/timetable-
 
 interface ConflictCheckInput {
   staffId: string;
-  // Not used by the conflict check itself (only staffId/day/time/venue are)
-  // — carried through purely so a conflict's warn log can name what the
-  // REJECTED row actually was, since the caller (e.g. the scheduling
-  // callback's persist* methods) already has these on hand.
+  // Used two ways: (1) the elective-block exemption below — a same-subject
+  // collision against a sibling arm of the same class level is allowed, not
+  // flagged; (2) carried through to a conflict's warn log so it names what
+  // the REJECTED row actually was. Optional since not every caller has both
+  // on hand (e.g. ExamScheduleService's own reuse of the time-overlap
+  // primitives doesn't go through this method at all) — omitting either
+  // just falls back to the plain "any overlap for this staff = conflict"
+  // check, same as before this exemption existed.
   subjectId?: string;
   classArmId?: string;
   venue?: string | null;
@@ -80,12 +91,31 @@ export class TimetableSlotService {
       where: { ...shared, staffId: input.staffId },
     });
     for (const slot of staffSlots) {
-      if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
-        void this.logStaffConflict(input, slot);
-        throw new BadRequestException(
-          `Teacher is already booked from ${slot.startTime} to ${slot.endTime} on this day`,
-        );
+      if (!timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) continue;
+
+      // Elective-block exemption: the SAME subject, taught by the SAME
+      // staff member, already sitting in a sibling arm of the SAME class
+      // level, isn't a double-booking — it's the "this elective's teacher
+      // covers every arm's students at one shared slot" pattern (PRD's
+      // options-column concept), the same exemption the AI solver's own
+      // bundle logic already grants for a synced cross-arm elective
+      // (class_timetable.py's staff_keys dedupe). Only exempted when BOTH
+      // the subject AND the class level match — a different subject sharing
+      // this teacher (real double-booking, e.g. the Agric teacher accidentally
+      // picked for a Food & Nutrition slot) or a different class level (no
+      // shared elective relationship) still gets flagged as a real conflict.
+      if (input.subjectId && input.classArmId && slot.subjectId === input.subjectId && slot.classArmId !== input.classArmId) {
+        const [newArm, existingArm] = await Promise.all([
+          client.classArm.findUnique({ where: { id: input.classArmId }, select: { classLevelId: true } }),
+          client.classArm.findUnique({ where: { id: slot.classArmId }, select: { classLevelId: true } }),
+        ]);
+        if (newArm && existingArm && newArm.classLevelId === existingArm.classLevelId) continue;
       }
+
+      void this.logStaffConflict(input, slot);
+      throw new BadRequestException(
+        `Teacher is already booked from ${slot.startTime} to ${slot.endTime} on this day`,
+      );
     }
 
     if (input.venue) {
@@ -265,6 +295,33 @@ export class TimetableSlotService {
     return rows.map((row) => ({ ...row, classArm: withDisplayName(row.classArm) }));
   }
 
+  /**
+   * The manual "Add a slot" form's Teacher picker used to list every staff
+   * member in the school, unfiltered — nothing stopped picking a teacher who
+   * isn't even assigned to the subject being scheduled (the exact mistake
+   * that produced a "Teacher is already booked" conflict against that
+   * teacher's OWN unrelated class, not the subject being added at all).
+   * Scoped to active SUBJECT_TEACHER assignments for this subject, narrowed
+   * further to `classArmIds` when the caller has any selected (empty means
+   * "not narrowed yet" — every arm's assignment for this subject still
+   * counts, since the multi-arm-select flow may not have a selection until
+   * the user makes one).
+   */
+  async findEligibleTeachers(subjectId: string, classArmIds: string[], academicSessionId: string) {
+    const rows = await this.prisma.staffAssignment.findMany({
+      where: {
+        assignmentType: AssignmentType.SUBJECT_TEACHER,
+        subjectId,
+        academicSessionId,
+        isActive: true,
+        ...(classArmIds.length > 0 ? { classArmId: { in: classArmIds } } : {}),
+      },
+      include: { staff: { include: { user: { select: { firstName: true, lastName: true } } } } },
+      distinct: ["staffId"],
+    });
+    return rows.map((r) => ({ id: r.staffId, user: r.staff.user }));
+  }
+
   findOne(id: string) {
     return this.prisma.timetableSlot.findUniqueOrThrow({ where: { id } });
   }
@@ -308,6 +365,25 @@ export class TimetableSlotController {
       this.assertCanManage(user);
     }
     return this.service.findAll({ classArmId, staffId, academicSessionId, termId, approvalStatus }, user);
+  }
+
+  // Declared before ":id" — Nest matches routes in order, and ":id" would
+  // otherwise swallow this literal path as id="eligible-teachers". Gated by
+  // the same assertCanManage as create/update/delete (not a separate CASL
+  // Subject) so it's available to exactly whoever "Add a slot" already is —
+  // Registrar/Principal/Headteacher included, unlike GET /staff-assignments
+  // (manage StaffAssignment is Admin/Super-Admin only, which would 403 them).
+  @Get("eligible-teachers")
+  findEligibleTeachers(
+    @CurrentUser() user: RequestUser,
+    @Query("subjectId") subjectId?: string,
+    @Query("classArmId") classArmId?: string | string[],
+    @Query("academicSessionId") academicSessionId?: string,
+  ) {
+    this.assertCanManage(user);
+    if (!subjectId || !academicSessionId) return [];
+    const classArmIds = Array.isArray(classArmId) ? classArmId : classArmId ? [classArmId] : [];
+    return this.service.findEligibleTeachers(subjectId, classArmIds, academicSessionId);
   }
 
   @Get(":id")

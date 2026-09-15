@@ -76,7 +76,6 @@ export function TimetableSlotForm({
 
   useEffect(() => {
     apiFetch<SubjectOption[]>("/subjects", { auth: true }).then(setSubjects).catch(() => setSubjects([]));
-    apiFetch<StaffOption[]>("/staff-profiles", { auth: true }).then(setStaffOptions).catch(() => setStaffOptions([]));
   }, []);
 
   // Re-sync to the page's currently-viewed class whenever it changes —
@@ -84,6 +83,32 @@ export function TimetableSlotForm({
   useEffect(() => {
     setClassArmIds(defaultClassArmId ? [defaultClassArmId] : []);
   }, [defaultClassArmId]);
+
+  // Scoped to whoever actually holds an active SUBJECT_TEACHER assignment
+  // for the chosen subject (narrowed further to the selected class arm(s),
+  // when any are picked) — the list used to be every staff member in the
+  // school, unfiltered, which is exactly how a wrong-subject teacher (e.g.
+  // the Agric teacher, picked instead of the Food & Nutrition teacher) got
+  // selected and produced a confusing "already booked" conflict against
+  // their OWN unrelated class rather than anything to do with this subject.
+  useEffect(() => {
+    if (!subjectId || !academicSessionId) {
+      setStaffOptions([]);
+      return;
+    }
+    const qs = new URLSearchParams({ subjectId, academicSessionId });
+    for (const armId of classArmIds) qs.append("classArmId", armId);
+    apiFetch<StaffOption[]>(`/timetable-slots/eligible-teachers?${qs.toString()}`, { auth: true })
+      .then(setStaffOptions)
+      .catch(() => setStaffOptions([]));
+  }, [subjectId, academicSessionId, classArmIds]);
+
+  // The previously-picked teacher may no longer be eligible once the
+  // subject or class arm selection changes underneath it — clear rather
+  // than silently submit a stale choice.
+  useEffect(() => {
+    setStaffId("");
+  }, [subjectId, classArmIds]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -178,9 +203,9 @@ export function TimetableSlotForm({
 
       <div>
         <Label htmlFor="ts-staff">Teacher</Label>
-        <Select value={staffId} onValueChange={setStaffId}>
+        <Select value={staffId} onValueChange={setStaffId} disabled={!subjectId}>
           <SelectTrigger id="ts-staff" className="mt-1">
-            <SelectValue placeholder="Select teacher" />
+            <SelectValue placeholder={!subjectId ? "Select a subject first" : "Select teacher"} />
           </SelectTrigger>
           <SelectContent>
             {staffOptions.map((staff) => (
@@ -190,6 +215,12 @@ export function TimetableSlotForm({
             ))}
           </SelectContent>
         </Select>
+        {subjectId && staffOptions.length === 0 && (
+          <p className="mt-1 text-[11px] text-danger">
+            No teacher has an active assignment for this subject{classArmIds.length > 0 ? " in the selected class(es)" : ""} yet —
+            assign one under Staff Assignments first.
+          </p>
+        )}
       </div>
 
       <div>
