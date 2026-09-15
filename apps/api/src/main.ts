@@ -3,6 +3,7 @@
 import "./instrument";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
+import { NestExpressApplication } from "@nestjs/platform-express";
 import { ConfigService } from "@nestjs/config";
 import { ValidationPipe } from "@nestjs/common";
 import { Logger } from "nestjs-pino";
@@ -18,7 +19,13 @@ async function bootstrap() {
   // object (a re-serialized body can have different whitespace/key
   // ordering, which silently breaks signature verification). Doesn't affect
   // any other route.
-  const app = await NestFactory.create(AppModule, { rawBody: true, bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true, bufferLogs: true });
+  // Default express body-parser limit is 100kb — too small for the
+  // scheduling-engine's callback POST, whose `generatedRows` payload for a
+  // full JSS/SSS class timetable run can run into several MB. Raise it
+  // globally rather than per-route (Nest has no per-controller override).
+  app.useBodyParser("json", { limit: "20mb" });
+  app.useBodyParser("urlencoded", { limit: "20mb", extended: true });
   // Routes Nest's own bootstrap/internal logs (and every existing
   // `new Logger(SomeClass.name)` call site) through pino, transparently.
   app.useLogger(app.get(Logger));

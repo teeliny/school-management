@@ -256,7 +256,13 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       const staffBlockedPeriods: Record<string, Record<string, number[]>> = {};
 
       for (const arm of arms) {
-        const subjects = await this.resolveSubjectsForClassArm(arm.classLevel.category, arm.id, arm.classLevelId, term.academicSessionId);
+        const subjects = await this.resolveSubjectsForClassArm(
+          arm.classLevel.category,
+          arm.id,
+          arm.classLevelId,
+          term.academicSessionId,
+          term.id,
+        );
         const armSlots = existingSlots.filter((s) => s.classArmId === arm.id);
         classArmPayloads.push({
           classArmId: arm.id,
@@ -363,7 +369,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const subjectPayloadsForLevel = async (classLevelId: string): Promise<ExamSubjectPayload[]> => {
       let payloads = subjectPayloadsByLevel.get(classLevelId);
       if (!payloads) {
-        const requiredSubjects = await this.resolveRequiredSubjects(component.classLevelCategory, classLevelId);
+        const requiredSubjects = await this.resolveRequiredSubjects(component.classLevelCategory, component.termId, classLevelId);
         payloads = requiredSubjects.map((s) => ({
           subjectId: s.id,
           requiresCalculation: s.requiresCalculation,
@@ -855,17 +861,6 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * for scheduling must flatten group subjects, same pattern as
    * report-card.processor.ts's scoreSubjectIds flatMap. Each flattened
    * subject inherits its ClassSubject row's `periodsPerWeek` verbatim (no
-   * per-child split modeled yet — a school with a group of many children
-   * should tune periodsPerWeek down on that ClassSubject row accordingly).
-   * A subject with no active SUBJECT_TEACHER for this exact class arm is
-   * skipped — the solver has no one to assign it to.
-   */
-  /**
-   * PRD §3.3/CLAUDE.md: a `Subject` with `isGroup=true` is never itself
-   * assignable — only its `childSubjects` are — so any subject list built
-   * for scheduling must flatten group subjects, same pattern as
-   * report-card.processor.ts's scoreSubjectIds flatMap. Each flattened
-   * subject inherits its ClassSubject row's `periodsPerWeek` verbatim (no
    * per-child split modeled yet). Shared between CLASS_TIMETABLE (which
    * further resolves a teacher per class arm on top) and EXAM_TIMETABLE
    * (which needs neither `periodsPerWeek` nor a teacher — a subject is
@@ -874,39 +869,66 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * ClassLevel (e.g. NURSERY covers both "Nursery 1" and "Nursery 2") —
    * passed by both callers below so a subject explicitly disabled for one
    * ClassLevel (ClassSubjectLevelStatus) is never scheduled/examined for it,
-   * even though it's still required for the rest of the category.
+   * even though it's still required for the rest of the category. termId is
+   * always passed (both scopes always solve against one concrete term) so a
+   * subject explicitly disabled for this term only (ClassSubjectTermStatus —
+   * either the whole classSubject, or one child of a group) is excluded the
+   * same way — this was the missing check score-entry/enrollment already
+   * had (ClassSubjectTermStatusService.assertActiveForTerm) but this
+   * resolver didn't, so a per-term-disabled subject still got scheduled/
+   * examined and warned "no active SUBJECT_TEACHER" once no teacher was
+   * bothered to be assigned for the term it's disabled in.
    */
-  private async resolveRequiredSubjects(category: ClassLevelCategory, classLevelId?: string): Promise<RequiredSubject[]> {
+  private async resolveRequiredSubjects(
+    category: ClassLevelCategory,
+    termId: string,
+    classLevelId?: string,
+  ): Promise<RequiredSubject[]> {
     const classSubjects = await this.prisma.classSubject.findMany({
       where: {
         classLevelCategory: category,
         ...(classLevelId ? { levelStatuses: { none: { classLevelId, isActive: false } } } : {}),
       },
-      include: { subject: { include: { childSubjects: true } }, childPeriodOverrides: true },
+      include: {
+        subject: { include: { childSubjects: true } },
+        childPeriodOverrides: true,
+        // Only the disabled rows for this exact term — ClassSubjectTermStatus.subjectId
+        // is either the classSubject's own subject (disables the whole
+        // assignment, group or not) or one of a group's childSubjects
+        // (disables just that child) — see schema.prisma's comment on the model.
+        termStatuses: { where: { termId, isActive: false } },
+      },
     });
 
-    return classSubjects.flatMap((cs) =>
-      cs.subject.isGroup
-        ? cs.subject.childSubjects.map((child) => ({
-            id: child.id,
-            requiresCalculation: child.requiresCalculation,
-            // A child inherits the parent ClassSubject row's periodsPerWeek
-            // unless it has its own ClassSubjectChildPeriods override (e.g.
-            // Basic Science and Technology's Physical and Health Education
-            // running 2/week while its siblings run 3) — see that model's
-            // schema.prisma comment for the sparse-override reasoning.
-            periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
+    return classSubjects.flatMap((cs) => {
+      if (cs.termStatuses.some((s) => s.subjectId === cs.subjectId)) return [];
+
+      if (!cs.subject.isGroup) {
+        return [
+          {
+            id: cs.subject.id,
+            requiresCalculation: cs.subject.requiresCalculation,
+            periodsPerWeek: cs.periodsPerWeek,
             concurrencyGroupId: cs.concurrencyGroupId,
-          }))
-        : [
-            {
-              id: cs.subject.id,
-              requiresCalculation: cs.subject.requiresCalculation,
-              periodsPerWeek: cs.periodsPerWeek,
-              concurrencyGroupId: cs.concurrencyGroupId,
-            },
-          ],
-    );
+          },
+        ];
+      }
+
+      const disabledChildIds = new Set(cs.termStatuses.map((s) => s.subjectId));
+      return cs.subject.childSubjects
+        .filter((child) => !disabledChildIds.has(child.id))
+        .map((child) => ({
+          id: child.id,
+          requiresCalculation: child.requiresCalculation,
+          // A child inherits the parent ClassSubject row's periodsPerWeek
+          // unless it has its own ClassSubjectChildPeriods override (e.g.
+          // Basic Science and Technology's Physical and Health Education
+          // running 2/week while its siblings run 3) — see that model's
+          // schema.prisma comment for the sparse-override reasoning.
+          periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
+          concurrencyGroupId: cs.concurrencyGroupId,
+        }));
+    });
   }
 
   private async resolveSubjectsForClassArm(
@@ -914,8 +936,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     classArmId: string,
     classLevelId: string,
     academicSessionId: string,
+    termId: string,
   ): Promise<ResolvedSubject[]> {
-    const candidates = await this.resolveRequiredSubjects(category, classLevelId);
+    const candidates = await this.resolveRequiredSubjects(category, termId, classLevelId);
 
     const resolved: ResolvedSubject[] = [];
     for (const subject of candidates) {
