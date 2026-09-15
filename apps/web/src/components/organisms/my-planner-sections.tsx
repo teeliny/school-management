@@ -135,19 +135,29 @@ export function MySubjectTimetableSection({
 
   return (
     <CollapsibleCard title="My teaching timetable">
-      <Select value={selectedClassArmId} onValueChange={setSelectedClassArmId}>
-        <SelectTrigger className="mb-3 max-w-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_CLASSES}>All my classes</SelectItem>
-          {classOptions.map((o) => (
-            <SelectItem key={o.classArmId} value={o.classArmId}>
-              {o.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <Select value={selectedClassArmId} onValueChange={setSelectedClassArmId}>
+          <SelectTrigger className="max-w-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_CLASSES}>All my classes</SelectItem>
+            {classOptions.map((o) => (
+              <SelectItem key={o.classArmId} value={o.classArmId}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <a
+          href={`/api/proxy/timetable-slots/pdf?staffId=${staffId}&academicSessionId=${academicSessionId}&termId=${termId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex-none text-[11.5px] text-primary underline"
+        >
+          Download PDF
+        </a>
+      </div>
       {selected ? (
         <PeriodWeekGrid slots={slots} group={selected.group} />
       ) : (

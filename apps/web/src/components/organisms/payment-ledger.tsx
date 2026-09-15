@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Wallet } from "lucide-react";
+import { Wallet, Printer } from "lucide-react";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
+import { Checkbox } from "../atoms/checkbox";
 import { Label } from "../atoms/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { SkeletonTable } from "../molecules/skeleton-table";
@@ -54,6 +55,10 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
   const [page, setPage] = useState(0);
   const [status, setStatus] = useState(ALL_STATUSES);
   const [error, setError] = useState<string | null>(null);
+  // Kept as ids (not cleared on page/status change) so a Bursar can pick
+  // receipts from several pages before printing them together — the
+  // selection is only ever cleared explicitly.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const params = new URLSearchParams({ skip: String(page * PAGE_SIZE), take: String(PAGE_SIZE) });
@@ -71,6 +76,38 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
 
   const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const to = Math.min(total, (page + 1) * PAGE_SIZE);
+
+  // Only a SUCCESSFUL payment has a receipt to print — everything else has
+  // no signable slip to produce, so it's excluded from selection entirely
+  // rather than shown as a checkbox that would just fail server-side.
+  const selectableOnPage = payments.filter((p) => p.status === "SUCCESSFUL").map((p) => p.id);
+  const allOnPageSelected = selectableOnPage.length > 0 && selectableOnPage.every((id) => selectedIds.has(id));
+
+  function toggleOne(id: string, checked: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of selectableOnPage) {
+        if (allOnPageSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function printSelected() {
+    if (selectedIds.size === 0) return;
+    const params = new URLSearchParams({ paymentIds: [...selectedIds].join(",") });
+    window.open(`/api/proxy/payments/receipts/bulk-print?${params.toString()}`, "_blank");
+  }
 
   return (
     <div className="space-y-3">
@@ -103,6 +140,16 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
         <table className="w-full text-left text-[12.5px]">
           <thead>
             <tr className="border-b border-border text-muted">
+              {canManageFees && (
+                <th className="w-8 py-2 pr-2">
+                  <Checkbox
+                    checked={allOnPageSelected}
+                    disabled={selectableOnPage.length === 0}
+                    onCheckedChange={toggleAllOnPage}
+                    aria-label="Select all SUCCESSFUL payments on this page"
+                  />
+                </th>
+              )}
               {canManageFees && <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Student</th>}
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Method</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Amount</th>
@@ -113,13 +160,24 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
           <tbody>
             {payments.length === 0 && (
               <tr>
-                <td colSpan={canManageFees ? 5 : 4}>
+                <td colSpan={canManageFees ? 6 : 4}>
                   <EmptyState icon={Wallet} title="No payments to show" />
                 </td>
               </tr>
             )}
             {payments.map((payment) => (
               <tr key={payment.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
+                {canManageFees && (
+                  <td className="py-2.5 pr-2">
+                    {payment.status === "SUCCESSFUL" && (
+                      <Checkbox
+                        checked={selectedIds.has(payment.id)}
+                        onCheckedChange={(checked) => toggleOne(payment.id, checked === true)}
+                        aria-label={`Select receipt for ${payment.invoice.student.user.firstName} ${payment.invoice.student.user.lastName}`}
+                      />
+                    )}
+                  </td>
+                )}
                 {canManageFees && (
                   <td className="py-2.5 pr-4 font-medium">
                     {payment.invoice.student.user.firstName} {payment.invoice.student.user.lastName}{" "}
@@ -151,6 +209,23 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
           </Button>
         </div>
       </div>
+
+      {canManageFees && selectedIds.size > 0 && (
+        <div className="flex items-center justify-between rounded-lg border border-border bg-card-inset px-3 py-2 text-[12.5px]">
+          <span>
+            {selectedIds.size} receipt{selectedIds.size === 1 ? "" : "s"} selected — 3 print per A4 sheet, each with a signature line.
+          </span>
+          <div className="flex items-center gap-1.5">
+            <Button type="button" variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>
+              Clear
+            </Button>
+            <Button type="button" variant="primary" size="sm" onClick={printSelected}>
+              <Printer className="mr-1.5 h-3.5 w-3.5" />
+              Print receipts
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

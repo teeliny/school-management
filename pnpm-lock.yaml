@@ -117,6 +117,9 @@ importers:
       passport-jwt:
         specifier: ^4.0.1
         version: 4.0.1
+      pdfkit:
+        specifier: ^0.19.1
+        version: 0.19.1
       pino-http:
         specifier: ^11.0.0
         version: 11.0.0
@@ -166,6 +169,9 @@ importers:
       '@types/passport-jwt':
         specifier: ^4.0.1
         version: 4.0.1
+      '@types/pdfkit':
+        specifier: ^0.17.6
+        version: 0.17.6
       eslint:
         specifier: ^9.17.0
         version: 9.39.5(jiti@1.21.7)(supports-color@8.1.1)

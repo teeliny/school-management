@@ -1,7 +1,7 @@
 import { Inject, Logger, OnModuleInit } from "@nestjs/common";
 import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job, Queue } from "bullmq";
-import { PaymentGatewayProvider, PaymentMethod, PaymentStatus } from "@prisma/client";
+import { PaymentGatewayProvider, PaymentMethod, PaymentStatus, Prisma } from "@prisma/client";
 import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
 import {
   GatewayTransactionNotFoundError,
@@ -119,6 +119,31 @@ export class PaymentReconciliationProcessor extends WorkerHost implements OnModu
     throw new Error(`No adapter registered for provider ${provider}`);
   }
 
+  /**
+   * Duplicate of apps/api's PaymentService.nextReceiptSerial — same cross-
+   * process boundary reasoning as this file's own header comment (apps/worker
+   * can't import apps/api's providers). Atomic per-AcademicSession counter
+   * backing Receipt.serialNumber; see PaymentService.nextReceiptSerial's own
+   * comment for why a single INSERT ... ON CONFLICT DO UPDATE ... RETURNING
+   * is race-safe where a read-then-increment wouldn't be.
+   */
+  private async nextReceiptSerial(
+    tx: Prisma.TransactionClient,
+    academicSessionId: string,
+    academicSessionName: string,
+  ): Promise<{ sequenceNumber: number; serialNumber: string }> {
+    const [row] = await tx.$queryRaw<Array<{ lastNumber: number }>>`
+      INSERT INTO "receipt_sequences" ("academicSessionId", "lastNumber")
+      VALUES (${academicSessionId}, 1)
+      ON CONFLICT ("academicSessionId")
+      DO UPDATE SET "lastNumber" = "receipt_sequences"."lastNumber" + 1
+      RETURNING "lastNumber"
+    `;
+    const sequenceNumber = row!.lastNumber;
+    const serialNumber = `${academicSessionName}-${String(sequenceNumber).padStart(5, "0")}`;
+    return { sequenceNumber, serialNumber };
+  }
+
   private async resolveGatewayOutcome(
     invoiceId: string,
     provider: PaymentGatewayProvider,
@@ -133,7 +158,7 @@ export class PaymentReconciliationProcessor extends WorkerHost implements OnModu
 
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: invoiceId },
-      include: { lineItems: true, payments: true },
+      include: { lineItems: true, payments: true, term: { include: { academicSession: true } } },
     });
 
     const payment = invoice.payments.find((p) => p.status === PaymentStatus.PENDING && p.gatewayProvider === provider);
@@ -167,10 +192,14 @@ export class PaymentReconciliationProcessor extends WorkerHost implements OnModu
 
       await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
 
+      const { sequenceNumber, serialNumber } = await this.nextReceiptSerial(tx, invoice.term.academicSessionId, invoice.term.academicSession.name);
       const receipt = await tx.receipt.create({
         data: {
           paymentId: updatedPayment.id,
           receiptNumber: `RCT-${updatedPayment.id.slice(0, 8).toUpperCase()}`,
+          academicSessionId: invoice.term.academicSessionId,
+          sequenceNumber,
+          serialNumber,
           issuedAt: paidAt,
         },
       });

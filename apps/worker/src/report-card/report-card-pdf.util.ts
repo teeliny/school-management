@@ -37,6 +37,36 @@ const MUTED = "#6b7280";
 const BORDER = "#d8dce3";
 const BAND = "#f4f5f7";
 
+/**
+ * Faint, diagonal, full-page school-name watermark, drawn first so every
+ * later element paints over it, and re-drawn on every subsequent page via
+ * "pageAdded" (a full-term report can span multiple pages, see the
+ * `doc.addPage()` calls below). Same treatment on every PDF this system
+ * produces — see apps/api/timetable-pdf.util.ts and this app's own
+ * receipt-pdf.util.ts (duplicated, not shared, same as this file's own color
+ * constants above — no cross-app PDF-rendering module exists).
+ */
+function drawWatermark(doc: PDFKit.PDFDocument, schoolName: string): void {
+  doc.save();
+  doc.rotate(-45, { origin: [doc.page.width / 2, doc.page.height / 2] });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(54)
+    .fillColor(NAVY)
+    .opacity(0.06)
+    .text(schoolName.toUpperCase(), 0, doc.page.height / 2 - 30, { width: doc.page.width, align: "center" });
+  doc.opacity(1);
+  doc.restore();
+  // save()/restore() only cover the PDF graphics state (transform, color,
+  // line style) — pdfkit's own text-flow cursor (doc.x/doc.y) lives outside
+  // that stack, so the watermark's rotated-coordinate text() call left it at
+  // whatever nonsensical position that rotated draw computed. renderHeader
+  // reads doc.y as its own starting point, so reset explicitly rather than
+  // let that leak through as a huge blank gap before the real content.
+  doc.x = doc.page.margins.left;
+  doc.y = doc.page.margins.top;
+}
+
 function contentWidth(doc: PDFKit.PDFDocument): number {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
 }
@@ -336,6 +366,8 @@ export function renderMidTermPdf(snapshot: MidTermSnapshot, meta: ReportCardMeta
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
+    doc.on("pageAdded", () => drawWatermark(doc, meta.schoolName));
+    drawWatermark(doc, meta.schoolName);
 
     renderHeader(doc, meta, "Mid-Term Report");
 
@@ -397,6 +429,8 @@ export function renderFullTermPdf(content: FullTermContent, meta: ReportCardMeta
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
+    doc.on("pageAdded", () => drawWatermark(doc, meta.schoolName));
+    drawWatermark(doc, meta.schoolName);
 
     renderHeader(doc, meta, "Term Report Card");
 

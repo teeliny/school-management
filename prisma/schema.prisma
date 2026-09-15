@@ -180,6 +180,8 @@ model AcademicSession {
   schoolHolidays            SchoolHoliday[]
   schoolEvents              SchoolEvent[]
   feeStructures             FeeStructure[]
+  receipts                  Receipt[]
+  receiptSequence           ReceiptSequence?
 
   @@map("academic_sessions")
 }
@@ -1852,13 +1854,53 @@ model Receipt {
   payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   // Derived from the Payment's own UUID (`RCT-{payment.id.slice(0,8)}`,
   // uppercased) — globally unique with no counting/sequence query and no
-  // race window, unlike a running count would have.
+  // race window, unlike a running count would have. Kept as-is; serialNumber
+  // below is an additive, audit-facing complement, not a replacement.
   receiptNumber String   @unique
+  // Audit/accounting-facing complement to receiptNumber: a per-
+  // AcademicSession sequential serial (e.g. "2025/2026-00001"), so a
+  // Bursar/auditor can spot a missing receipt from a session's run — the
+  // UUID-derived receiptNumber above can't support that (no ordering). Backed
+  // by ReceiptSequence, incremented atomically per session (see
+  // PaymentService.nextReceiptSerial). Null on receipts issued before this
+  // field existed — deliberately not backfilled, since fabricating an order
+  // for old rows would misrepresent an audit trail rather than describe one.
+  academicSessionId String?
+  academicSession   AcademicSession? @relation(fields: [academicSessionId], references: [id])
+  sequenceNumber    Int?
+  serialNumber      String?  @unique
   // Null until the async render job (apps/worker) completes.
   pdfUrl        String?
   issuedAt      DateTime @default(now())
+  // Set the first time this receipt is produced via the Bursar's
+  // signature-copy bulk-print flow (PaymentService.buildBulkReceiptsPdf) —
+  // null means it has never been through that flow. printCount tracks how
+  // many times total, so a second-or-later print of the same receipt is
+  // rendered stamped "DUPLICATE COPY" rather than looking like a fresh
+  // original. Deliberately NOT touched by the individual auto-generated PDF
+  // (pdfUrl above) — that's a digital record link, not a physical print the
+  // Bursar produces and signs.
+  printedAt     DateTime?
+  printCount    Int      @default(0)
 
+  @@index([academicSessionId, sequenceNumber])
   @@map("receipts")
+}
+
+/**
+ * Backing counter for Receipt.serialNumber — one row per AcademicSession.
+ * Incremented via a single `INSERT ... ON CONFLICT DO UPDATE ... RETURNING`
+ * (PaymentService.nextReceiptSerial), which Postgres executes atomically
+ * under row-level locking, so two payments settling in the same session at
+ * the same instant can never be handed the same number (a plain read-then-
+ * increment would have exactly that race).
+ */
+model ReceiptSequence {
+  academicSessionId String          @id
+  academicSession   AcademicSession @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  lastNumber        Int             @default(0)
+
+  @@map("receipt_sequences")
 }
 
 enum PaymentGatewayEnvironment {

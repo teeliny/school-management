@@ -26,7 +26,7 @@ function buildInvoice(
   return {
     id: "invoice-1",
     studentId: "student-1",
-    term: { startDate: CURRENT_TERM_START_DATE },
+    term: { startDate: CURRENT_TERM_START_DATE, academicSessionId: "session-1", academicSession: { name: "2025/2026" } },
     totalAmount: 5000,
     dueDate: FUTURE_DUE_DATE,
     lineItems: [],
@@ -45,6 +45,7 @@ function buildPrismaMock() {
     payment: { create: jest.fn().mockResolvedValue({ id: "payment-abcdef12" }), update: jest.fn().mockResolvedValue({ id: "payment-abcdef12" }) },
     invoice: { update: jest.fn().mockResolvedValue({}) },
     receipt: { create: jest.fn().mockResolvedValue({ id: "receipt-1" }) },
+    $queryRaw: jest.fn().mockResolvedValue([{ lastNumber: 1 }]),
   };
   return {
     invoice: {
@@ -63,6 +64,15 @@ function buildPrismaMock() {
       update: jest.fn().mockResolvedValue({}),
     },
     parentProfile: { findUnique: jest.fn() },
+    receipt: { update: jest.fn().mockResolvedValue({ printCount: 1 }) },
+    schoolProfile: {
+      findFirstOrThrow: jest.fn().mockResolvedValue({
+        name: "Mercylag Schools",
+        address: "12 Unity Road, Lagos",
+        contactEmail: "info@mercylag.example",
+        contactPhone: "+234 800 000 0000",
+      }),
+    },
     user: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "user-1", email: "payer@example.com", firstName: "Jane", lastName: "Doe" }) },
     $transaction: jest.fn((arg: unknown) => {
       if (typeof arg === "function") return (arg as (tx: typeof tx) => unknown)(tx);
@@ -717,5 +727,86 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
 
     await expect(service.rejectManualBankTransfer("payment-abcdef12", "super-1", "reason")).rejects.toThrow(/PENDING_APPROVAL/);
     expect(prisma.payment.update).not.toHaveBeenCalled();
+  });
+});
+
+function buildBulkPayment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "payment-1",
+    amount: 3000,
+    method: "CASH",
+    paidAt: new Date("2026-01-10"),
+    recordedByStaff: { user: { firstName: "Tunde", lastName: "Bello" } },
+    receipt: {
+      id: "receipt-1",
+      receiptNumber: "RCT-ABCDEF12",
+      serialNumber: "2025/2026-00001",
+      issuedAt: new Date("2026-01-10"),
+      printedAt: null,
+    },
+    invoice: {
+      totalAmount: 5000,
+      lineItems: [],
+      payments: [{ status: "SUCCESSFUL", amount: 3000 }],
+      term: { name: "First Term" },
+      student: { admissionNumber: "ADM001", user: { firstName: "Ada", lastName: "Lovelace" } },
+    },
+    ...overrides,
+  };
+}
+
+describe("PaymentService.buildBulkReceiptsPdf (Bursar bulk print-and-sign flow)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let service: PaymentService;
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    ({ service } = buildService(prisma, buildQueueMock()));
+  });
+
+  it("renders only payments that resolved to a SUCCESSFUL payment with a receipt, in the caller's own selection order", async () => {
+    prisma.payment.findMany.mockResolvedValue([
+      buildBulkPayment({ id: "payment-2" }),
+      buildBulkPayment({ id: "payment-1" }),
+    ]);
+
+    const result = await service.buildBulkReceiptsPdf(["payment-1", "payment-missing", "payment-2"]);
+
+    expect(prisma.payment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["payment-1", "payment-missing", "payment-2"] }, status: "SUCCESSFUL" } }),
+    );
+    // Two receipts marked printed, in the requested order (payment-1 before
+    // payment-2) even though findMany returned them the other way round —
+    // "payment-missing" simply isn't in the findMany result and is dropped.
+    expect(prisma.receipt.update).toHaveBeenCalledTimes(2);
+    expect(prisma.receipt.update.mock.calls[0]![0]).toMatchObject({ where: { id: "receipt-1" } });
+    expect(Buffer.isBuffer(result)).toBe(true);
+  });
+
+  it("marks a never-before-printed receipt's printedAt for the first time (not a reprint)", async () => {
+    prisma.payment.findMany.mockResolvedValue([buildBulkPayment()]);
+    prisma.receipt.update.mockResolvedValue({ printCount: 1 });
+
+    await service.buildBulkReceiptsPdf(["payment-1"]);
+
+    expect(prisma.receipt.update).toHaveBeenCalledWith({
+      where: { id: "receipt-1" },
+      data: { printedAt: expect.any(Date), printCount: { increment: 1 } },
+    });
+  });
+
+  it("keeps the original printedAt (does not overwrite it) when a receipt is printed again — this is the reprint/duplicate case", async () => {
+    const originalPrintedAt = new Date("2026-01-11");
+    prisma.payment.findMany.mockResolvedValue([
+      buildBulkPayment({ receipt: { id: "receipt-1", receiptNumber: "RCT-ABCDEF12", serialNumber: "2025/2026-00001", issuedAt: new Date("2026-01-10"), printedAt: originalPrintedAt } }),
+    ]);
+    prisma.receipt.update.mockResolvedValue({ printCount: 2 });
+
+    await service.buildBulkReceiptsPdf(["payment-1"]);
+
+    expect(prisma.receipt.update).toHaveBeenCalledWith({
+      where: { id: "receipt-1" },
+      data: { printedAt: originalPrintedAt, printCount: { increment: 1 } },
+    });
   });
 });

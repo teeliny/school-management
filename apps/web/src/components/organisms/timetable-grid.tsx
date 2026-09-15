@@ -256,6 +256,16 @@ export function TimetableGrid({
 
   return (
     <div className="space-y-2">
+      <div className="flex items-center justify-end">
+        <a
+          href={`/api/proxy/timetable-slots/pdf?classArmId=${classArmId}&academicSessionId=${academicSessionId}&termId=${termId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11.5px] text-primary underline"
+        >
+          Download PDF
+        </a>
+      </div>
       {actionError && <p className="text-[12.5px] text-danger">{actionError}</p>}
       <DndContext onDragEnd={handleDragEnd}>
         <div className="overflow-auto">

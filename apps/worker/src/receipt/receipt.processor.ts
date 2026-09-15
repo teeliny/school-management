@@ -62,6 +62,7 @@ export class ReceiptProcessor extends WorkerHost {
 
     const pdfBuffer = await renderReceiptPdf({
       receiptNumber: receipt.receiptNumber,
+      serialNumber: receipt.serialNumber,
       issuedAt: receipt.issuedAt,
       schoolName: school.name,
       schoolAddress: school.address,

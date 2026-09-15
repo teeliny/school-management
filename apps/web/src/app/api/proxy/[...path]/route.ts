@@ -32,12 +32,17 @@ function forwardMultipart(method: string, path: string[], search: string, formDa
   });
 }
 
+// Read as bytes, not text — a text() round-trip mangles a binary response
+// (e.g. the timetable PDF download), and passing an ArrayBuffer through to
+// NextResponse works identically to a string for the existing JSON/empty
+// cases, so this is a safe change for every caller, not just the PDF one.
 async function toResponse(apiRes: Response): Promise<NextResponse> {
-  const text = await apiRes.text();
-  return new NextResponse(apiRes.status === 204 || text === "" ? null : text, {
-    status: apiRes.status,
-    headers: { "Content-Type": apiRes.headers.get("Content-Type") ?? "application/json" },
-  });
+  if (apiRes.status === 204) return new NextResponse(null, { status: 204 });
+  const bytes = await apiRes.arrayBuffer();
+  const headers: Record<string, string> = { "Content-Type": apiRes.headers.get("Content-Type") ?? "application/json" };
+  const disposition = apiRes.headers.get("Content-Disposition");
+  if (disposition) headers["Content-Disposition"] = disposition;
+  return new NextResponse(bytes.byteLength === 0 ? null : bytes, { status: apiRes.status, headers });
 }
 
 async function handle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {

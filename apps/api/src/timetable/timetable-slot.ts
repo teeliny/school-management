@@ -11,6 +11,7 @@ import {
   Patch,
   Post,
   Query,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 import {
@@ -32,6 +33,7 @@ import { withDisplayName } from "../academic-structure/class-arm";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { Audited } from "../audit/audited.decorator";
 import { CreateTimetableSlotDto, UpdateTimetableSlotDto } from "./dto/timetable-slot.dto";
+import { renderTimetablePdf, type TimetablePdfSlot } from "./timetable-pdf.util";
 
 interface ConflictCheckInput {
   staffId: string;
@@ -329,6 +331,59 @@ export class TimetableSlotService {
   remove(id: string) {
     return this.prisma.timetableSlot.delete({ where: { id } });
   }
+
+  /**
+   * A4-landscape PDF of the same rows `findAll` would show on screen —
+   * reuses that method verbatim (including its parent/category-group
+   * scoping) so a download never exposes anything the requester couldn't
+   * already see in the grid. `classArmId` set renders that one class's
+   * timetable (each cell: subject + teacher); `staffId` set with no
+   * `classArmId` renders that teacher's own personal timetable across every
+   * class they teach (each cell: subject + class arm) — the two only ever
+   * differ in which name goes on the second line of each cell, since the
+   * first line (subject) is the same in both.
+   */
+  async buildPdf(
+    filters: { classArmId?: string; staffId?: string; academicSessionId: string; termId: string },
+    user?: RequestUser,
+  ): Promise<Buffer> {
+    const rows = await this.findAll(filters, user);
+    const term = await this.prisma.term.findUniqueOrThrow({
+      where: { id: filters.termId },
+      include: { academicSession: true },
+    });
+    const school = await this.prisma.schoolProfile.findFirstOrThrow();
+
+    let title = "Timetable";
+    if (filters.classArmId) {
+      const arm = await this.prisma.classArm.findUnique({
+        where: { id: filters.classArmId },
+        include: { classLevel: { select: { name: true } } },
+      });
+      if (arm) title = withDisplayName(arm).displayName;
+    } else if (filters.staffId) {
+      const staff = await this.prisma.staffProfile.findUnique({ where: { id: filters.staffId }, include: { user: true } });
+      if (staff) title = `${staff.user.firstName} ${staff.user.lastName} — Personal Timetable`;
+    }
+
+    const subtitle = `${term.name}, ${term.academicSession.name}`;
+    const slots: TimetablePdfSlot[] = rows.map((row) => ({
+      dayOfWeek: row.dayOfWeek,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      // Full subject name, not the internal code (SSS_GOVT, SSS_F/N, ...) —
+      // a printed/downloaded timetable is read by people outside the admin
+      // tooling (students, parents), who have no reason to know the code
+      // vocabulary. renderTimetablePdf truncates with an ellipsis rather
+      // than wrapping, so a long name in a narrow period column degrades
+      // gracefully instead of overlapping the line below it.
+      lines: filters.classArmId
+        ? [row.subject.name.trim(), `${row.staff.user.firstName} ${row.staff.user.lastName}`]
+        : [row.subject.name.trim(), row.classArm.displayName],
+    }));
+
+    return renderTimetablePdf(title, subtitle, slots, school.name);
+  }
 }
 
 @Controller("timetable-slots")
@@ -384,6 +439,29 @@ export class TimetableSlotController {
     if (!subjectId || !academicSessionId) return [];
     const classArmIds = Array.isArray(classArmId) ? classArmId : classArmId ? [classArmId] : [];
     return this.service.findEligibleTeachers(subjectId, classArmIds, academicSessionId);
+  }
+
+  // Also declared before ":id", same routing reason as "eligible-teachers"
+  // above. No assertCanManage here — this streams exactly the APPROVED rows
+  // `findAll` would already show this user on screen (same method, same
+  // scoping), so anyone who can view a grid can download it; there's nothing
+  // this exposes beyond that.
+  @Get("pdf")
+  async downloadPdf(
+    @CurrentUser() user: RequestUser,
+    @Query("classArmId") classArmId?: string,
+    @Query("staffId") staffId?: string,
+    @Query("academicSessionId") academicSessionId?: string,
+    @Query("termId") termId?: string,
+  ) {
+    if (!academicSessionId || !termId || (!classArmId && !staffId)) {
+      throw new BadRequestException("academicSessionId, termId, and either classArmId or staffId are required");
+    }
+    const buffer = await this.service.buildPdf({ classArmId, staffId, academicSessionId, termId }, user);
+    return new StreamableFile(buffer, {
+      type: "application/pdf",
+      disposition: `attachment; filename="timetable.pdf"`,
+    });
   }
 
   @Get(":id")

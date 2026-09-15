@@ -11,6 +11,7 @@ import {
   Patch,
   Post,
   Query,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -44,6 +45,7 @@ import { RejectPaymentDto } from "./dto/reject-payment.dto";
 import { PaymentGatewayCredentialsService } from "./gateway/payment-gateway-credentials";
 import { PAYMENT_GATEWAY_ADAPTER } from "./gateway/payment-gateway.tokens";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
+import { renderBulkReceiptsPdf, type BulkReceiptPdfEntry } from "./receipt-bulk-pdf.util";
 
 const PAYMENT_DETAIL_INCLUDE = {
   receipt: true,
@@ -81,6 +83,34 @@ export class PaymentService {
     if (!staffProfileId) return null;
     const staff = await this.prisma.staffProfile.findUnique({ where: { id: staffProfileId } });
     return staff?.userId ?? null;
+  }
+
+  /**
+   * Audit-facing complement to the UUID-derived receiptNumber (see Receipt's
+   * own schema comment) — a per-AcademicSession sequential serial, so a
+   * Bursar/auditor can spot a gap in a session's run. The INSERT ... ON
+   * CONFLICT DO UPDATE ... RETURNING is a single atomic statement under
+   * Postgres row-level locking, so two payments settling in the same
+   * session at the same instant can never be handed the same number — a
+   * plain read-then-increment would have exactly that race. Always called
+   * with the same `tx` the enclosing Receipt.create runs in, so the counter
+   * bump and the receipt row commit or roll back together.
+   */
+  private async nextReceiptSerial(
+    tx: Prisma.TransactionClient,
+    academicSessionId: string,
+    academicSessionName: string,
+  ): Promise<{ sequenceNumber: number; serialNumber: string }> {
+    const [row] = await tx.$queryRaw<Array<{ lastNumber: number }>>`
+      INSERT INTO "receipt_sequences" ("academicSessionId", "lastNumber")
+      VALUES (${academicSessionId}, 1)
+      ON CONFLICT ("academicSessionId")
+      DO UPDATE SET "lastNumber" = "receipt_sequences"."lastNumber" + 1
+      RETURNING "lastNumber"
+    `;
+    const sequenceNumber = row!.lastNumber;
+    const serialNumber = `${academicSessionName}-${String(sequenceNumber).padStart(5, "0")}`;
+    return { sequenceNumber, serialNumber };
   }
 
   /**
@@ -126,7 +156,7 @@ export class PaymentService {
       include: {
         lineItems: true,
         payments: true,
-        term: true,
+        term: { include: { academicSession: true } },
         student: { include: { user: true, guardians: { include: { parent: true } } } },
       },
     });
@@ -161,10 +191,14 @@ export class PaymentService {
 
       await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
 
+      const { sequenceNumber, serialNumber } = await this.nextReceiptSerial(tx, invoice.term.academicSessionId, invoice.term.academicSession.name);
       const receipt = await tx.receipt.create({
         data: {
           paymentId: payment.id,
           receiptNumber: `RCT-${payment.id.slice(0, 8).toUpperCase()}`,
+          academicSessionId: invoice.term.academicSessionId,
+          sequenceNumber,
+          serialNumber,
           issuedAt: paidAt,
         },
       });
@@ -278,7 +312,7 @@ export class PaymentService {
 
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: invoiceId },
-      include: { lineItems: true, payments: true, student: { include: { user: true } } },
+      include: { lineItems: true, payments: true, term: { include: { academicSession: true } }, student: { include: { user: true } } },
     });
 
     let payment = invoice.payments.find((p) => p.status === PaymentStatus.PENDING && p.gatewayProvider === provider) ?? null;
@@ -331,10 +365,14 @@ export class PaymentService {
 
       await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
 
+      const { sequenceNumber, serialNumber } = await this.nextReceiptSerial(tx, invoice.term.academicSessionId, invoice.term.academicSession.name);
       const receipt = await tx.receipt.create({
         data: {
           paymentId: updatedPayment.id,
           receiptNumber: `RCT-${updatedPayment.id.slice(0, 8).toUpperCase()}`,
+          academicSessionId: invoice.term.academicSessionId,
+          sequenceNumber,
+          serialNumber,
           issuedAt: paidAt,
         },
       });
@@ -403,7 +441,11 @@ export class PaymentService {
   async approveManualBankTransfer(paymentId: string, reviewerUserId: string) {
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
-      include: { invoice: { include: { lineItems: true, payments: true, student: { include: { user: true } } } } },
+      include: {
+        invoice: {
+          include: { lineItems: true, payments: true, term: { include: { academicSession: true } }, student: { include: { user: true } } },
+        },
+      },
     });
     if (payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL || payment.status !== PaymentStatus.PENDING_APPROVAL) {
       throw new BadRequestException("Only a PENDING_APPROVAL manual bank-transfer payment can be approved");
@@ -429,10 +471,14 @@ export class PaymentService {
 
       await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
 
+      const { sequenceNumber, serialNumber } = await this.nextReceiptSerial(tx, invoice.term.academicSessionId, invoice.term.academicSession.name);
       const receipt = await tx.receipt.create({
         data: {
           paymentId: updatedPayment.id,
           receiptNumber: `RCT-${updatedPayment.id.slice(0, 8).toUpperCase()}`,
+          academicSessionId: invoice.term.academicSessionId,
+          sequenceNumber,
+          serialNumber,
           issuedAt: paidAt,
         },
       });
@@ -484,6 +530,72 @@ export class PaymentService {
     }
 
     return updated;
+  }
+
+  /**
+   * Bursar's "print and sign" flow: renders the selected SUCCESSFUL
+   * payments' receipts 3-to-a-page for physical printing (receipt-bulk-
+   * pdf.util.ts), in the caller's selection order. A paymentId that doesn't
+   * resolve to a SUCCESSFUL payment with a receipt is silently dropped
+   * rather than failing the whole batch — same resilience pattern as
+   * exam-scheduling's persistClassTimetableRows.
+   *
+   * Marks each receipt's Receipt.printedAt/printCount as it goes: the first
+   * time a given receipt passes through here it's an original; any time
+   * after that (this call or a later one) it's stamped "DUPLICATE COPY" on
+   * the slip, so a Bursar can never hand out a second physical original
+   * without it being visibly marked as a copy.
+   */
+  async buildBulkReceiptsPdf(paymentIds: string[]): Promise<Buffer> {
+    const payments = await this.prisma.payment.findMany({
+      where: { id: { in: paymentIds }, status: PaymentStatus.SUCCESSFUL },
+      include: {
+        receipt: true,
+        recordedByStaff: { include: { user: true } },
+        invoice: { include: { lineItems: true, payments: true, term: true, student: { include: { user: true } } } },
+      },
+    });
+    const byId = new Map(payments.map((payment) => [payment.id, payment]));
+    const ordered = paymentIds.map((id) => byId.get(id)).filter((payment): payment is (typeof payments)[number] => payment?.receipt != null);
+
+    const entries: BulkReceiptPdfEntry[] = [];
+    for (const payment of ordered) {
+      const receipt = payment.receipt!;
+      const isReprint = receipt.printedAt !== null;
+      const updated = await this.prisma.receipt.update({
+        where: { id: receipt.id },
+        data: { printedAt: receipt.printedAt ?? new Date(), printCount: { increment: 1 } },
+      });
+
+      const { invoice } = payment;
+      const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
+      const successfulPaymentAmounts = invoice.payments.filter((p) => p.status === PaymentStatus.SUCCESSFUL).map((p) => Number(p.amount));
+      const outstandingBalanceAfter = computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts);
+
+      entries.push({
+        receiptNumber: receipt.receiptNumber,
+        serialNumber: receipt.serialNumber,
+        issuedAt: receipt.issuedAt,
+        studentName: `${invoice.student.user.firstName} ${invoice.student.user.lastName}`,
+        admissionNumber: invoice.student.admissionNumber,
+        termName: invoice.term.name,
+        amount: Number(payment.amount),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        outstandingBalanceAfter,
+        recordedByName: payment.recordedByStaff ? `${payment.recordedByStaff.user.firstName} ${payment.recordedByStaff.user.lastName}` : null,
+        isReprint,
+        printCount: updated.printCount,
+      });
+    }
+
+    const school = await this.prisma.schoolProfile.findFirstOrThrow();
+    return renderBulkReceiptsPdf(entries, {
+      name: school.name,
+      address: school.address,
+      contactEmail: school.contactEmail,
+      contactPhone: school.contactPhone,
+    });
   }
 
   async findAllForUser(
@@ -621,6 +733,25 @@ export class PaymentController {
       throw new ForbiddenException("Only the Super-Admin can reject a manual bank-transfer payment");
     }
     return this.service.rejectManualBankTransfer(id, user.id, dto.rejectionReason);
+  }
+
+  /**
+   * Bursar/Super-Admin only (same "manage" gate as recordCash) — this
+   * produces official signable paper, not a self-service download, so it's
+   * not opened up to a parent's own "read" grant the way findOne/findAll are.
+   */
+  @Get("receipts/bulk-print")
+  @CheckPolicies((ability) => ability.can("manage", "Payment"))
+  async bulkPrintReceipts(@Query("paymentIds") paymentIds?: string) {
+    const ids = (paymentIds ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (ids.length === 0) {
+      throw new BadRequestException("paymentIds (comma-separated) is required");
+    }
+    const buffer = await this.service.buildBulkReceiptsPdf(ids);
+    return new StreamableFile(buffer, { type: "application/pdf", disposition: 'attachment; filename="receipts.pdf"' });
   }
 
   @Get()

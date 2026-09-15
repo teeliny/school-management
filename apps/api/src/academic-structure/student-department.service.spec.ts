@@ -5,7 +5,7 @@ import type { CreateStudentDepartmentDto } from "./dto/student-department.dto";
 function buildPrismaMock() {
   return {
     studentProfile: { findUniqueOrThrow: jest.fn() },
-    studentDepartment: { create: jest.fn() },
+    studentDepartment: { upsert: jest.fn() },
   };
 }
 
@@ -33,26 +33,29 @@ describe("StudentDepartmentService.create (PRD §3.2/§3.3 — SSS-only gate)", 
     });
 
     await expect(service.create(buildDto())).rejects.toThrow(/SSS/);
-    expect(prisma.studentDepartment.create).not.toHaveBeenCalled();
+    expect(prisma.studentDepartment.upsert).not.toHaveBeenCalled();
   });
 
   it("rejects a student with no current class assignment", async () => {
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue({ currentClass: null });
 
     await expect(service.create(buildDto())).rejects.toThrow(/SSS/);
-    expect(prisma.studentDepartment.create).not.toHaveBeenCalled();
+    expect(prisma.studentDepartment.upsert).not.toHaveBeenCalled();
   });
 
-  it("allows a student whose current class level is SSS", async () => {
+  it("allows a student whose current class level is SSS, upserting on the studentId+academicSessionId key so re-picking a department updates rather than 409s", async () => {
     prisma.studentProfile.findUniqueOrThrow.mockResolvedValue({
       currentClass: { classLevel: { category: ClassLevelCategory.SSS } },
     });
-    prisma.studentDepartment.create.mockResolvedValue({ id: "sd-1" });
+    prisma.studentDepartment.upsert.mockResolvedValue({ id: "sd-1" });
 
-    await service.create(buildDto());
+    const dto = buildDto();
+    await service.create(dto);
 
-    expect(prisma.studentDepartment.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: buildDto() }),
-    );
+    expect(prisma.studentDepartment.upsert).toHaveBeenCalledWith({
+      where: { studentId_academicSessionId: { studentId: dto.studentId, academicSessionId: dto.academicSessionId } },
+      create: dto,
+      update: { departmentId: dto.departmentId },
+    });
   });
 });

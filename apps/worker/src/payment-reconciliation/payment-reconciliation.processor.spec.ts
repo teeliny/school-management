@@ -25,6 +25,7 @@ function buildPrismaMock() {
     payment: { update: jest.fn().mockResolvedValue({ id: "payment-abcdef12" }) },
     invoice: { update: jest.fn().mockResolvedValue({}) },
     receipt: { create: jest.fn().mockResolvedValue({ id: "receipt-1" }) },
+    $queryRaw: jest.fn().mockResolvedValue([{ lastNumber: 1 }]),
   };
   return {
     payment: {
@@ -40,6 +41,7 @@ function buildPrismaMock() {
         dueDate: FUTURE_DUE_DATE,
         lineItems: [],
         payments: [{ id: "payment-abcdef12", status: "PENDING", gatewayProvider: "MONNIFY", amount: 5000 }],
+        term: { academicSessionId: "session-1", academicSession: { name: "2025/2026" } },
       }),
     },
     $transaction: jest.fn((arg: unknown) => (arg as (transaction: typeof tx) => unknown)(tx)),

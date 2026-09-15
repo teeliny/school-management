@@ -23,7 +23,7 @@ interface PaymentItem {
   status: string;
   createdAt: string;
   proofOfPaymentUrl: string | null;
-  receipt: { receiptNumber: string; issuedAt: string } | null;
+  receipt: { receiptNumber: string; serialNumber: string | null; issuedAt: string } | null;
   invoice: { student: { admissionNumber: string; user: { firstName: string; lastName: string } } };
 }
 interface DiscountRequestItem {
@@ -213,7 +213,9 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                 <li key={p.id} className="flex items-center justify-between rounded-lg border border-border p-2.5">
                   <span>
                     {p.invoice.student.user.firstName} {p.invoice.student.user.lastName}{" "}
-                    <span className="font-mono text-muted">{p.receipt?.receiptNumber ?? "—"}</span>
+                    <span className="font-mono text-muted" title={p.receipt?.receiptNumber ?? undefined}>
+                      {p.receipt?.serialNumber ?? p.receipt?.receiptNumber ?? "—"}
+                    </span>
                   </span>
                   <span className="font-mono">{formatCurrency(p.amount)}</span>
                 </li>

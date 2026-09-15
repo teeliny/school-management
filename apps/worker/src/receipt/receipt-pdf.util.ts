@@ -2,6 +2,10 @@ import PDFDocument from "pdfkit";
 
 export interface ReceiptPdfData {
   receiptNumber: string;
+  // Audit-facing per-AcademicSession sequential serial (e.g.
+  // "2025/2026-00001") — null for a receipt issued before this field
+  // existed. See the Receipt model's own schema comment.
+  serialNumber: string | null;
   issuedAt: Date;
   schoolName: string;
   schoolAddress: string | null;
@@ -24,6 +28,48 @@ const NAVY = "#001B3A";
 const MUTED = "#6b7280";
 const BAND = "#f4f5f7";
 
+// pdfkit's standard 14 base fonts (Helvetica included) use WinAnsiEncoding,
+// which has no glyph for the Naira sign (₦, U+20A6) — `toLocaleString(...,
+// { style: "currency", currency: "NGN" })` silently renders as a garbled
+// placeholder character in every PDF built on these fonts (confirmed
+// directly: a plain doc.text() of that string renders "¦85,000.00", not
+// "₦85,000.00"). "NGN " as a plain-ASCII prefix sidesteps the missing glyph
+// entirely rather than requiring an embedded Unicode font just for one
+// symbol.
+const NAIRA_AMOUNT = new Intl.NumberFormat("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatNaira(amount: number): string {
+  return `NGN ${NAIRA_AMOUNT.format(amount)}`;
+}
+
+/**
+ * Faint, diagonal, full-page school-name watermark, drawn first so every
+ * later element paints over it. Same treatment on every PDF this system
+ * produces — see apps/api/timetable-pdf.util.ts and this app's own
+ * report-card-pdf.util.ts (duplicated, not shared, same as this file's own
+ * color constants above).
+ */
+function drawWatermark(doc: PDFKit.PDFDocument, schoolName: string): void {
+  doc.save();
+  doc.rotate(-45, { origin: [doc.page.width / 2, doc.page.height / 2] });
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(54)
+    .fillColor(NAVY)
+    .opacity(0.06)
+    .text(schoolName.toUpperCase(), 0, doc.page.height / 2 - 30, { width: doc.page.width, align: "center" });
+  doc.opacity(1);
+  doc.restore();
+  // save()/restore() only cover the PDF graphics state (transform, color,
+  // line style) — pdfkit's own text-flow cursor (doc.x/doc.y) lives outside
+  // that stack, so the watermark's rotated-coordinate text() call left it at
+  // whatever nonsensical position that rotated draw computed. Reset
+  // explicitly rather than let that leak through as a huge blank gap before
+  // the real content, which otherwise starts its own flow assuming a plain
+  // top-of-page cursor.
+  doc.x = doc.page.margins.left;
+  doc.y = doc.page.margins.top;
+}
+
 function contentWidth(doc: PDFKit.PDFDocument): number {
   return doc.page.width - doc.page.margins.left - doc.page.margins.right;
 }
@@ -40,6 +86,8 @@ export function renderReceiptPdf(data: ReceiptPdfData): Promise<Buffer> {
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
+    doc.on("pageAdded", () => drawWatermark(doc, data.schoolName));
+    drawWatermark(doc, data.schoolName);
 
     doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(15).text(data.schoolName, { align: "center" });
     if (data.schoolAddress) {
@@ -58,6 +106,7 @@ export function renderReceiptPdf(data: ReceiptPdfData): Promise<Buffer> {
 
     doc.fillColor("black");
     labelValueRow(doc, "Receipt Number", data.receiptNumber);
+    if (data.serialNumber) labelValueRow(doc, "Serial No.", data.serialNumber);
     labelValueRow(doc, "Student", `${data.studentName} (${data.admissionNumber})`);
     labelValueRow(doc, "Term", data.termName);
     labelValueRow(doc, "Payment Method", data.method);
@@ -71,16 +120,12 @@ export function renderReceiptPdf(data: ReceiptPdfData): Promise<Buffer> {
       .fillColor(NAVY)
       .font("Helvetica-Bold")
       .fontSize(12)
-      .text(`Amount Paid: ${data.amount.toLocaleString("en-NG", { style: "currency", currency: "NGN" })}`, left + 10, boxY + 8);
+      .text(`Amount Paid: ${formatNaira(data.amount)}`, left + 10, boxY + 8);
     doc
       .fillColor(MUTED)
       .font("Helvetica")
       .fontSize(9.5)
-      .text(
-        `Outstanding balance after this payment: ${data.outstandingBalanceAfter.toLocaleString("en-NG", { style: "currency", currency: "NGN" })}`,
-        left + 10,
-        boxY + 26,
-      );
+      .text(`Outstanding balance after this payment: ${formatNaira(data.outstandingBalanceAfter)}`, left + 10, boxY + 26);
     doc.y = boxY + 44 + 12;
     doc.fillColor("black").font("Helvetica").fontSize(10);
 
