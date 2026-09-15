@@ -79,16 +79,89 @@ def solve_class_timetable(
     groups: list[GroupPayload],
 ) -> dict[str, Any]:
     generated_rows: list[dict[str, Any]] = []
+    # staffId -> (day, startTime, endTime) rows already assigned by an
+    # EARLIER group's solve in this same run. Each group is solved as its own
+    # independent CP-SAT model (_solve_group has no visibility into any other
+    # group's variables), so a staff member holding an active SUBJECT_TEACHER
+    # assignment in more than one group (e.g. a Primary AND JSS teacher) could
+    # be placed at an overlapping time in each — invisible to either model —
+    # until the callback controller's belt-and-suspenders assertNoConflicts
+    # caught it and rolled back the WHOLE batch, including groups that had no
+    # conflict. Feeding each group's own results forward as real time-range
+    # blocks for the next group closes that gap the same way an already-
+    # persisted TimetableSlot already blocks a staff member's periods.
+    cross_group_staff_ranges: dict[str, list[tuple[str, str, str]]] = {}
     for group in groups:
-        rows = _solve_group(group, calculation_subjects_morning)
+        augmented_group = _augment_with_cross_group_blocks(group, cross_group_staff_ranges)
+        rows = _solve_group(augmented_group, calculation_subjects_morning)
         if rows is None:
             return {
                 "callbackToken": callback_token,
-                "error": f"No feasible class timetable found for group {group.group} (requestId={request_id})",
+                "error": (
+                    f"No feasible class timetable found for group {group.group} "
+                    f"(requestId={request_id})"
+                ),
             }
         generated_rows.extend(rows)
+        for row in rows:
+            cross_group_staff_ranges.setdefault(row["staffId"], []).append(
+                (row["dayOfWeek"], row["startTime"], row["endTime"])
+            )
 
     return {"callbackToken": callback_token, "result": {"generatedRows": generated_rows}}
+
+
+def _time_ranges_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
+    """
+    Mirrors packages/types/src/scheduling.ts's `timeRangesOverlap` — same
+    minutes-since-midnight comparison, computed independently on this side of
+    the language boundary.
+    """
+
+    def to_minutes(time: str) -> int:
+        hours, minutes = (int(part) for part in time.split(":"))
+        return hours * 60 + minutes
+
+    return to_minutes(a_start) < to_minutes(b_end) and to_minutes(b_start) < to_minutes(a_end)
+
+
+def _augment_with_cross_group_blocks(
+    group: GroupPayload, cross_group_staff_ranges: dict[str, list[tuple[str, str, str]]]
+) -> GroupPayload:
+    """
+    Merges an earlier group's already-assigned rows into this group's own
+    staffBlockedPeriods, for any staff member this group also uses — same
+    real-time overlap check apps/worker's computeBlockedPeriods runs against a
+    persisted TimetableSlot, just against an in-flight (not yet persisted) row
+    from earlier in this same solve.
+    """
+    staff_ids_in_group = {subject.staffId for arm in group.classArms for subject in arm.subjects}
+    relevant = {
+        staff_id: ranges
+        for staff_id, ranges in cross_group_staff_ranges.items()
+        if staff_id in staff_ids_in_group
+    }
+    if not relevant:
+        return group
+
+    merged_blocked: dict[str, dict[str, list[int]]] = {
+        staff_id: {day: list(periods) for day, periods in by_day.items()}
+        for staff_id, by_day in group.staffBlockedPeriods.items()
+    }
+    for staff_id, ranges in relevant.items():
+        by_day: dict[str, set[int]] = {
+            day: set(periods) for day, periods in merged_blocked.get(staff_id, {}).items()
+        }
+        for day, start_time, end_time in ranges:
+            day_periods = by_day.setdefault(day, set())
+            count = group.fridayPeriodsPerDay if day == "FRIDAY" else group.periodsPerDay
+            for period in range(1, count + 1):
+                period_start, period_end = _compute_period_time(group, day, period)
+                if _time_ranges_overlap(period_start, period_end, start_time, end_time):
+                    day_periods.add(period)
+        merged_blocked[staff_id] = {day: sorted(periods) for day, periods in by_day.items()}
+
+    return group.model_copy(update={"staffBlockedPeriods": merged_blocked})
 
 
 def _solve_group(

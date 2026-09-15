@@ -121,21 +121,42 @@ export class SchedulingCallbackController {
       | WeeklyDutyGeneratedRow[];
     let persistedCount = 0;
 
-    if (request.scope === ScheduleScope.CLASS_TIMETABLE) {
-      persistedCount = await this.persistClassTimetableRows(requestId, request.termId, rows as ClassTimetableGeneratedRow[]);
-    }
-    if (request.scope === ScheduleScope.EXAM_TIMETABLE) {
-      persistedCount = await this.persistExamTimetableRows(
-        requestId,
-        request.assessmentComponentId,
-        rows as ExamTimetableGeneratedRow[],
-      );
-    }
-    if (request.scope === ScheduleScope.INVIGILATION) {
-      persistedCount = await this.persistInvigilationRows(requestId, rows as InvigilationGeneratedRow[]);
-    }
-    if (request.scope === ScheduleScope.WEEKLY_DUTY) {
-      persistedCount = await this.persistWeeklyDutyRows(requestId, rows as WeeklyDutyGeneratedRow[]);
+    try {
+      if (request.scope === ScheduleScope.CLASS_TIMETABLE) {
+        persistedCount = await this.persistClassTimetableRows(requestId, request.termId, rows as ClassTimetableGeneratedRow[]);
+      }
+      if (request.scope === ScheduleScope.EXAM_TIMETABLE) {
+        persistedCount = await this.persistExamTimetableRows(
+          requestId,
+          request.assessmentComponentId,
+          rows as ExamTimetableGeneratedRow[],
+        );
+      }
+      if (request.scope === ScheduleScope.INVIGILATION) {
+        persistedCount = await this.persistInvigilationRows(requestId, rows as InvigilationGeneratedRow[]);
+      }
+      if (request.scope === ScheduleScope.WEEKLY_DUTY) {
+        persistedCount = await this.persistWeeklyDutyRows(requestId, rows as WeeklyDutyGeneratedRow[]);
+      }
+    } catch (err) {
+      // Each persist* method's own per-row assertNoConflicts is a final
+      // belt-and-suspenders safety net on top of the solver's own hard
+      // constraints (see their doc comments) — it should be unreachable, but
+      // if it still trips, record WHY on the request itself rather than
+      // letting the exception surface as a bare 400 to the unauthenticated,
+      // fire-and-forget scheduling-engine caller (which only logs it, per
+      // main.py's _solve_and_callback) and leaving this stuck at SOLVING with
+      // no errorMessage until the timeout sweep eventually flags it.
+      const message = err instanceof Error ? err.message : "Failed to persist generated schedule rows";
+      await this.prisma.scheduleGenerationRequest.update({
+        where: { id: requestId },
+        data: { status: ScheduleGenerationStatus.FAILED, errorMessage: message, completedAt: new Date() },
+      });
+      await this.notifications.notify(request.requestedByUserId, "SCHEDULE_GENERATION_FAILED", {
+        scope: request.scope,
+        errorMessage: message,
+      });
+      return { received: true };
     }
 
     await this.prisma.scheduleGenerationRequest.update({
