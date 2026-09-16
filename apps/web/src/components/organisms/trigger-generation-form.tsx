@@ -85,16 +85,22 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
     setAssessmentComponentId("");
   }, [termId]);
 
-  const componentsForTerm = termId ? components.filter((c) => c.termId === termId) : components;
+  // Creche has no subjects (CLAUDE.md), so it's never a valid generation
+  // target — filtered out of every picker below rather than just left to
+  // produce an empty/no-op run.
+  const componentsForTerm = (termId ? components.filter((c) => c.termId === termId) : components).filter(
+    (c) => c.classLevelCategory !== "CRECHE",
+  );
 
   // Once a class level group is picked for CLASS_TIMETABLE, the class arm
   // list below it narrows to that group's arms only — picking a group and
   // then an arm outside it made no sense (the arm select showed every arm
   // regardless of the group filter above it).
-  const classArmsForGroup =
+  const classArmsForGroup = (
     scope === "CLASS_TIMETABLE" && classLevelCategoryGroup
       ? classArms.filter((arm) => categoryToGroup(arm.classLevel.category) === classLevelCategoryGroup)
-      : classArms;
+      : classArms
+  ).filter((arm) => arm.classLevel.category !== "CRECHE");
 
   // Clear a class arm selection that's no longer in the narrowed list when
   // the group filter changes — otherwise a stale, now-hidden arm could

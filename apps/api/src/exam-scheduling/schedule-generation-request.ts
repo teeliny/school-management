@@ -280,13 +280,18 @@ export class ScheduleGenerationRequestService {
     );
   }
 
-  /** Same "unscoped for Super-Admin/Registrar, Principal→JSS/SSS, Headteacher→Creche/Nursery/Primary" mapping assertCanTrigger already checked, read directly off the JWT-derived RequestUser rather than a fresh DB round-trip (the worker's own resolveAllowedCategories re-derives it from the DB since it only has a userId — the API already has the roles/assignmentTypes in hand here). */
+  /**
+   * Same "unscoped for Super-Admin/Registrar, Principal→JSS/SSS, Headteacher→Nursery/Primary" mapping assertCanTrigger already checked, read directly off the JWT-derived RequestUser rather than a fresh DB round-trip (the worker's own resolveAllowedCategories re-derives it from the DB since it only has a userId — the API already has the roles/assignmentTypes in hand here).
+   * CRECHE is always excluded — it has no ClassSubject rows, so it's never a
+   * real feasibility-check/generation target (mirrors GENERATION_CATEGORIES
+   * in apps/worker's scheduling-solve-dispatch.processor.ts).
+   */
   private resolveAllowedCategoriesFromUser(user: RequestUser): ClassLevelCategory[] {
     if (user.roles.includes("SUPER_ADMIN") || user.assignmentTypes.includes("REGISTRAR")) {
-      return [...CLASS_LEVEL_CATEGORIES];
+      return CLASS_LEVEL_CATEGORIES.filter((c) => c !== "CRECHE");
     }
     if (user.assignmentTypes.includes("PRINCIPAL")) return ["JSS", "SSS"];
-    if (user.assignmentTypes.includes("HEADTEACHER")) return ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
+    if (user.assignmentTypes.includes("HEADTEACHER")) return ["RECEPTION", "NURSERY", "PRIMARY"];
     return [];
   }
 

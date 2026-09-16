@@ -27,6 +27,12 @@ import {
 } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 
+// Creche has no ClassSubject rows (PRD §3.3 class list), so every
+// timetable/schedule generation run excludes it — resolveAllowedCategories
+// and buildExamTimetablePayload both filter against this instead of
+// CLASS_LEVEL_CATEGORIES directly.
+const GENERATION_CATEGORIES: ClassLevelCategory[] = CLASS_LEVEL_CATEGORIES.filter((c) => c !== "CRECHE");
+
 interface RequiredSubject {
   id: string;
   requiresCalculation: boolean;
@@ -351,12 +357,20 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       include: { term: true },
     });
 
-    const examClassArms = request.classArmId
-      ? await this.prisma.classArm.findMany({ where: { id: request.classArmId }, select: { id: true, classLevelId: true } })
-      : await this.prisma.classArm.findMany({
-          where: { academicSessionId: component.term.academicSessionId, classLevel: { category: component.classLevelCategory } },
-          select: { id: true, classLevelId: true },
-        });
+    // Creche has no ClassSubject rows, so a component scoped to it (nothing
+    // stops one from being created — CreateAssessmentComponentDto only
+    // validates against the full ClassLevelCategory enum) has no exam to
+    // schedule; skip it the same way GENERATION_CATEGORIES excludes CRECHE
+    // from whole-scope class-timetable generation above.
+    const examClassArms =
+      component.classLevelCategory === ClassLevelCategory.CRECHE
+        ? []
+        : request.classArmId
+          ? await this.prisma.classArm.findMany({ where: { id: request.classArmId }, select: { id: true, classLevelId: true } })
+          : await this.prisma.classArm.findMany({
+              where: { academicSessionId: component.term.academicSessionId, classLevel: { category: component.classLevelCategory } },
+              select: { id: true, classLevelId: true },
+            });
     const classArmIds = examClassArms.map((a) => a.id);
 
     // Required subjects are resolved per ClassLevel, not once for the whole
@@ -837,7 +851,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
 
   private async resolveAllowedCategories(userId: string): Promise<ClassLevelCategory[]> {
     const roles = await this.prisma.userRole.findMany({ where: { userId, isActive: true } });
-    if (roles.some((r) => r.role === Role.SUPER_ADMIN)) return [...CLASS_LEVEL_CATEGORIES];
+    // CRECHE is excluded from every whole-scope generation run — it has no
+    // ClassSubject rows, so including it only wastes a solver slot producing
+    // an empty schedule (Creche still exists for attendance/fees/RBAC scoping
+    // elsewhere, e.g. resolvePrincipalHeadteacherCategories — don't touch that).
+    if (roles.some((r) => r.role === Role.SUPER_ADMIN)) return GENERATION_CATEGORIES;
 
     const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
     const assignments = staffProfile
@@ -845,9 +863,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       : [];
     const types = new Set(assignments.map((a) => a.assignmentType));
 
-    if (types.has("REGISTRAR")) return [...CLASS_LEVEL_CATEGORIES];
+    if (types.has("REGISTRAR")) return GENERATION_CATEGORIES;
     if (types.has("PRINCIPAL")) return ["JSS", "SSS"];
-    if (types.has("HEADTEACHER")) return ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
+    if (types.has("HEADTEACHER")) return ["RECEPTION", "NURSERY", "PRIMARY"];
 
     // The API's assertCanTrigger already rejected this case at trigger time
     // — reaching here means the user's assignment changed between trigger
