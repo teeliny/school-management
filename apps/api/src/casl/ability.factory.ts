@@ -264,6 +264,13 @@ export class AbilityFactory {
       // above) but never populate the Teacher select at all.
       can("read", "StaffProfile");
 
+      // Read-only visibility into which teachers are assigned to which
+      // classes/subjects, scoped to this title's own section at the service
+      // layer via resolvePrincipalHeadteacherCategories (same helper
+      // StaffProfileService.findAll already uses) — not the full "manage"
+      // grant Admin/Super-Admin have, so create/revoke stay out of reach.
+      can("read", "StaffAssignment");
+
       can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
 
       can("manage", ["SkillAssessmentItem", "ReportWindow", "SkillRating", "ReportComment"]);
@@ -321,6 +328,10 @@ export class AbilityFactory {
       ]);
 
       can("read", "StaffProfile");
+
+      // Same read-only, section-scoped assignment visibility as the
+      // Principal/Headteacher branch above.
+      can("read", "StaffAssignment");
 
       can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
 

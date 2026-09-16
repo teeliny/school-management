@@ -19,6 +19,7 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory } from "../casl/ability.factory";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { Audited } from "../audit/audited.decorator";
 import { CreateStaffAssignmentDto, SyncSubjectTeacherAssignmentsDto } from "./dto/staff-assignment.dto";
 
@@ -120,22 +121,41 @@ export class StaffAssignmentService {
    * StudentService.findAllForUser (identity/students/student.ts), so no
    * existing caller (e.g. `findMine`, which doesn't go through this method)
    * breaks.
+   *
+   * `user`, when supplied, narrows the result to a Principal/Vice-Principal/
+   * Headteacher's own section via resolvePrincipalHeadteacherCategories (same
+   * helper StaffProfileService.findAll already uses) — rows with no classArm
+   * (school-wide role assignments) always pass through, rows tied to a
+   * classArm are restricted to that title's categories. Admin/Super-Admin/
+   * Registrar (and the `undefined` case, e.g. internal callers) resolve to
+   * `null` and stay unscoped.
    */
-  async findAll(filters: { staffId?: string; search?: string; skip?: number; take?: number } = {}) {
+  async findAll(
+    filters: { staffId?: string; search?: string; skip?: number; take?: number } = {},
+    user?: RequestUser,
+  ) {
+    const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
     const where: Prisma.StaffAssignmentWhereInput = {
       staffId: filters.staffId,
-      ...(filters.search
-        ? {
-            staff: {
-              user: {
-                OR: [
-                  { firstName: { contains: filters.search, mode: "insensitive" as const } },
-                  { lastName: { contains: filters.search, mode: "insensitive" as const } },
-                ],
+      AND: [
+        ...(filters.search
+          ? [
+              {
+                staff: {
+                  user: {
+                    OR: [
+                      { firstName: { contains: filters.search, mode: "insensitive" as const } },
+                      { lastName: { contains: filters.search, mode: "insensitive" as const } },
+                    ],
+                  },
+                },
               },
-            },
-          }
-        : {}),
+            ]
+          : []),
+        ...(categories
+          ? [{ OR: [{ classArmId: null }, { classArm: { classLevel: { category: { in: categories } } } }] }]
+          : []),
+      ],
     };
     const include = {
       subject: { select: { name: true } },
@@ -375,15 +395,18 @@ export class StaffAssignmentController {
     @Query("take") take?: string,
   ) {
     const ability = this.abilityFactory.createForUser(user);
-    if (!ability.can("manage", "StaffAssignment")) {
+    if (!ability.can("manage", "StaffAssignment") && !ability.can("read", "StaffAssignment")) {
       throw new ForbiddenException("Insufficient permissions");
     }
-    return this.service.findAll({
-      staffId,
-      search,
-      skip: skip === undefined ? undefined : Number(skip),
-      take: take === undefined ? undefined : Number(take),
-    });
+    return this.service.findAll(
+      {
+        staffId,
+        search,
+        skip: skip === undefined ? undefined : Number(skip),
+        take: take === undefined ? undefined : Number(take),
+      },
+      user,
+    );
   }
 
   @Get("mine")

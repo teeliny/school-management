@@ -26,6 +26,9 @@ export default function StaffPage() {
 
   const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
   const canManage = isSuperAdmin || user.roles.includes("ADMIN");
+  const isPrincipalScope = user.assignmentTypes.some((t) =>
+    ["PRINCIPAL", "VICE_PRINCIPAL", "HEADTEACHER"].includes(t),
+  );
 
   return (
     <AppShell user={user} onLogout={logout}>
@@ -84,6 +87,11 @@ export default function StaffPage() {
             </Card>
           )}
         </div>
+      ) : isPrincipalScope ? (
+        <Card>
+          <CardHeader title="Teachers" sub="Class and subject assignments for your section" />
+          <StaffAssignmentList readOnly />
+        </Card>
       ) : (
         <Card>
           <p className="text-sm text-muted">You don&apos;t have permission to manage staff.</p>

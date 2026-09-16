@@ -85,9 +85,17 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
       { href: "/students", label: "Students", icon: GraduationCap },
       {
         href: "/staff",
-        label: "Staff assignments",
+        label: "Staff",
         icon: Users,
-        adminOnly: true,
+        // Not `adminOnly` (that ANDs with `visible` rather than OR-ing) —
+        // Principal/Headteacher/Vice-Principal get a read-only view of this
+        // same page (staff/page.tsx's isPrincipalScope branch), so they need
+        // the nav link too, same shape as /academic-structure below.
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
       },
       {
         href: "/invitations",

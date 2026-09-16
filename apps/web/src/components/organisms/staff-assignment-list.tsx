@@ -70,7 +70,7 @@ function groupByStaff(assignments: StaffAssignment[]): TeacherSummary[] {
   });
 }
 
-export function StaffAssignmentList({ refreshKey }: { refreshKey?: unknown }) {
+export function StaffAssignmentList({ refreshKey, readOnly }: { refreshKey?: unknown; readOnly?: boolean }) {
   const [assignments, setAssignments] = useState<StaffAssignment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
@@ -129,6 +129,7 @@ export function StaffAssignmentList({ refreshKey }: { refreshKey?: unknown }) {
               summary={summary}
               revokingId={revokingId}
               onRevoke={handleRevoke}
+              readOnly={readOnly}
             />
           ))
         )}
@@ -141,10 +142,12 @@ function StaffAssignmentSummaryRow({
   summary,
   revokingId,
   onRevoke,
+  readOnly,
 }: {
   summary: TeacherSummary;
   revokingId: string | null;
   onRevoke: (id: string) => void;
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -170,6 +173,7 @@ function StaffAssignmentSummaryRow({
                 label={a.classArm?.displayName ?? "Unknown arm"}
                 revoking={revokingId === a.id}
                 onRevoke={() => onRevoke(a.id)}
+                readOnly={readOnly}
               />
             ))
           )}
@@ -187,6 +191,7 @@ function StaffAssignmentSummaryRow({
                     label={arm.displayName}
                     revoking={revokingId === arm.assignmentId}
                     onRevoke={() => onRevoke(arm.assignmentId)}
+                    readOnly={readOnly}
                   />
                 ))}
               </div>
@@ -203,6 +208,7 @@ function StaffAssignmentSummaryRow({
                 label={ASSIGNMENT_TYPE_LABELS[a.assignmentType]}
                 revoking={revokingId === a.id}
                 onRevoke={() => onRevoke(a.id)}
+                readOnly={readOnly}
               />
             ))}
           </div>
@@ -212,7 +218,21 @@ function StaffAssignmentSummaryRow({
   );
 }
 
-function AssignmentChip({ label, revoking, onRevoke }: { label: string; revoking: boolean; onRevoke: () => void }) {
+function AssignmentChip({
+  label,
+  revoking,
+  onRevoke,
+  readOnly,
+}: {
+  label: string;
+  revoking: boolean;
+  onRevoke: () => void;
+  readOnly?: boolean;
+}) {
+  if (readOnly) {
+    return <Badge variant="info">{label}</Badge>;
+  }
+
   return (
     <span className="inline-flex items-center gap-1">
       <Badge variant="info">{label}</Badge>
