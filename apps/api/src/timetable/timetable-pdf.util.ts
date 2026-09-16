@@ -254,7 +254,11 @@ export function renderTimetablePdf(
           .stroke();
         if (slot?.isActivity) doc.undash();
 
-        if (!slot) continue; // empty period — the border above is all it gets
+        // No slot, or a filler placeholder with nothing to show (used to
+        // force an otherwise-empty configured period to still get its own
+        // column/border — see TimetableSlotService.buildFullGridFillerSlots)
+        // — either way, the border above is all this cell gets.
+        if (!slot || !slot.lines[0]) continue;
 
         // The subject name is shown in FULL, never truncated — it wraps
         // onto as many lines as it needs. Both lines are measured up front

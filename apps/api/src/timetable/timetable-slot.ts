@@ -444,6 +444,40 @@ export class TimetableSlotService {
   }
 
   /**
+   * Blank placeholder entries for every period this group's PeriodStructure
+   * actually defines (1..periodsPerDay Monday-Thursday, 1..fridayPeriodsPerDay
+   * Friday). Without these, a day/period with neither a real TimetableSlot
+   * nor a SPECIAL_PERIODS block has no entry in `slots` at all, so
+   * buildColumns (which only ever sees the time ranges actually present)
+   * silently drops that period's column from the grid rather than showing
+   * it as an empty bordered cell the way every other unused-but-columned
+   * period does — most visible on Friday, whose shorter real slot count
+   * means it's much more likely than a weekday to have periods nothing is
+   * scheduled in at all. `lines: []` renders as a bordered cell with no
+   * text (renderTimetablePdf treats an empty first line the same as "no
+   * slot" for content purposes). Weekday fillers are all tagged MONDAY
+   * rather than one set per weekday — renderTimetablePdf draws a period's
+   * border off the shared column set itself, not off whether each
+   * individual day's own slots happen to include an entry at that exact
+   * time, so establishing the column at all is enough; every other weekday
+   * gets the same bordered cell for free once the column exists (same
+   * "compute weekday times off Monday" convention apps/web's own
+   * buildPeriodColumns already uses).
+   */
+  private buildFullGridFillerSlots(structure: PeriodStructure): TimetablePdfSlot[] {
+    const filler: TimetablePdfSlot[] = [];
+    for (let period = 1; period <= structure.periodsPerDay; period++) {
+      const { startTime, endTime } = computePeriodTime(structure, DayOfWeek.MONDAY, period);
+      filler.push({ dayOfWeek: DayOfWeek.MONDAY, startTime, endTime, lines: [] });
+    }
+    for (let period = 1; period <= structure.fridayPeriodsPerDay; period++) {
+      const { startTime, endTime } = computePeriodTime(structure, DayOfWeek.FRIDAY, period);
+      filler.push({ dayOfWeek: DayOfWeek.FRIDAY, startTime, endTime, lines: [] });
+    }
+    return filler;
+  }
+
+  /**
    * A4-landscape PDF of the same rows `findAll` would show on screen —
    * reuses that method verbatim (including its parent/category-group
    * scoping) so a download never exposes anything the requester couldn't
@@ -520,6 +554,26 @@ export class TimetableSlotService {
         if (seenActivityKeys.has(key)) continue;
         seenActivityKeys.add(key);
         slots.push(activitySlot);
+      }
+    }
+
+    // Fills in every configured-but-otherwise-empty period so it still gets
+    // its own bordered column, exactly like an empty period that DOES share
+    // a time with something scheduled elsewhere in the week already does.
+    // Only attempted for exactly one category group — a teacher spanning
+    // more than one (each with its own, potentially incompatible, period
+    // structure) falls back to the current data-derived columns rather than
+    // guessing which group's grid should "win" the page.
+    if (groups.size === 1) {
+      const structure = await this.resolvePeriodStructure([...groups][0]!);
+      if (structure) {
+        const existingKeys = new Set(slots.map((s) => `${s.dayOfWeek}|${s.startTime}|${s.endTime}`));
+        for (const filler of this.buildFullGridFillerSlots(structure)) {
+          const key = `${filler.dayOfWeek}|${filler.startTime}|${filler.endTime}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          slots.push(filler);
+        }
       }
     }
 
