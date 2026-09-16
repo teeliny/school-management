@@ -408,13 +408,21 @@ export class TimetableSlotService {
 
     const activitySlots: TimetablePdfSlot[] = [];
     for (const special of parseSpecialPeriods(get("SPECIAL_PERIODS"))) {
-      activitySlots.push({
-        dayOfWeek: special.day,
-        startTime: computePeriodTime(structure, special.day, special.startPeriod).startTime,
-        endTime: computePeriodTime(structure, special.day, special.endPeriod).endTime,
-        lines: [special.label, "School activity"],
-        isActivity: true,
-      });
+      // One pseudo-slot PER period in the range, not one merged block
+      // spanning start-to-end — a 2-period block (e.g. "WEDNESDAY:1-2:Sports")
+      // must land in the SAME two period columns every other subject on that
+      // day uses, not introduce its own wider, one-off column that doesn't
+      // line up with the rest of the grid (which is what a single
+      // period-1-start to period-2-end range produced before this).
+      const maxPeriodForDay = special.day === DayOfWeek.FRIDAY ? structure.fridayPeriodsPerDay : structure.periodsPerDay;
+      for (let period = special.startPeriod; period <= special.endPeriod; period++) {
+        // This day doesn't run that many periods (most relevant for
+        // Friday's shorter day) — same as the on-screen grid, which never
+        // renders a column past a day's own real period count.
+        if (period > maxPeriodForDay) break;
+        const { startTime, endTime } = computePeriodTime(structure, special.day, period);
+        activitySlots.push({ dayOfWeek: special.day, startTime, endTime, lines: [special.label, "School activity"], isActivity: true });
+      }
     }
 
     const trailingLabel = get("FRIDAY_TRAILING_ACTIVITY_LABEL");

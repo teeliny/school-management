@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { categoryToGroup, DAYS_OF_WEEK, type ClassLevelCategory, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  categoryToGroup,
+  computePeriodTime,
+  DAYS_OF_WEEK,
+  type ClassLevelCategory,
+  type ClassLevelCategoryGroup,
+  type DayOfWeek,
+} from "@school/types";
 import { apiFetch } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
@@ -449,43 +456,66 @@ function PeriodWeekGrid({ slots, group }: { slots: TimetableSlotItem[]; group: C
         ))}
         {DAYS_OF_WEEK.map((day) => {
           const lastIndex = day === "FRIDAY" ? fridayCutoff : columns.length - 1;
+          // The shared header row above is computed off Monday
+          // (buildPeriodColumns) — same "Fri times" heading TimetableGrid
+          // already shows whenever Friday's own period duration actually
+          // diverges, so this grid doesn't display the wrong clock times
+          // for Friday's row (only rendered when they actually differ, so a
+          // school running the same length every day doesn't get a
+          // redundant duplicate header).
+          const fridayNeedsOwnHeading = day === "FRIDAY" && structure.fridayPeriodDurationMinutes !== structure.periodDurationMinutes;
           return (
-            <div key={day} className="contents">
-              <div className="pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{DAY_LABEL[day]}</div>
-              {columns.slice(0, lastIndex + 1).map((col, i) => {
-                if (col.kind === "break") return <div key={i} className="min-h-[52px] rounded-lg bg-muted/10" />;
-                const special = findSpecialPeriod(specialPeriods, day, col.index);
-                if (special) {
-                  return (
-                    <div
-                      key={i}
-                      className="flex min-h-[52px] items-center justify-center rounded-lg bg-info-bg px-1 text-center text-[10px] font-medium text-info"
-                    >
-                      {special.label}
+            <Fragment key={day}>
+              {fridayNeedsOwnHeading && (
+                <div className="contents">
+                  <div className="pt-1.5 text-[9.5px] font-medium uppercase tracking-wide text-muted">Fri times</div>
+                  {columns.slice(0, lastIndex + 1).map((col, i) => (
+                    <div key={i} className="text-center font-mono text-[9.5px] font-medium text-muted">
+                      {col.kind === "break"
+                        ? "Break"
+                        : `${computePeriodTime(structure, "FRIDAY", col.index).startTime}–${computePeriodTime(structure, "FRIDAY", col.index).endTime}`}
                     </div>
-                  );
-                }
-                const slot = slotByCell.get(`${day}|${col.index}`);
-                return (
-                  <div key={i} className="min-h-[52px] p-0.5">
-                    {slot && (
-                      <div className="rounded-lg border border-border bg-card-inset p-1.5 text-[11.5px]">
-                        <div className="truncate font-medium">{slot.subject.name}</div>
-                        <div className="truncate text-muted">{slot.classArm.displayName}</div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {day === "FRIDAY" && fridayCutoff < columns.length - 1 && (
-                <div
-                  className="flex min-h-[52px] items-center justify-center rounded-lg bg-muted/10 px-1 text-center text-[10px] font-medium text-muted"
-                  style={{ gridColumn: `span ${columns.length - 1 - fridayCutoff}` }}
-                >
-                  {fridayTrailingActivity ? `${fridayTrailingActivity.label} · until ${fridayTrailingActivity.endTime}` : "—"}
+                  ))}
+                  {fridayCutoff < columns.length - 1 && <div style={{ gridColumn: `span ${columns.length - 1 - fridayCutoff}` }} />}
                 </div>
               )}
-            </div>
+              <div className="contents">
+                <div className="pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{DAY_LABEL[day]}</div>
+                {columns.slice(0, lastIndex + 1).map((col, i) => {
+                  if (col.kind === "break") return <div key={i} className="min-h-[52px] rounded-lg bg-muted/10" />;
+                  const special = findSpecialPeriod(specialPeriods, day, col.index);
+                  if (special) {
+                    return (
+                      <div
+                        key={i}
+                        className="flex min-h-[52px] items-center justify-center rounded-lg bg-info-bg px-1 text-center text-[10px] font-medium text-info"
+                      >
+                        {special.label}
+                      </div>
+                    );
+                  }
+                  const slot = slotByCell.get(`${day}|${col.index}`);
+                  return (
+                    <div key={i} className="min-h-[52px] p-0.5">
+                      {slot && (
+                        <div className="rounded-lg border border-border bg-card-inset p-1.5 text-[11.5px]">
+                          <div className="truncate font-medium">{slot.subject.name}</div>
+                          <div className="truncate text-muted">{slot.classArm.displayName}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {day === "FRIDAY" && fridayCutoff < columns.length - 1 && (
+                  <div
+                    className="flex min-h-[52px] items-center justify-center rounded-lg bg-muted/10 px-1 text-center text-[10px] font-medium text-muted"
+                    style={{ gridColumn: `span ${columns.length - 1 - fridayCutoff}` }}
+                  >
+                    {fridayTrailingActivity ? `${fridayTrailingActivity.label} · until ${fridayTrailingActivity.endTime}` : "—"}
+                  </div>
+                )}
+              </div>
+            </Fragment>
           );
         })}
       </div>
