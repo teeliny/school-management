@@ -19,10 +19,11 @@ import {
   ClassLevelCategoryGroup,
   DayOfWeek,
   Prisma,
+  ScheduleScope,
   TimetableApprovalStatus,
   TimetableGeneratedBy,
 } from "@prisma/client";
-import { categoryToGroup, timeRangesOverlap } from "@school/types";
+import { categoryToGroup, computePeriodTime, parseSpecialPeriods, timeRangesOverlap, type PeriodStructure } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -333,6 +334,108 @@ export class TimetableSlotService {
   }
 
   /**
+   * Same period-structure resolution as apps/worker's scheduling-solve-
+   * dispatch.processor.ts's resolvePeriodStructure (and apps/web's
+   * usePeriodStructure hook) — duplicated, not shared, same cross-process-
+   * boundary reasoning as every other worker/api duplicate in this codebase
+   * (e.g. BroadsheetService's reimplementation of computeAnnualSummary).
+   * Unlike the worker's version, this returns null rather than a NaN-filled
+   * PeriodStructure when the six required keys aren't all configured for
+   * this group — the worker's copy feeds a solver that would just reject
+   * bad input, but this feeds pseudo-slot clock times shown directly on a
+   * document a parent/teacher reads, so silently computing garbage times
+   * would be worse than just skipping activity periods for a school that
+   * hasn't set up a period structure yet.
+   */
+  private async resolvePeriodStructure(group: ClassLevelCategoryGroup): Promise<PeriodStructure | null> {
+    const rows = await this.prisma.schedulingConstraint.findMany({
+      where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
+    });
+    const get = (key: string): unknown => rows.find((r) => r.key === key)?.value;
+    const requiredKeys = [
+      "PERIODS_PER_DAY",
+      "PERIOD_DURATION_MINUTES",
+      "SCHOOL_DAY_START_TIME",
+      "BREAK_AFTER_PERIOD",
+      "BREAK_DURATION_MINUTES",
+      "FRIDAY_BREAK_DURATION_MINUTES",
+    ];
+    if (!requiredKeys.every((key) => get(key) !== undefined)) return null;
+
+    const periodsPerDay = Number(get("PERIODS_PER_DAY"));
+    const periodDurationMinutes = Number(get("PERIOD_DURATION_MINUTES"));
+    const shortBreakAfterPeriod = get("SHORT_BREAK_AFTER_PERIOD");
+    const fridayPeriodsPerDay = get("FRIDAY_PERIODS_PER_DAY");
+    return {
+      periodsPerDay,
+      periodDurationMinutes,
+      schoolDayStartTime: String(get("SCHOOL_DAY_START_TIME")),
+      breakAfterPeriod: Number(get("BREAK_AFTER_PERIOD")),
+      breakDurationMinutes: Number(get("BREAK_DURATION_MINUTES")),
+      fridayBreakDurationMinutes: Number(get("FRIDAY_BREAK_DURATION_MINUTES")),
+      shortBreakAfterPeriod: shortBreakAfterPeriod === undefined ? periodsPerDay : Number(shortBreakAfterPeriod),
+      shortBreakDurationMinutes: Number(get("SHORT_BREAK_DURATION_MINUTES") ?? 0),
+      fridayPeriodDurationMinutes: Number(get("FRIDAY_PERIOD_DURATION_MINUTES") ?? periodDurationMinutes),
+      fridayPeriodsPerDay: fridayPeriodsPerDay === undefined ? periodsPerDay : Number(fridayPeriodsPerDay),
+    };
+  }
+
+  /**
+   * School-wide fixed non-subject blocks — CLASS_TIMETABLE's SPECIAL_PERIODS
+   * (e.g. Wednesday Sports/Extra-Curricular) plus Friday's trailing activity
+   * (e.g. "Religious activities" after the last real period) — same for
+   * every class arm/teacher in this category group. Rendered as extra
+   * TimetablePdfSlot rows (isActivity: true) rather than pulled from
+   * TimetableSlot, since no real row is ever created for these: the whole
+   * point of SPECIAL_PERIODS is blocking the AI solver from scheduling a
+   * real subject there (apps/worker's resolveSpecialPeriodBlocks). Only
+   * used for the PDF download — the on-screen grid already renders these
+   * itself, client-side (apps/web's useSpecialPeriods).
+   */
+  private async resolveActivitySlots(group: ClassLevelCategoryGroup): Promise<TimetablePdfSlot[]> {
+    const structure = await this.resolvePeriodStructure(group);
+    if (!structure) return [];
+
+    const rows = await this.prisma.schedulingConstraint.findMany({
+      where: {
+        scope: ScheduleScope.CLASS_TIMETABLE,
+        classLevelCategoryGroup: group,
+        isActive: true,
+        key: { in: ["SPECIAL_PERIODS", "FRIDAY_TRAILING_ACTIVITY_LABEL", "FRIDAY_TRAILING_ACTIVITY_END_TIME"] },
+      },
+    });
+    const get = (key: string): unknown => rows.find((r) => r.key === key)?.value;
+
+    const activitySlots: TimetablePdfSlot[] = [];
+    for (const special of parseSpecialPeriods(get("SPECIAL_PERIODS"))) {
+      activitySlots.push({
+        dayOfWeek: special.day,
+        startTime: computePeriodTime(structure, special.day, special.startPeriod).startTime,
+        endTime: computePeriodTime(structure, special.day, special.endPeriod).endTime,
+        lines: [special.label, "School activity"],
+        isActivity: true,
+      });
+    }
+
+    const trailingLabel = get("FRIDAY_TRAILING_ACTIVITY_LABEL");
+    const trailingEndTime = get("FRIDAY_TRAILING_ACTIVITY_END_TIME");
+    if (typeof trailingLabel === "string" && typeof trailingEndTime === "string") {
+      const trailingStartTime = computePeriodTime(structure, DayOfWeek.FRIDAY, structure.fridayPeriodsPerDay).endTime;
+      if (trailingStartTime < trailingEndTime) {
+        activitySlots.push({
+          dayOfWeek: DayOfWeek.FRIDAY,
+          startTime: trailingStartTime,
+          endTime: trailingEndTime,
+          lines: [trailingLabel, "School activity"],
+          isActivity: true,
+        });
+      }
+    }
+
+    return activitySlots;
+  }
+
+  /**
    * A4-landscape PDF of the same rows `findAll` would show on screen —
    * reuses that method verbatim (including its parent/category-group
    * scoping) so a download never exposes anything the requester couldn't
@@ -355,15 +458,32 @@ export class TimetableSlotService {
     const school = await this.prisma.schoolProfile.findFirstOrThrow();
 
     let title = "Timetable";
+    // Which category group(s) to pull activity periods (Sports, Fellowship,
+    // ...) for — resolved from the actual class arm(s) involved, not
+    // assumed, since a class-arm view is exactly one group but a teacher's
+    // personal timetable could in principle span more than one (nothing
+    // stops one teacher covering both JSS/SSS and Creche/Nursery/Primary).
+    const groups = new Set<ClassLevelCategoryGroup>();
     if (filters.classArmId) {
       const arm = await this.prisma.classArm.findUnique({
         where: { id: filters.classArmId },
-        include: { classLevel: { select: { name: true } } },
+        include: { classLevel: { select: { name: true, category: true } } },
       });
-      if (arm) title = withDisplayName(arm).displayName;
+      if (arm) {
+        title = withDisplayName(arm).displayName;
+        groups.add(categoryToGroup(arm.classLevel.category));
+      }
     } else if (filters.staffId) {
       const staff = await this.prisma.staffProfile.findUnique({ where: { id: filters.staffId }, include: { user: true } });
       if (staff) title = `${staff.user.firstName} ${staff.user.lastName} — Personal Timetable`;
+      const classArmIds = [...new Set(rows.map((row) => row.classArmId))];
+      if (classArmIds.length > 0) {
+        const arms = await this.prisma.classArm.findMany({
+          where: { id: { in: classArmIds } },
+          select: { classLevel: { select: { category: true } } },
+        });
+        for (const arm of arms) groups.add(categoryToGroup(arm.classLevel.category));
+      }
     }
 
     const subtitle = `${term.name}, ${term.academicSession.name}`;
@@ -374,13 +494,26 @@ export class TimetableSlotService {
       // Full subject name, not the internal code (SSS_GOVT, SSS_F/N, ...) —
       // a printed/downloaded timetable is read by people outside the admin
       // tooling (students, parents), who have no reason to know the code
-      // vocabulary. renderTimetablePdf truncates with an ellipsis rather
-      // than wrapping, so a long name in a narrow period column degrades
-      // gracefully instead of overlapping the line below it.
+      // vocabulary. Shown in full, wrapping onto as many lines as needed
+      // (renderTimetablePdf never truncates).
       lines: filters.classArmId
         ? [row.subject.name.trim(), `${row.staff.user.firstName} ${row.staff.user.lastName}`]
         : [row.subject.name.trim(), row.classArm.displayName],
     }));
+
+    // Merged in after the real slots — deduped by day/time/label since a
+    // teacher spanning more than one category group could otherwise get the
+    // same activity twice if both groups happen to share an identical
+    // SPECIAL_PERIODS entry.
+    const seenActivityKeys = new Set<string>();
+    for (const group of groups) {
+      for (const activitySlot of await this.resolveActivitySlots(group)) {
+        const key = `${activitySlot.dayOfWeek}|${activitySlot.startTime}|${activitySlot.endTime}|${activitySlot.lines[0]}`;
+        if (seenActivityKeys.has(key)) continue;
+        seenActivityKeys.add(key);
+        slots.push(activitySlot);
+      }
+    }
 
     return renderTimetablePdf(title, subtitle, slots, school.name);
   }

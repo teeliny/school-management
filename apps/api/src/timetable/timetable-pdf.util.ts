@@ -7,6 +7,11 @@ import { DAYS_OF_WEEK } from "@school/types";
 const NAVY = "#001B3A";
 const MUTED = "#6b7280";
 const BORDER = "#d8dce3";
+// Distinct from NAVY specifically so a fixed whole-school activity block
+// (Sports, Extra-Curricular, Fellowship, ...) never reads as just another
+// academic subject at a glance — paired with an italic font and a dashed
+// cell border (see the per-slot rendering below) rather than a solid one.
+const ACTIVITY_COLOR = "#92400e";
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
   MONDAY: "Monday",
@@ -23,6 +28,13 @@ export interface TimetablePdfSlot {
   // Rendered top-to-bottom inside the slot's cell — [subject, teacherOrClassArm]
   // for a class view, [subject, classArm] for a per-teacher view.
   lines: string[];
+  // A fixed, non-subject, whole-school block (Sports, Extra-Curricular,
+  // Fellowship, ...) — sourced from CLASS_TIMETABLE's SPECIAL_PERIODS/
+  // FRIDAY_TRAILING_ACTIVITY_* SchedulingConstraint entries rather than a
+  // real TimetableSlot row, since one never gets created for these (the
+  // whole point is blocking the AI solver from scheduling a real subject
+  // there). Styled distinctly below so it's never mistaken for one.
+  isActivity?: boolean;
 }
 
 interface Column {
@@ -117,8 +129,11 @@ export function renderTimetablePdf(
     doc.font("Helvetica").fontSize(10).fillColor(MUTED).text(subtitle.toUpperCase(), { align: "center" });
     doc.moveDown(0.6);
 
-    const daysPresent = DAYS_OF_WEEK.filter((day) => slots.some((s) => s.dayOfWeek === day));
-    const days = daysPresent.length > 0 ? daysPresent : DAYS_OF_WEEK;
+    // Every weekday is shown even when a whole day has zero periods — a
+    // teacher with a completely free Wednesday should still see an empty
+    // WEDNESDAY row with its normal bordered periods (uniform display),
+    // rather than that row silently vanishing from the grid.
+    const days = DAYS_OF_WEEK;
 
     if (slots.length === 0) {
       doc.font("Helvetica").fontSize(11).fillColor(MUTED).text("NO APPROVED PERIODS YET.", { align: "center" });
@@ -146,7 +161,14 @@ export function renderTimetablePdf(
     const headerRowHeight = 18;
     const headerRowCount = 1 + (fridayNeedsOwnRow ? 1 : 0);
     const gridTop = doc.y;
-    const gridBottom = doc.page.height - doc.page.margins.bottom;
+    // The grid no longer stretches to fill the entire remaining page —
+    // on a typical timetable (a couple of short lines of text per cell)
+    // that left every row awkwardly tall, with content stranded near the
+    // top of a mostly-empty box. 75% of the available height keeps rows a
+    // sensible, consistent size regardless of how few periods there are.
+    const GRID_HEIGHT_FRACTION = 0.75;
+    const availableHeight = doc.page.height - doc.page.margins.bottom - gridTop;
+    const gridBottom = gridTop + availableHeight * GRID_HEIGHT_FRACTION;
     const dayRowHeight = (gridBottom - gridTop - headerRowHeight * headerRowCount) / days.length;
 
     function drawColumnHeaderRow(y: number, cols: Column[], label: string | null): void {
@@ -198,12 +220,18 @@ export function renderTimetablePdf(
         .fillColor(NAVY)
         .text(DAY_LABELS[day].toUpperCase(), contentLeft, y + dayRowHeight / 2 - 5, { width: dayLabelWidth - 8 });
 
-      const dayColumns = day === "FRIDAY" ? fridayColumns : columns;
+      // Falls back to the shared Mon-Thu columns whenever this day has no
+      // slots of its own to derive a column set from — e.g. a teacher with
+      // zero Friday periods would otherwise get 0 fridayColumns and render
+      // that whole row with no cells at all, rather than the empty-but-
+      // bordered periods every other day gets.
+      const dayColumns = day === "FRIDAY" && fridayColumns.length > 0 ? fridayColumns : columns;
       const daySlots = slots.filter((s) => s.dayOfWeek === day);
 
-      for (const slot of daySlots) {
-        const columnIndex = dayColumns.findIndex((c) => c.startTime === slot.startTime && c.endTime === slot.endTime);
-        if (columnIndex === -1) continue; // shouldn't happen — dayColumns is built from these same slots
+      // Every period column gets its own bordered cell, occupied or not —
+      // previously only columns with an actual slot were drawn, so a free
+      // period looked like a gap in the grid rather than an empty period.
+      for (const [columnIndex, col] of dayColumns.entries()) {
         const x = gridLeft + columnIndex * columnWidth;
         const cellPad = 2;
 
@@ -212,40 +240,58 @@ export function renderTimetablePdf(
         // period on the page is most of the page, which is exactly the
         // "watermark is covered for most part" problem this replaces.
         // Border only, same as the header strip above.
+        const slot = daySlots.find((s) => s.startTime === col.startTime && s.endTime === col.endTime);
+
+        // A fixed activity block (Sports, Fellowship, ...) gets a dashed
+        // border instead of solid, so it reads as "not a real class" even
+        // before the text is legible — same reasoning as its distinct
+        // color/italic text below.
+        if (slot?.isActivity) doc.dash(2.5, { space: 1.5 });
         doc
           .rect(x + cellPad, y + cellPad, columnWidth - cellPad * 2, dayRowHeight - cellPad * 2)
           .strokeColor(BORDER)
           .lineWidth(0.5)
           .stroke();
+        if (slot?.isActivity) doc.undash();
+
+        if (!slot) continue; // empty period — the border above is all it gets
 
         // The subject name is shown in FULL, never truncated — it wraps
-        // onto as many lines as it needs. The teacher/class-arm name below
-        // it is positioned dynamically, measured off the subject's own
-        // actual rendered height (doc.heightOfString), rather than a fixed
-        // per-line offset — a fixed offset is what previously caused the
-        // second line to overlap the first whenever a long subject name
-        // (e.g. "Christian Religious Studies") wrapped onto more than one
-        // visual line.
+        // onto as many lines as it needs. Both lines are measured up front
+        // (rather than drawn as soon as they're computed) so their combined
+        // height can be centered inside the cell, instead of the fixed
+        // "start 3pt from the top" anchor that left short content stranded
+        // near the top of a much taller cell.
         const textX = x + cellPad + 3;
         const textWidth = Math.max(4, columnWidth - cellPad * 2 - 6);
-        const cellInnerBottom = y + dayRowHeight - cellPad - 2;
+        const cellInnerTop = y + cellPad;
+        const cellInnerHeight = dayRowHeight - cellPad * 2;
         const [subjectText, secondLineText] = slot.lines;
 
-        doc.font("Helvetica-Bold").fontSize(7.5);
+        const subjectFont = slot.isActivity ? "Helvetica-BoldOblique" : "Helvetica-Bold";
+        const subjectColor = slot.isActivity ? ACTIVITY_COLOR : NAVY;
+        doc.font(subjectFont).fontSize(7.5);
         const subjectUpper = (subjectText ?? "").toUpperCase();
-        const subjectTop = y + cellPad + 3;
         const subjectHeight = doc.heightOfString(subjectUpper, { width: textWidth });
-        doc.fillColor(NAVY).text(subjectUpper, textX, subjectTop, { width: textWidth });
 
-        if (secondLineText) {
-          const secondLineTop = subjectTop + subjectHeight + 2;
-          if (secondLineTop < cellInnerBottom) {
-            doc
-              .font("Helvetica")
-              .fontSize(6.5)
-              .fillColor(MUTED)
-              .text(secondLineText.toUpperCase(), textX, secondLineTop, { width: textWidth });
-          }
+        const secondLineUpper = secondLineText ? secondLineText.toUpperCase() : null;
+        let secondLineHeight = 0;
+        if (secondLineUpper) {
+          doc.font(slot.isActivity ? "Helvetica-Oblique" : "Helvetica").fontSize(6.5);
+          secondLineHeight = doc.heightOfString(secondLineUpper, { width: textWidth });
+        }
+        const lineGap = secondLineUpper ? 2 : 0;
+        const totalContentHeight = subjectHeight + lineGap + secondLineHeight;
+        const contentTop = cellInnerTop + Math.max(0, (cellInnerHeight - totalContentHeight) / 2);
+
+        doc.font(subjectFont).fontSize(7.5).fillColor(subjectColor).text(subjectUpper, textX, contentTop, { width: textWidth });
+
+        if (secondLineUpper) {
+          doc
+            .font(slot.isActivity ? "Helvetica-Oblique" : "Helvetica")
+            .fontSize(6.5)
+            .fillColor(MUTED)
+            .text(secondLineUpper, textX, contentTop + subjectHeight + lineGap, { width: textWidth });
         }
       }
 
