@@ -18,6 +18,10 @@ from pydantic import BaseModel
 
 class SubjectPayload(BaseModel):
     subjectId: str
+    # Display-only (error messages) — never used for matching/solving, that's
+    # all subjectId. Lets an infeasibility reason name the actual subject
+    # instead of an opaque id.
+    subjectName: str
     staffId: str
     periodsPerWeek: int
     requiresCalculation: bool
@@ -27,10 +31,25 @@ class SubjectPayload(BaseModel):
     # scheduled at the exact same (day, period) instead of each reserving
     # separate weekly capacity. None means "not part of a bundle."
     concurrencyGroupId: str | None = None
+    # Hard constraint (SUBJECT_ALLOWED_DAYS, apps/worker resolves this per
+    # Subject.name) — None/empty means "any day," today's default. When set,
+    # this subject can ONLY be scheduled on one of these days, so
+    # `periodsPerWeek` must fit within them (checked the same "not enough
+    # open slots" way as every other blocked-period source).
+    allowedDays: list[str] | None = None
+    # Soft preference (SUBJECT_PREFER_MORNING) — no hard restriction, but the
+    # solver's objective rewards placing this subject's occurrences at or
+    # before breakAfterPeriod (the same morning/afternoon split
+    # CALCULATION_SUBJECTS_MORNING already uses as a HARD cutoff for
+    # requiresCalculation subjects).
+    preferMorning: bool = False
 
 
 class ClassArmPayload(BaseModel):
     classArmId: str
+    # Display-only (error messages), e.g. "RECEPTION 1 DIAMOND" — same
+    # `${classLevel.name} ${arm.name}` convention as apps/api's withDisplayName.
+    classArmDisplayName: str
     # Lets _solve_group key a synced elective-block bundle (see
     # GroupPayload.syncedElectiveClassLevelIds) by ClassLevel instead of
     # ClassArm.
@@ -93,13 +112,13 @@ def solve_class_timetable(
     cross_group_staff_ranges: dict[str, list[tuple[str, str, str]]] = {}
     for group in groups:
         augmented_group = _augment_with_cross_group_blocks(group, cross_group_staff_ranges)
-        rows = _solve_group(augmented_group, calculation_subjects_morning)
+        rows, failure_reason = _solve_group(augmented_group, calculation_subjects_morning)
         if rows is None:
             return {
                 "callbackToken": callback_token,
                 "error": (
                     f"No feasible class timetable found for group {group.group} "
-                    f"(requestId={request_id})"
+                    f"(requestId={request_id}): {failure_reason}"
                 ),
             }
         generated_rows.extend(rows)
@@ -167,7 +186,8 @@ def _augment_with_cross_group_blocks(
 def _solve_group(
     group: GroupPayload,
     calculation_subjects_morning: bool,
-) -> list[dict[str, Any]] | None:
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Returns (rows, None) on success, or (None, human-readable reason) on failure."""
     model = cp_model.CpModel()
 
     def periods_for_day(day: str) -> range:
@@ -184,6 +204,8 @@ def _solve_group(
         staff_blocked_raw = group.staffBlockedPeriods.get(subject.staffId, {})
         blocked_here = arm_blocked.get(day, set()) | set(staff_blocked_raw.get(day, []))
         if period in blocked_here:
+            return False
+        if subject.allowedDays and day not in subject.allowedDays:
             return False
         return not (calculation_subjects_morning and subject.requiresCalculation and period > group.breakAfterPeriod)
 
@@ -255,8 +277,8 @@ def _solve_group(
                 # Every member points at the SAME BoolVar object rather than
                 # each getting its own — this is what forces bundle-mates
                 # onto the identical slot with zero extra constraints: every
-                # per-subject constraint below (periodsPerWeek sum, ≤1/day,
-                # teacher conflict) already reads
+                # per-subject constraint below (periodsPerWeek sum, per-day
+                # cap, teacher conflict) already reads
                 # variables[(arm, subject, day, period)] on its own, so
                 # sharing the object keeps them all in lockstep.
                 shared_var = model.new_bool_var(f"x_{bundle_key}_{day}_{period}")
@@ -285,7 +307,13 @@ def _solve_group(
                 if vars_here:
                     model.add(sum(vars_here) <= 1)
 
-    # Exactly periodsPerWeek occurrences, at most once/day, per (arm, subject).
+    # Exactly periodsPerWeek occurrences per (arm, subject), spread as evenly
+    # as the week allows: at most ceil(periodsPerWeek / len(days)) per day,
+    # e.g. 1/day for periodsPerWeek<=5 (today's original "once/day" behavior,
+    # unchanged), 2/day for a 6-periods/week subject over a 5-day week (the
+    # smallest per-day cap that still admits a solution) — a subject with
+    # more weekly periods than the week has days would otherwise be
+    # structurally unsolvable no matter how much capacity/staffing exists.
     for arm in group.classArms:
         for subject in arm.subjects:
             subject_vars = [
@@ -294,10 +322,25 @@ def _solve_group(
             if len(subject_vars) < subject.periodsPerWeek:
                 # Not enough open (unblocked, in-window) slots exist even in
                 # principle — fail fast rather than build a model already
-                # known to be infeasible.
-                return None
+                # known to be infeasible. By far the most common/diagnosable
+                # failure (a periodsPerWeek/SUBJECT_ALLOWED_DAYS/blocked-period
+                # mismatch), so it gets a specific, actionable reason instead
+                # of the generic INFEASIBLE message below.
+                allowed_note = f" (restricted to {', '.join(subject.allowedDays)})" if subject.allowedDays else ""
+                return None, (
+                    f'"{subject.subjectName}" in {arm.classArmDisplayName} needs '
+                    f"{subject.periodsPerWeek} period(s)/week but only {len(subject_vars)} "
+                    f"open slot(s) are available{allowed_note} — check blocked periods, "
+                    f"SUBJECT_ALLOWED_DAYS, teacher availability, or this subject's "
+                    f"periods/week."
+                )
             model.add(sum(subject_vars) == subject.periodsPerWeek)
 
+            # ceil(periodsPerWeek / the days it can actually land on) — the
+            # allowed-day subset when SUBJECT_ALLOWED_DAYS restricts this
+            # subject, otherwise the whole week (today's behavior).
+            eligible_day_count = len(subject.allowedDays) if subject.allowedDays else len(group.days)
+            max_per_day = max(1, -(-subject.periodsPerWeek // eligible_day_count))  # ceil division
             for day in group.days:
                 day_vars = [
                     v
@@ -305,7 +348,7 @@ def _solve_group(
                     if arm_id == arm.classArmId and subject_id == subject.subjectId and d == day
                 ]
                 if day_vars:
-                    model.add(sum(day_vars) <= 1)
+                    model.add(sum(day_vars) <= max_per_day)
 
     # No teacher double-booked across class arms within this solve — deduped
     # by variable identity (not just by (arm, subject) pair) so a staff
@@ -343,15 +386,52 @@ def _solve_group(
     # period per day total" cap needs more distinct calc-subject days than a
     # 5-day week has, making the model infeasible regardless of staffing.
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
     # First feasible solution only (BUILD_PLAN.md §9: "a usable draft ...
     # requiring only minor manual edits", not a globally-optimized
-    # timetable) — no objective function set.
+    # timetable) — UNLESS at least one subject sets preferMorning
+    # (SUBJECT_PREFER_MORNING), in which case the search maximizes the count
+    # of that subject's occurrences landing at/before breakAfterPeriod
+    # (morning) instead of stopping at the first feasible arrangement. Still
+    # bounded by the same SOLVE_TIME_LIMIT_SECONDS — the solver returns its
+    # best-found FEASIBLE arrangement if it can't prove OPTIMAL in time,
+    # exactly like today's plain feasibility search.
+    morning_terms: list[Any] = []
+    seen_morning_var_ids: set[int] = set()
+    for (arm_id, subject_id, day, period), var in variables.items():
+        subject = subject_by_arm_id[(arm_id, subject_id)]
+        if not subject.preferMorning or period > group.breakAfterPeriod:
+            continue
+        if id(var) in seen_morning_var_ids:
+            continue
+        seen_morning_var_ids.add(id(var))
+        morning_terms.append(var)
+    if morning_terms:
+        model.maximize(sum(morning_terms))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
     status = solver.solve(model)
 
+    if status == cp_model.INFEASIBLE:
+        arm_names = ", ".join(sorted({arm.classArmDisplayName for arm in group.classArms}))
+        return None, (
+            f"No arrangement satisfies every constraint together across {arm_names} "
+            f"— likely a teacher double-booked beyond their available periods, or "
+            f"SUBJECT_ALLOWED_DAYS pinning more than one subject onto the same "
+            f"limited day(s). Try loosening SUBJECT_ALLOWED_DAYS, reviewing teacher "
+            f"assignments, or reducing a subject's periods/week for this group."
+        )
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None
+        # UNKNOWN (or, in principle, MODEL_INVALID) — the search neither found
+        # nor ruled out a solution within the time budget, distinct from a
+        # proven INFEASIBLE above: worth telling the admin a retry might
+        # actually help, unlike the true-infeasible case.
+        return None, (
+            f"The solver could not find or rule out a solution within "
+            f"{SOLVE_TIME_LIMIT_SECONDS:.0f}s — try generating again, or simplify "
+            f"this group's constraints (fewer restricted subjects or class arms "
+            f"per run)."
+        )
 
     rows: list[dict[str, Any]] = []
     for (arm_id, subject_id, day, period), var in variables.items():
@@ -367,7 +447,7 @@ def _solve_group(
                     "endTime": end_time,
                 }
             )
-    return rows
+    return rows, None
 
 
 def _compute_period_time(group: GroupPayload, day: str, period_index: int) -> tuple[str, str]:

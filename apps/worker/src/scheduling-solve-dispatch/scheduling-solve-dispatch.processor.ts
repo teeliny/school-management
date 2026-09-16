@@ -17,7 +17,9 @@ import {
   categoryToGroup,
   computePeriodTime,
   DAYS_OF_WEEK,
+  normalizeSubjectName,
   parseSpecialPeriods,
+  parseSubjectDayRestrictions,
   QUEUE_NAMES,
   timeRangesOverlap,
   type ClassLevelCategoryGroup,
@@ -35,6 +37,10 @@ const GENERATION_CATEGORIES: ClassLevelCategory[] = CLASS_LEVEL_CATEGORIES.filte
 
 interface RequiredSubject {
   id: string;
+  // Only used to match against SUBJECT_ALLOWED_DAYS/SUBJECT_PREFER_MORNING
+  // entries (keyed by Subject.name, case-insensitively — see
+  // resolveSubjectDayPreferences) — never sent to the Python solver itself.
+  name: string;
   requiresCalculation: boolean;
   periodsPerWeek: number;
   // "Options column" membership (ClassSubjectConcurrencyGroup) — subjects
@@ -46,14 +52,34 @@ interface RequiredSubject {
 
 interface ResolvedSubject {
   subjectId: string;
+  // Display-only (Python solver's infeasibility error messages) — never
+  // used for matching/solving there, that's all subjectId.
+  subjectName: string;
   staffId: string;
   periodsPerWeek: number;
   requiresCalculation: boolean;
   concurrencyGroupId: string | null;
+  // Hard/soft day-of-week scheduling preferences (SUBJECT_ALLOWED_DAYS/
+  // SUBJECT_PREFER_MORNING, CLASS_TIMETABLE only) — resolved here by subject
+  // name (see resolveSubjectDayPreferences) since the SchedulingConstraint
+  // editor has no subjectId to reference. undefined/false means "no
+  // restriction," today's behavior for every subject that isn't configured.
+  allowedDays?: DayOfWeek[];
+  preferMorning: boolean;
+}
+
+/** Parsed once per group by resolveSubjectDayPreferences — see its own comment. */
+interface SubjectDayPreferences {
+  allowedDaysBySubject: Map<string, DayOfWeek[]>;
+  preferMorningSubjects: Set<string>;
 }
 
 interface ClassArmPayload {
   classArmId: string;
+  // Display-only (Python solver's infeasibility error messages) — same
+  // `${classLevel.name} ${arm.name}` convention as apps/api's withDisplayName
+  // (e.g. class-arm.ts), computed here since the worker never imports apps/api.
+  classArmDisplayName: string;
   // Lets the solver key a synced elective-block bundle (see
   // syncedElectiveClassLevelIds below) by ClassLevel instead of ClassArm.
   classLevelId: string;
@@ -255,6 +281,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       // same for every class arm in the group, unlike the per-arm/per-staff
       // TimetableSlot-based blocks below, so resolved once per group.
       const specialPeriodBlocks = await this.resolveSpecialPeriodBlocks(group);
+      const subjectDayPreferences = await this.resolveSubjectDayPreferences(group);
       const syncedElectiveClassLevelIds = syncSssElectiveBlocksAcrossArms
         ? await this.resolveSyncedElectiveClassLevelIds(arms, term.academicSessionId, syncSssElectiveBlocksMaxArmCount)
         : [];
@@ -268,10 +295,12 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           arm.classLevelId,
           term.academicSessionId,
           term.id,
+          subjectDayPreferences,
         );
         const armSlots = existingSlots.filter((s) => s.classArmId === arm.id);
         classArmPayloads.push({
           classArmId: arm.id,
+          classArmDisplayName: `${arm.classLevel.name} ${arm.name}`,
           classLevelId: arm.classLevelId,
           subjects,
           blockedPeriods: this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
@@ -925,6 +954,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         return [
           {
             id: cs.subject.id,
+            name: cs.subject.name,
             requiresCalculation: cs.subject.requiresCalculation,
             periodsPerWeek: cs.periodsPerWeek,
             concurrencyGroupId: cs.concurrencyGroupId,
@@ -937,6 +967,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         .filter((child) => !disabledChildIds.has(child.id))
         .map((child) => ({
           id: child.id,
+          name: child.name,
           requiresCalculation: child.requiresCalculation,
           // A child inherits the parent ClassSubject row's periodsPerWeek
           // unless it has its own ClassSubjectChildPeriods override (e.g.
@@ -955,6 +986,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     classLevelId: string,
     academicSessionId: string,
     termId: string,
+    subjectDayPreferences: SubjectDayPreferences,
   ): Promise<ResolvedSubject[]> {
     const candidates = await this.resolveRequiredSubjects(category, termId, classLevelId);
 
@@ -973,12 +1005,16 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         this.logger.warn(`No active SUBJECT_TEACHER for subject ${subject.id} in class arm ${classArmId} — skipping`);
         continue;
       }
+      const nameKey = normalizeSubjectName(subject.name);
       resolved.push({
         subjectId: subject.id,
+        subjectName: subject.name,
         staffId: assignment.staffId,
         periodsPerWeek: subject.periodsPerWeek,
         requiresCalculation: subject.requiresCalculation,
         concurrencyGroupId: subject.concurrencyGroupId,
+        allowedDays: subjectDayPreferences.allowedDaysBySubject.get(nameKey),
+        preferMorning: subjectDayPreferences.preferMorningSubjects.has(nameKey),
       });
     }
     return resolved;
@@ -1027,6 +1063,47 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       for (let period = special.startPeriod; period <= special.endPeriod; period++) daySet.add(period);
     }
     return Object.fromEntries([...blocked.entries()].map(([day, set]) => [day, [...set]]));
+  }
+
+  /**
+   * SUBJECT_ALLOWED_DAYS (hard) / SUBJECT_PREFER_MORNING (soft), CLASS_TIMETABLE
+   * only — both keyed by Subject.name (normalizeSubjectName), not subjectId,
+   * since the generic SchedulingConstraint editor has no subject picker (see
+   * parseSubjectDayRestrictions' comment in @school/types). Parsed once per
+   * group, same as resolveSpecialPeriodBlocks, then looked up per resolved
+   * subject in resolveSubjectsForClassArm. The Python solver enforces
+   * allowedDays as a hard per-day filter and preferMorning as an
+   * objective-function preference (periods at/before breakAfterPeriod) —
+   * neither restricts anything when unconfigured, same as today.
+   */
+  private async resolveSubjectDayPreferences(group: ClassLevelCategoryGroup): Promise<SubjectDayPreferences> {
+    const rows = await this.prisma.schedulingConstraint.findMany({
+      where: {
+        scope: ScheduleScope.CLASS_TIMETABLE,
+        classLevelCategoryGroup: group,
+        key: { in: ["SUBJECT_ALLOWED_DAYS", "SUBJECT_PREFER_MORNING"] },
+        isActive: true,
+      },
+    });
+
+    const allowedDaysBySubject = new Map<string, DayOfWeek[]>();
+    const allowedDaysRow = rows.find((r) => r.key === "SUBJECT_ALLOWED_DAYS");
+    for (const { subjectName, day } of parseSubjectDayRestrictions(allowedDaysRow?.value)) {
+      const key = normalizeSubjectName(subjectName);
+      const days = allowedDaysBySubject.get(key) ?? [];
+      if (!days.includes(day)) days.push(day);
+      allowedDaysBySubject.set(key, days);
+    }
+
+    const preferMorningRow = rows.find((r) => r.key === "SUBJECT_PREFER_MORNING");
+    const preferMorningValue = preferMorningRow?.value;
+    const preferMorningSubjects = new Set(
+      (Array.isArray(preferMorningValue) ? preferMorningValue : [])
+        .filter((v): v is string => typeof v === "string")
+        .map(normalizeSubjectName),
+    );
+
+    return { allowedDaysBySubject, preferMorningSubjects };
   }
 
   private mergeBlockedPeriods(a: Record<string, number[]>, b: Record<string, number[]>): Record<string, number[]> {

@@ -373,6 +373,45 @@ export function parseSpecialPeriods(raw: unknown): SpecialPeriod[] {
   return result;
 }
 
+/** One allowed weekday for a subject — see SUBJECT_ALLOWED_DAYS below. */
+export interface SubjectDayRestriction {
+  subjectName: string;
+  day: DayOfWeek;
+}
+
+/**
+ * Parses SUBJECT_ALLOWED_DAYS's `"SubjectName:DAY"` string-list format — one
+ * entry per allowed day, so a subject needing more than one day (e.g. French
+ * on Tuesday and Thursday) gets two entries. `subjectName` matches
+ * `Subject.name` case-insensitively (via {@link normalizeSubjectName}) since
+ * a subject like "Phonics" is one shared catalog row reused by every
+ * ClassSubject/category that teaches it — there's no subjectId available to
+ * an admin typing this in the generic SchedulingConstraint editor. Same
+ * defensive/malformed-entries-skipped posture as parseSpecialPeriods.
+ * CLASS_TIMETABLE only (SUBJECT_PREFER_MORNING is its "soft" counterpart) —
+ * the worker resolves both into concrete per-subject fields on the payload
+ * sent to the Python solver, which enforces allowedDays as a hard constraint
+ * and preferMorning as an objective-function preference.
+ */
+export function parseSubjectDayRestrictions(raw: unknown): SubjectDayRestriction[] {
+  if (!Array.isArray(raw)) return [];
+  const result: SubjectDayRestriction[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const match = /^(.+):([A-Z]+)$/.exec(entry.trim());
+    if (!match) continue;
+    const [, subjectName, day] = match as unknown as [string, string, string];
+    if (!DAYS_OF_WEEK.includes(day as DayOfWeek)) continue;
+    result.push({ subjectName: subjectName.trim(), day: day as DayOfWeek });
+  }
+  return result;
+}
+
+/** Case/whitespace-insensitive key for matching a SchedulingConstraint subject-name entry against `Subject.name`. */
+export function normalizeSubjectName(name: string): string {
+  return name.trim().toUpperCase();
+}
+
 /** "HH:mm" -> minutes since midnight. */
 export function timeToMinutes(time: string): number {
   const [h, m] = time.split(":");
