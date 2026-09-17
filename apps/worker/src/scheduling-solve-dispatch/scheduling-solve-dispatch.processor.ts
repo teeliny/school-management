@@ -61,21 +61,29 @@ interface ResolvedSubject {
   requiresCalculation: boolean;
   concurrencyGroupId: string | null;
   // Hard/soft day-of-week scheduling preferences (SUBJECT_ALLOWED_DAYS/
-  // SUBJECT_PREFER_MORNING, CLASS_TIMETABLE only) — resolved here by subject
-  // name (see resolveSubjectDayPreferences) since the SchedulingConstraint
-  // editor has no subjectId to reference. undefined/false means "no
-  // restriction," today's behavior for every subject that isn't configured.
+  // SUBJECT_PREFER_MORNING/SUBJECT_PREFER_AFTERNOON, CLASS_TIMETABLE only) —
+  // resolved here by subject name (see resolveSubjectDayPreferences) since
+  // the SchedulingConstraint editor has no subjectId to reference.
+  // undefined/false means "no restriction," today's behavior for every
+  // subject that isn't configured. preferMorning/preferAfternoon are
+  // mutually exclusive in practice (a subject configured under both
+  // SUBJECT_PREFER_MORNING and SUBJECT_PREFER_AFTERNOON would just cancel
+  // out in the solver's objective — not validated against here, same
+  // "admin's responsibility" posture as every other SchedulingConstraint).
   allowedDays?: DayOfWeek[];
   preferMorning: boolean;
+  preferAfternoon: boolean;
   // SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES/SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES
   // (CLASS_TIMETABLE only) — set (post-resolution, see
-  // resolveWholeLevelSyncKeys) when this subject should be forced onto the
-  // identical (day, period) as every other ClassLevel in the same named pool
-  // (e.g. "pool:PRIMARY_CLASS_TEACHERS::MATHEMATICS") — undefined means "no
-  // pool, schedule independently," today's behavior for every subject that
+  // resolveWholeLevelSyncKeys) when this subject should be REWARDED (not
+  // forced — see class_timetable.py's sync_reward_terms) for landing on the
+  // identical (day, period) as every other ClassLevel in the same named
+  // pool (e.g. "pool:PRIMARY_CLASS_TEACHERS::MATHEMATICS") — undefined means
+  // "no pool, no alignment reward," today's behavior for every subject that
   // isn't configured, or one excluded by name (e.g. Music/Phonics/French,
   // taught by one roaming specialist who visits each arm at a DIFFERENT
-  // time and can't be forced into lockstep with themselves).
+  // time — those still schedule fully independently, just without the
+  // reward nudging them toward a shared slot they structurally can't share).
   wholeLevelSyncKey?: string;
 }
 
@@ -83,6 +91,7 @@ interface ResolvedSubject {
 interface SubjectDayPreferences {
   allowedDaysBySubject: Map<string, DayOfWeek[]>;
   preferMorningSubjects: Set<string>;
+  preferAfternoonSubjects: Set<string>;
 }
 
 interface ClassArmPayload {
@@ -329,7 +338,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
 
         for (const subject of subjects) {
           if (staffBlockedPeriods[subject.staffId]) continue;
-          const staffSlots = existingSlots.filter((s) => s.staffId === subject.staffId);
+          // excludeFromStaffAvailability rows are kept on their own arm's
+          // timetable (armSlots above, unfiltered) but don't count as a real
+          // commitment for this staff member anywhere else — see the schema
+          // field's own comment.
+          const staffSlots = existingSlots.filter((s) => s.staffId === subject.staffId && !s.excludeFromStaffAvailability);
           staffBlockedPeriods[subject.staffId] = this.computeBlockedPeriods(structure, staffSlots);
         }
       }
@@ -1137,6 +1150,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         concurrencyGroupId: subject.concurrencyGroupId,
         allowedDays: subjectDayPreferences.allowedDaysBySubject.get(nameKey),
         preferMorning: subjectDayPreferences.preferMorningSubjects.has(nameKey),
+        preferAfternoon: subjectDayPreferences.preferAfternoonSubjects.has(nameKey),
       });
     }
     return resolved;
@@ -1188,22 +1202,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
-   * SUBJECT_ALLOWED_DAYS (hard) / SUBJECT_PREFER_MORNING (soft), CLASS_TIMETABLE
-   * only — both keyed by Subject.name (normalizeSubjectName), not subjectId,
-   * since the generic SchedulingConstraint editor has no subject picker (see
+   * SUBJECT_ALLOWED_DAYS (hard) / SUBJECT_PREFER_MORNING / SUBJECT_PREFER_AFTERNOON
+   * (both soft, mutually exclusive per subject), CLASS_TIMETABLE only — all
+   * keyed by Subject.name (normalizeSubjectName), not subjectId, since the
+   * generic SchedulingConstraint editor has no subject picker (see
    * parseSubjectDayRestrictions' comment in @school/types). Parsed once per
    * group, same as resolveSpecialPeriodBlocks, then looked up per resolved
    * subject in resolveSubjectsForClassArm. The Python solver enforces
-   * allowedDays as a hard per-day filter and preferMorning as an
-   * objective-function preference (periods at/before breakAfterPeriod) —
-   * neither restricts anything when unconfigured, same as today.
+   * allowedDays as a hard per-day filter, preferMorning as an
+   * objective-function preference for periods at/before breakAfterPeriod,
+   * and preferAfternoon as the mirror-image preference for periods after it
+   * — none restrict anything when unconfigured, same as today.
    */
   private async resolveSubjectDayPreferences(group: ClassLevelCategoryGroup): Promise<SubjectDayPreferences> {
     const rows = await this.prisma.schedulingConstraint.findMany({
       where: {
         scope: ScheduleScope.CLASS_TIMETABLE,
         classLevelCategoryGroup: group,
-        key: { in: ["SUBJECT_ALLOWED_DAYS", "SUBJECT_PREFER_MORNING"] },
+        key: { in: ["SUBJECT_ALLOWED_DAYS", "SUBJECT_PREFER_MORNING", "SUBJECT_PREFER_AFTERNOON"] },
         isActive: true,
       },
     });
@@ -1217,15 +1233,14 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       allowedDaysBySubject.set(key, days);
     }
 
-    const preferMorningRow = rows.find((r) => r.key === "SUBJECT_PREFER_MORNING");
-    const preferMorningValue = preferMorningRow?.value;
-    const preferMorningSubjects = new Set(
-      (Array.isArray(preferMorningValue) ? preferMorningValue : [])
-        .filter((v): v is string => typeof v === "string")
-        .map(normalizeSubjectName),
-    );
+    const parseNameSet = (key: string): Set<string> => {
+      const value = rows.find((r) => r.key === key)?.value;
+      return new Set((Array.isArray(value) ? value : []).filter((v): v is string => typeof v === "string").map(normalizeSubjectName));
+    };
+    const preferMorningSubjects = parseNameSet("SUBJECT_PREFER_MORNING");
+    const preferAfternoonSubjects = parseNameSet("SUBJECT_PREFER_AFTERNOON");
 
-    return { allowedDaysBySubject, preferMorningSubjects };
+    return { allowedDaysBySubject, preferMorningSubjects, preferAfternoonSubjects };
   }
 
   private mergeBlockedPeriods(a: Record<string, number[]>, b: Record<string, number[]>): Record<string, number[]> {

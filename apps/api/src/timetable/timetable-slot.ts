@@ -98,7 +98,10 @@ export class TimetableSlotService {
     } as const;
 
     const staffSlots = await client.timetableSlot.findMany({
-      where: { ...shared, staffId: input.staffId },
+      // excludeFromStaffAvailability rows are deliberately kept on their own
+      // arm's timetable but don't count as a real commitment for this staff
+      // member anywhere else — see the schema field's own comment.
+      where: { ...shared, staffId: input.staffId, excludeFromStaffAvailability: false },
     });
     for (const slot of staffSlots) {
       if (!timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) continue;

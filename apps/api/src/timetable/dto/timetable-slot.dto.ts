@@ -1,6 +1,6 @@
 import { PartialType } from "@nestjs/mapped-types";
 import { DayOfWeek } from "@prisma/client";
-import { IsEnum, IsOptional, IsString, IsUUID, Matches } from "class-validator";
+import { IsBoolean, IsEnum, IsOptional, IsString, IsUUID, Matches } from "class-validator";
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -34,6 +34,14 @@ export class CreateTimetableSlotDto {
   @IsOptional()
   @IsString()
   venue?: string;
+
+  // See TimetableSlot.excludeFromStaffAvailability's schema comment — a
+  // slot kept on the timetable for display/record purposes that shouldn't
+  // count as a real commitment when checking this staff member's
+  // availability elsewhere.
+  @IsOptional()
+  @IsBoolean()
+  excludeFromStaffAvailability?: boolean;
 }
 
 export class UpdateTimetableSlotDto extends PartialType(CreateTimetableSlotDto) {}

@@ -796,41 +796,51 @@ enum TimetableApprovalStatus {
 // origin"), same precedent as the class-teacher-duplicate rule. The indexes
 // below just make that check's WHERE clauses efficient.
 model TimetableSlot {
-  id                          String                     @id @default(uuid())
-  classArmId                  String
-  classArm                    ClassArm                   @relation(fields: [classArmId], references: [id], onDelete: Cascade)
-  subjectId                   String
-  subject                     Subject                    @relation(fields: [subjectId], references: [id])
-  staffId                     String
-  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
-  academicSessionId           String
-  academicSession             AcademicSession            @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
-  termId                      String
-  term                        Term                       @relation(fields: [termId], references: [id], onDelete: Cascade)
-  dayOfWeek                   DayOfWeek
+  id                           String                     @id @default(uuid())
+  classArmId                   String
+  classArm                     ClassArm                   @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  subjectId                    String
+  subject                      Subject                    @relation(fields: [subjectId], references: [id])
+  staffId                      String
+  staff                        StaffProfile               @relation(fields: [staffId], references: [id])
+  academicSessionId            String
+  academicSession              AcademicSession            @relation(fields: [academicSessionId], references: [id], onDelete: Cascade)
+  termId                       String
+  term                         Term                       @relation(fields: [termId], references: [id], onDelete: Cascade)
+  dayOfWeek                    DayOfWeek
   // "HH:mm" 24-hour strings, not @db.Time/DateTime — pairs directly with
   // <input type="time">, sidesteps the @db.Date/@IsDateString trap
   // (CLAUDE.md backend conventions). Compared as minutes-since-midnight in
   // the conflict-detection service, not lexicographically.
-  startTime                   String
-  endTime                     String
-  venue                       String?
-  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
-  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
-  approvedByUserId            String?
-  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
-  approvedAt                  DateTime?
+  startTime                    String
+  endTime                      String
+  venue                        String?
+  // A slot an Admin keeps on the timetable for display/record purposes even
+  // though the staff member doesn't actually deliver it there (e.g. a
+  // trailing "placeholder" period AI generation produced that everyone
+  // agrees is never really used) — true excludes it from that staff
+  // member's availability everywhere else (TimetableSlotService.
+  // assertNoConflicts' staff check, apps/worker's staffBlockedPeriods) while
+  // it still displays normally on THIS slot's own class arm's timetable and
+  // still occupies that arm's own blocked-period computation. Defaults to
+  // false (today's behavior for every existing/ordinary slot).
+  excludeFromStaffAvailability Boolean                    @default(false)
+  generatedBy                  TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus               TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId             String?
+  approvedByUser               User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                   DateTime?
   // BUILD_PLAN.md §9 Step 6: set only when approvalStatus=REJECTED, matching
   // the Payment/DiscountRequest reject-reason precedent.
-  rejectionReason             String?
+  rejectionReason              String?
   // Set only on AI-generated rows (never on MANUAL, which are auto-approved
   // at create time) — links this row back to the run that produced it, so a
   // whole roster can be approved/rejected in one atomic transaction instead
   // of per-row.
-  scheduleGenerationRequestId String?
-  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
-  createdAt                   DateTime                   @default(now())
-  updatedAt                   DateTime                   @updatedAt
+  scheduleGenerationRequestId  String?
+  scheduleGenerationRequest    ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                    DateTime                   @default(now())
+  updatedAt                    DateTime                   @updatedAt
 
   @@index([staffId, dayOfWeek, academicSessionId, termId])
   @@index([venue, dayOfWeek, academicSessionId, termId])
@@ -1859,14 +1869,14 @@ model Payment {
 // path (PRD §3.9/ARCHITECTURE §10.4) — this slice is the CASH path; gateway/
 // manual-transfer paths (later slices) create a Receipt the same way.
 model Receipt {
-  id            String   @id @default(uuid())
-  paymentId     String   @unique
-  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  id                String           @id @default(uuid())
+  paymentId         String           @unique
+  payment           Payment          @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   // Derived from the Payment's own UUID (`RCT-{payment.id.slice(0,8)}`,
   // uppercased) — globally unique with no counting/sequence query and no
   // race window, unlike a running count would have. Kept as-is; serialNumber
   // below is an additive, audit-facing complement, not a replacement.
-  receiptNumber String   @unique
+  receiptNumber     String           @unique
   // Audit/accounting-facing complement to receiptNumber: a per-
   // AcademicSession sequential serial (e.g. "2025/2026-00001"), so a
   // Bursar/auditor can spot a missing receipt from a session's run — the
@@ -1878,10 +1888,10 @@ model Receipt {
   academicSessionId String?
   academicSession   AcademicSession? @relation(fields: [academicSessionId], references: [id])
   sequenceNumber    Int?
-  serialNumber      String?  @unique
+  serialNumber      String?          @unique
   // Null until the async render job (apps/worker) completes.
-  pdfUrl        String?
-  issuedAt      DateTime @default(now())
+  pdfUrl            String?
+  issuedAt          DateTime         @default(now())
   // Set the first time this receipt is produced via the Bursar's
   // signature-copy bulk-print flow (PaymentService.buildBulkReceiptsPdf) —
   // null means it has never been through that flow. printCount tracks how
@@ -1890,8 +1900,8 @@ model Receipt {
   // original. Deliberately NOT touched by the individual auto-generated PDF
   // (pdfUrl above) — that's a digital record link, not a physical print the
   // Bursar produces and signs.
-  printedAt     DateTime?
-  printCount    Int      @default(0)
+  printedAt         DateTime?
+  printCount        Int              @default(0)
 
   @@index([academicSessionId, sequenceNumber])
   @@map("receipts")

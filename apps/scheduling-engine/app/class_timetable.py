@@ -43,18 +43,24 @@ class SubjectPayload(BaseModel):
     # CALCULATION_SUBJECTS_MORNING already uses as a HARD cutoff for
     # requiresCalculation subjects).
     preferMorning: bool = False
+    # Soft preference (SUBJECT_PREFER_AFTERNOON) — the mirror image of
+    # preferMorning: rewards placing this subject's occurrences strictly
+    # after breakAfterPeriod instead of at/before it.
+    preferAfternoon: bool = False
     # SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES/SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES
     # — apps/worker resolves this entirely by Subject.name/ClassLevel.name
     # (case/whitespace-insensitively) and periodsPerWeek-consistency BEFORE
     # this payload is built; never matched here, matching this file's
     # existing "subjectName stays display-only" convention. When set, every
-    # SubjectPayload across every arm sharing the identical string gets
-    # pooled into ONE bundle (see the bundles loop below) so they're forced
-    # onto the same (day, period) — None means "schedule independently,"
-    # today's behavior for every subject that isn't pooled or is explicitly
-    # excluded (e.g. Music/Phonics/French, where one specialist teacher
-    # visits each arm at a different time and can't teach every arm
-    # simultaneously).
+    # SubjectPayload across every arm sharing the identical string is
+    # scheduled independently (its OWN variable, not a shared one — see the
+    # bundles loop's comment for why) but REWARDED for landing on the same
+    # (day, period) as its sync-mates (see sync_reward_terms below) — a soft
+    # preference, not a hard requirement, precisely so one arm being
+    # unavailable (e.g. off with French/Music/Phonics's shared specialist)
+    # never blocks every OTHER arm from independently using that slot too.
+    # None means "no alignment reward," today's behavior for every subject
+    # that isn't pooled or is explicitly excluded.
     wholeLevelSyncKey: str | None = None
 
 
@@ -240,14 +246,23 @@ def _solve_group(
     #     A singleton (non-concurrency-group) subject stays keyed per-arm
     #     even on one of these ClassLevels — there's nothing to align it
     #     with.
-    #   - wholeLevelSyncKey: apps/worker precomputes this per-subject key
-    #     (already scoped to a named pool that can span MULTIPLE ClassLevels,
-    #     even across different ClassLevelCategory values — see
-    #     resolveWholeLevelSyncKeys) — every SubjectPayload sharing the exact
-    #     same string is pooled together directly, regardless of ClassLevel
-    #     or concurrencyGroupId. None (e.g. Music/Phonics/French — one
-    #     specialist teacher who visits each arm at a different time) keeps
-    #     that subject per-arm-independent.
+    # wholeLevelSyncKey (apps/worker's resolveWholeLevelSyncKeys) is
+    # deliberately NOT handled here as a third hard-shared-variable case —
+    # unlike a real concurrency-group bundle (physically one combined
+    # session), whole-level sync only wants "every arm's own class teacher
+    # happens to teach this at the same time as their sibling arms," which
+    # is a nice-to-have, not a physical requirement. Forcing it via one
+    # shared variable (this codebase's first attempt) meant the ENTIRE pool
+    # became unusable at any slot where even ONE member arm was blocked —
+    # e.g. by a subject like French/Music/Phonics whose one shared
+    # specialist teacher visits each arm at a staggered, different time —
+    # which left every OTHER (individually free) arm sitting idle too,
+    # instead of independently getting on with something else. Every
+    # wholeLevelSyncKey subject therefore falls through to the plain
+    # per-arm `else` branch below (its own independent variable, exactly
+    # like an ungrouped subject) — cross-arm alignment is instead
+    # encouraged, not required, via the soft `sync_reward_terms` objective
+    # built after the bundles loop.
     bundles: dict[str, list[tuple[str, SubjectPayload]]] = {}
     for arm in group.classArms:
         for subject in arm.subjects:
@@ -255,8 +270,6 @@ def _solve_group(
             is_synced_elective = subject.concurrencyGroupId is not None and arm.classLevelId in group.syncedElectiveClassLevelIds
             if is_synced_elective:
                 bundle_key = f"level:{arm.classLevelId}:{group_key}"
-            elif subject.wholeLevelSyncKey is not None:
-                bundle_key = subject.wholeLevelSyncKey
             else:
                 bundle_key = f"arm:{arm.classArmId}:{group_key}"
             bundles.setdefault(bundle_key, []).append((arm.classArmId, subject))
@@ -413,15 +426,56 @@ def _solve_group(
     # period per day total" cap needs more distinct calc-subject days than a
     # 5-day week has, making the model infeasible regardless of staffing.
 
+    # Soft cross-arm alignment reward for wholeLevelSyncKey subjects (see the
+    # bundles-loop comment above for why this isn't a hard shared-variable
+    # constraint). One arbitrary "anchor" arm per pool key is picked — since
+    # every member of a wholeLevelSyncKey bucket already has to agree on
+    # periodsPerWeek (apps/worker's resolveWholeLevelSyncKeys), any member
+    # works equally well as the reference every OTHER member is rewarded for
+    # matching. `match_var` is a standard reified-AND (`match == anchor AND
+    # other`): forced to 0 whenever either side is 0, and free to be 1 only
+    # when both are — maximizing its sum therefore rewards the solver for
+    # choosing the SAME (day, period) for both, without ever forbidding
+    # either variable from being 1 on its own when they don't align (e.g.
+    # because the anchor's arm is busy with French and this arm isn't).
+    sync_key_members: dict[str, list[tuple[str, str]]] = {}
+    for arm in group.classArms:
+        for subject in arm.subjects:
+            if subject.wholeLevelSyncKey is None:
+                continue
+            sync_key_members.setdefault(subject.wholeLevelSyncKey, []).append((arm.classArmId, subject.subjectId))
+
+    sync_reward_terms: list[Any] = []
+    for sync_key, members in sync_key_members.items():
+        if len(members) < 2:
+            continue
+        anchor_arm_id, anchor_subject_id = members[0]
+        for other_arm_id, other_subject_id in members[1:]:
+            for day in group.days:
+                for period in periods_for_day(day):
+                    anchor_var = variables.get((anchor_arm_id, anchor_subject_id, day, period))
+                    other_var = variables.get((other_arm_id, other_subject_id, day, period))
+                    if anchor_var is None or other_var is None:
+                        continue
+                    match_var = model.new_bool_var(f"match_{sync_key}_{other_arm_id}_{day}_{period}")
+                    model.add(match_var <= anchor_var)
+                    model.add(match_var <= other_var)
+                    model.add(match_var >= anchor_var + other_var - 1)
+                    sync_reward_terms.append(match_var)
+
     # First feasible solution only (BUILD_PLAN.md §9: "a usable draft ...
     # requiring only minor manual edits", not a globally-optimized
     # timetable) — UNLESS at least one subject sets preferMorning
-    # (SUBJECT_PREFER_MORNING), in which case the search maximizes the count
-    # of that subject's occurrences landing at/before breakAfterPeriod
-    # (morning) instead of stopping at the first feasible arrangement. Still
-    # bounded by the same SOLVE_TIME_LIMIT_SECONDS — the solver returns its
-    # best-found FEASIBLE arrangement if it can't prove OPTIMAL in time,
-    # exactly like today's plain feasibility search.
+    # (SUBJECT_PREFER_MORNING) or a wholeLevelSyncKey alignment reward exists
+    # above, in which case the search maximizes a weighted sum of both
+    # instead of stopping at the first feasible arrangement. Cross-arm
+    # alignment is weighted far above morning-placement (SYNC_MATCH_WEIGHT)
+    # since it's the primary ask or this whole mechanism (per-subject
+    # morning/afternoon placement is a secondary nicety layered on top) —
+    # still bounded by the same SOLVE_TIME_LIMIT_SECONDS, so the solver
+    # returns its best-found FEASIBLE arrangement if it can't prove OPTIMAL
+    # in time, exactly like today's plain feasibility search.
+    SYNC_MATCH_WEIGHT = 5
     morning_terms: list[Any] = []
     seen_morning_var_ids: set[int] = set()
     for (arm_id, subject_id, day, period), var in variables.items():
@@ -432,8 +486,18 @@ def _solve_group(
             continue
         seen_morning_var_ids.add(id(var))
         morning_terms.append(var)
-    if morning_terms:
-        model.maximize(sum(morning_terms))
+    afternoon_terms: list[Any] = []
+    seen_afternoon_var_ids: set[int] = set()
+    for (arm_id, subject_id, day, period), var in variables.items():
+        subject = subject_by_arm_id[(arm_id, subject_id)]
+        if not subject.preferAfternoon or period <= group.breakAfterPeriod:
+            continue
+        if id(var) in seen_afternoon_var_ids:
+            continue
+        seen_afternoon_var_ids.add(id(var))
+        afternoon_terms.append(var)
+    if sync_reward_terms or morning_terms or afternoon_terms:
+        model.maximize(SYNC_MATCH_WEIGHT * sum(sync_reward_terms) + sum(morning_terms) + sum(afternoon_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
