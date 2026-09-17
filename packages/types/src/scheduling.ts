@@ -90,6 +90,33 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   { scope: "CLASS_TIMETABLE", key: "SYNC_SSS_ELECTIVE_BLOCKS_ACROSS_ARMS", value: true },
   { scope: "CLASS_TIMETABLE", key: "SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT", value: 3 },
 
+  // A different cross-arm sync, for a different reason: at levels where
+  // every arm has its OWN class teacher covering nearly the whole
+  // curriculum (typically Nursery/Reception/lower Primary), that teacher's
+  // subjects don't need to be scheduled independently per arm OR per
+  // ClassLevel — every arm of every ClassLevel in the SAME named pool (e.g.
+  // Basic 1/2/3/4/6 as one pool, Reception 1/2 + Nursery 1/2 as a separate
+  // pool) can simply teach the same subject at the identical (day, period),
+  // since each arm's own class teacher still teaches only their own arm, not
+  // a combined class — so unlike SYNC_SSS_ELECTIVE_BLOCKS_* above there's no
+  // room/teacher-combining ceiling to bound (no arm-count cap) and no
+  // restriction to ClassSubjectConcurrencyGroup members (every subject, not
+  // just electives). See {@link parseSyncAllSubjectsPoolEntries}'s comment
+  // for the pool-format rationale (why pooling is by NAME, not by
+  // ClassLevel.id/Subject.id — it commonly spans different
+  // ClassLevelCategory values with their own independent ClassSubject
+  // catalogs). Not seeded with any default pools here — same "admin
+  // configures via the SchedulingConstraintManager UI, no code change
+  // needed" posture as SUBJECT_ALLOWED_DAYS/SUBJECT_PREFER_MORNING below,
+  // since which ClassLevels/pools this applies to is entirely
+  // school-specific.
+  //   SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES: string[] of "PoolId:ClassLevel.name"
+  //     — see parseSyncAllSubjectsPoolEntries.
+  //   SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES: string[] of Subject.name —
+  //     subjects that stay per-arm-independent even within a pooled
+  //     ClassLevel, e.g. Music/Phonics/French, taught by one roaming
+  //     specialist who visits each arm at a DIFFERENT time, not all at once.
+
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIODS_PER_DAY", value: 10 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "PERIOD_DURATION_MINUTES", value: 40 },
   { scope: "CLASS_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "SCHOOL_DAY_START_TIME", value: "08:00" },
@@ -410,6 +437,50 @@ export function parseSubjectDayRestrictions(raw: unknown): SubjectDayRestriction
 /** Case/whitespace-insensitive key for matching a SchedulingConstraint subject-name entry against `Subject.name`. */
 export function normalizeSubjectName(name: string): string {
   return name.trim().toUpperCase();
+}
+
+/** One ClassLevel's membership in a whole-level sync pool — see SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES below. */
+export interface SyncAllSubjectsPoolEntry {
+  poolId: string;
+  classLevelName: string;
+}
+
+/**
+ * Parses SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES's `"PoolId:ClassLevelName"`
+ * string-list format — same "pack structure into a colon-delimited string
+ * since the generic constraint editor has no picker" convention as
+ * SUBJECT_ALLOWED_DAYS above, extended to support MULTIPLE independent
+ * pools in one flat list rather than a single implicit group: e.g.
+ * `["PRIMARY_CLASS_TEACHERS:BASIC 1", "PRIMARY_CLASS_TEACHERS:BASIC 2", ...,
+ * "EARLY_YEARS_CLASS_TEACHERS:RECEPTION 1", ...]` — every ClassLevel sharing
+ * the same `poolId` gets its non-excluded subjects (by name — see
+ * SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES) forced onto one shared slot
+ * across EVERY arm of EVERY ClassLevel in that pool, not just within one
+ * ClassLevel. `poolId` is an arbitrary admin-chosen label, matched exactly
+ * (not normalized) since it never has to match anything else in the
+ * database — only `classLevelName` is matched against `ClassLevel.name`
+ * case/whitespace-insensitively (via {@link normalizeSubjectName}, reused
+ * here since the trim+uppercase rule is identical for any name string, not
+ * subject-specific). Matched by name rather than by ClassLevel.id/Subject.id
+ * because pooling commonly spans different `ClassLevelCategory` values
+ * (e.g. RECEPTION + NURSERY are separate categories with their own
+ * independent `ClassSubject` catalog rows) — apps/worker's
+ * buildClassTimetablePayload verifies every pooled ClassLevel's same-named
+ * subject shares an identical `periodsPerWeek` before pooling it, skipping
+ * (with a warning) and falling back to independent per-arm scheduling for
+ * any subject where they don't agree.
+ */
+export function parseSyncAllSubjectsPoolEntries(raw: unknown): SyncAllSubjectsPoolEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const result: SyncAllSubjectsPoolEntry[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const match = /^([^:]+):(.+)$/.exec(entry.trim());
+    if (!match) continue;
+    const [, poolId, classLevelName] = match as unknown as [string, string, string];
+    result.push({ poolId: poolId.trim(), classLevelName: classLevelName.trim() });
+  }
+  return result;
 }
 
 /** "HH:mm" -> minutes since midnight. */

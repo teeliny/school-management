@@ -43,6 +43,19 @@ class SubjectPayload(BaseModel):
     # CALCULATION_SUBJECTS_MORNING already uses as a HARD cutoff for
     # requiresCalculation subjects).
     preferMorning: bool = False
+    # SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES/SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES
+    # — apps/worker resolves this entirely by Subject.name/ClassLevel.name
+    # (case/whitespace-insensitively) and periodsPerWeek-consistency BEFORE
+    # this payload is built; never matched here, matching this file's
+    # existing "subjectName stays display-only" convention. When set, every
+    # SubjectPayload across every arm sharing the identical string gets
+    # pooled into ONE bundle (see the bundles loop below) so they're forced
+    # onto the same (day, period) — None means "schedule independently,"
+    # today's behavior for every subject that isn't pooled or is explicitly
+    # excluded (e.g. Music/Phonics/French, where one specialist teacher
+    # visits each arm at a different time and can't teach every arm
+    # simultaneously).
+    wholeLevelSyncKey: str | None = None
 
 
 class ClassArmPayload(BaseModel):
@@ -218,20 +231,34 @@ def _solve_group(
 
     # Group subjects into "options column" bundles — an ungrouped subject is
     # its own singleton bundle (keyed by its own id). Bundles normally key by
-    # (arm, group_key) so each arm chooses its own slot independently; a
-    # ClassLevel listed in syncedElectiveClassLevelIds instead keys its real
-    # concurrency-group bundles by (classLevel, group_key) alone, pooling
-    # every arm's members of that bundle into ONE bundle so they're forced
-    # onto the exact same slot across the whole ClassLevel, not just within
-    # one arm. Singleton (non-concurrency-group) subjects always stay keyed
-    # per-arm even on a synced ClassLevel — there's nothing to align them
-    # with.
+    # (arm, group_key) so each arm chooses its own slot independently. Two
+    # separate mechanisms can instead pool every matching member into ONE
+    # bundle so they're forced onto the exact same slot:
+    #   - syncedElectiveClassLevelIds: keys by (classLevel, group_key) — only
+    #     a real concurrency-group's members (e.g. SSS's Physics/Financial
+    #     Accounting/Literature), pooled across every arm of ONE ClassLevel.
+    #     A singleton (non-concurrency-group) subject stays keyed per-arm
+    #     even on one of these ClassLevels — there's nothing to align it
+    #     with.
+    #   - wholeLevelSyncKey: apps/worker precomputes this per-subject key
+    #     (already scoped to a named pool that can span MULTIPLE ClassLevels,
+    #     even across different ClassLevelCategory values — see
+    #     resolveWholeLevelSyncKeys) — every SubjectPayload sharing the exact
+    #     same string is pooled together directly, regardless of ClassLevel
+    #     or concurrencyGroupId. None (e.g. Music/Phonics/French — one
+    #     specialist teacher who visits each arm at a different time) keeps
+    #     that subject per-arm-independent.
     bundles: dict[str, list[tuple[str, SubjectPayload]]] = {}
     for arm in group.classArms:
         for subject in arm.subjects:
             group_key = subject.concurrencyGroupId or subject.subjectId
-            is_synced = subject.concurrencyGroupId is not None and arm.classLevelId in group.syncedElectiveClassLevelIds
-            bundle_key = f"level:{arm.classLevelId}:{group_key}" if is_synced else f"arm:{arm.classArmId}:{group_key}"
+            is_synced_elective = subject.concurrencyGroupId is not None and arm.classLevelId in group.syncedElectiveClassLevelIds
+            if is_synced_elective:
+                bundle_key = f"level:{arm.classLevelId}:{group_key}"
+            elif subject.wholeLevelSyncKey is not None:
+                bundle_key = subject.wholeLevelSyncKey
+            else:
+                bundle_key = f"arm:{arm.classArmId}:{group_key}"
             bundles.setdefault(bundle_key, []).append((arm.classArmId, subject))
 
     # A bundle forces every member onto the IDENTICAL (day, period) via one

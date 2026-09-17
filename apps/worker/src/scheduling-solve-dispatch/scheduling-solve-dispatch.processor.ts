@@ -20,6 +20,7 @@ import {
   normalizeSubjectName,
   parseSpecialPeriods,
   parseSubjectDayRestrictions,
+  parseSyncAllSubjectsPoolEntries,
   QUEUE_NAMES,
   timeRangesOverlap,
   type ClassLevelCategoryGroup,
@@ -66,6 +67,16 @@ interface ResolvedSubject {
   // restriction," today's behavior for every subject that isn't configured.
   allowedDays?: DayOfWeek[];
   preferMorning: boolean;
+  // SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES/SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES
+  // (CLASS_TIMETABLE only) — set (post-resolution, see
+  // resolveWholeLevelSyncKeys) when this subject should be forced onto the
+  // identical (day, period) as every other ClassLevel in the same named pool
+  // (e.g. "pool:PRIMARY_CLASS_TEACHERS::MATHEMATICS") — undefined means "no
+  // pool, schedule independently," today's behavior for every subject that
+  // isn't configured, or one excluded by name (e.g. Music/Phonics/French,
+  // taught by one roaming specialist who visits each arm at a DIFFERENT
+  // time and can't be forced into lockstep with themselves).
+  wholeLevelSyncKey?: string;
 }
 
 /** Parsed once per group by resolveSubjectDayPreferences — see its own comment. */
@@ -273,6 +284,16 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const syncSssElectiveBlocksMaxArmCount = Number(
       globalConstraints.find((c) => c.key === "SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT")?.value ?? 3,
     );
+    const syncAllSubjectsPoolIdByClassLevelName = new Map(
+      parseSyncAllSubjectsPoolEntries(globalConstraints.find((c) => c.key === "SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES")?.value).map(
+        (entry) => [entry.classLevelName.trim().toUpperCase(), entry.poolId],
+      ),
+    );
+    const syncAllSubjectsExcludedSubjectNames = this.parseGlobalNameSet(
+      globalConstraints,
+      "SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES",
+      normalizeSubjectName,
+    );
 
     const groups: GroupPayload[] = [];
     for (const [group, arms] of armsByGroup) {
@@ -313,6 +334,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         }
       }
 
+      if (syncAllSubjectsPoolIdByClassLevelName.size > 0) {
+        this.resolveWholeLevelSyncKeys(classArmPayloads, arms, syncAllSubjectsPoolIdByClassLevelName, syncAllSubjectsExcludedSubjectNames);
+      }
+
       groups.push({
         group,
         ...structure,
@@ -331,6 +356,103 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       callbackUrl,
       callbackToken: request.callbackToken,
     };
+  }
+
+  /**
+   * SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES / SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES
+   * (CLASS_TIMETABLE, global) — both flat string-array constraint values,
+   * matched by name (no ClassLevel/Subject picker in the generic constraint
+   * editor) via a caller-supplied `normalize` so a class-level name and a
+   * subject name can use different casing/whitespace conventions if needed.
+   * Same "Array.isArray guard, filter to strings, normalize" shape as
+   * resolveSubjectDayPreferences' preferMorningSubjects, factored out here
+   * since this method is used for two different keys/normalizers.
+   */
+  private parseGlobalNameSet(
+    rows: { key: string; value: unknown }[],
+    key: string,
+    normalize: (name: string) => string,
+  ): Set<string> {
+    const value = rows.find((r) => r.key === key)?.value;
+    return new Set((Array.isArray(value) ? value : []).filter((v): v is string => typeof v === "string").map(normalize));
+  }
+
+  /**
+   * SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES/SYNC_ALL_SUBJECTS_EXCLUDED_SUBJECT_NAMES
+   * — mutates each already-resolved ClassArmPayload's subjects in place,
+   * setting `wholeLevelSyncKey` on every ResolvedSubject that should be
+   * pooled with its same-named counterpart across every OTHER ClassLevel in
+   * the same named pool (see parseSyncAllSubjectsPoolEntries's comment for
+   * why pooling is by Subject.name, not Subject.id — pools commonly span
+   * different ClassLevelCategory values with their own independent
+   * ClassSubject catalogs, so "Mathematics" in RECEPTION and "Mathematics"
+   * in NURSERY are typically two different Subject rows).
+   *
+   * Runs as a second pass AFTER every arm in the group has already been
+   * resolved (not inline in resolveSubjectsForClassArm) because a pool's
+   * membership spans arms resolved in different loop iterations — there's
+   * nothing to bucket by name until every arm's subjects exist.
+   *
+   * Before pooling a (poolId, subjectName) bucket, every member must agree
+   * on `periodsPerWeek` — the Python solver forces every bundle member onto
+   * literally the same set of shared (day, period) BoolVars, so two members
+   * requiring a DIFFERENT weekly count would be forcing that same shared sum
+   * to equal two different values at once (guaranteed INFEASIBLE). Since
+   * each pooled ClassLevel can independently set its own ClassSubject.
+   * periodsPerWeek, this can genuinely happen — when it does, this logs a
+   * warning and leaves every member of that bucket unsynced (falls back to
+   * today's per-arm-independent scheduling for that one subject) rather
+   * than handing the solver a model already known to be unsatisfiable. A
+   * bucket with fewer than 2 members (the pool doesn't actually reach a
+   * second arm/ClassLevel for this subject) is left unsynced too — nothing
+   * to align with.
+   */
+  private resolveWholeLevelSyncKeys(
+    classArmPayloads: ClassArmPayload[],
+    arms: { classLevelId: string; classLevel: { name: string } }[],
+    poolIdByClassLevelName: Map<string, string>,
+    excludedSubjectNames: Set<string>,
+  ): void {
+    const poolIdByClassLevelId = new Map<string, string>();
+    for (const arm of arms) {
+      const poolId = poolIdByClassLevelName.get(arm.classLevel.name.trim().toUpperCase());
+      if (poolId) poolIdByClassLevelId.set(arm.classLevelId, poolId);
+    }
+    if (poolIdByClassLevelId.size === 0) return;
+
+    interface Bucket {
+      periodsPerWeek: number;
+      consistent: boolean;
+      members: ResolvedSubject[];
+    }
+    const buckets = new Map<string, Bucket>();
+    for (const armPayload of classArmPayloads) {
+      const poolId = poolIdByClassLevelId.get(armPayload.classLevelId);
+      if (!poolId) continue;
+      for (const subject of armPayload.subjects) {
+        const nameKey = normalizeSubjectName(subject.subjectName);
+        if (excludedSubjectNames.has(nameKey)) continue;
+        const bucketKey = `${poolId}::${nameKey}`;
+        const bucket = buckets.get(bucketKey);
+        if (!bucket) {
+          buckets.set(bucketKey, { periodsPerWeek: subject.periodsPerWeek, consistent: true, members: [subject] });
+        } else {
+          if (subject.periodsPerWeek !== bucket.periodsPerWeek) bucket.consistent = false;
+          bucket.members.push(subject);
+        }
+      }
+    }
+
+    for (const [bucketKey, bucket] of buckets) {
+      if (!bucket.consistent) {
+        this.logger.warn(
+          `Whole-level sync skipped for "${bucketKey}" — pooled ClassLevels disagree on periodsPerWeek for this subject`,
+        );
+        continue;
+      }
+      if (bucket.members.length < 2) continue;
+      for (const subject of bucket.members) subject.wholeLevelSyncKey = `pool:${bucketKey}`;
+    }
   }
 
   /**
