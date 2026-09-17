@@ -1,4 +1,10 @@
-import { Global, Inject, Logger, Module, OnModuleDestroy } from "@nestjs/common";
+import {
+  Global,
+  Inject,
+  Logger,
+  Module,
+  OnModuleDestroy,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import Redis from "ioredis";
 
@@ -17,8 +23,13 @@ const logger = new Logger("RedisClient");
         // maxRetriesPerRequest: null is required so this instance can be
         // shared with BullMQ (see app.module.ts) — BullMQ's blocking Worker
         // connections throw at startup otherwise.
-        const client = new Redis(config.getOrThrow<string>("REDIS_URL"), { maxRetriesPerRequest: null });
-        client.on("error", (error) => logger.error(`Redis connection error: ${error.message}`, error.stack));
+        const client = new Redis(config.getOrThrow<string>("REDIS_URL"), {
+          maxRetriesPerRequest: null,
+          keepAlive: 10_000,
+        });
+        client.on("error", (error) =>
+          logger.error(`Redis connection error: ${error.message}`, error.stack),
+        );
         return client;
       },
       inject: [ConfigService],
