@@ -26,7 +26,11 @@ export function RecordPaymentForm({
   onRecorded: () => void;
 }) {
   const [method, setMethod] = useState<Method>("CASH");
-  const [amount, setAmount] = useState(String(outstandingBalance));
+  // Deliberately not pre-filled with outstandingBalance — a Bursar recording
+  // a partial payment must type the actual amount received, not accept a
+  // pre-populated full-balance value unedited (caused a real overpayment
+  // record before this was added).
+  const [amount, setAmount] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +98,7 @@ export function RecordPaymentForm({
           min="0.01"
           step="any"
           required
+          placeholder={`Outstanding: ${outstandingBalance}`}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           className="mt-1"
