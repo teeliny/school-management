@@ -98,6 +98,16 @@ class ClassArmPayload(BaseModel):
     classLevelId: str
     subjects: list[SubjectPayload]
     blockedPeriods: dict[str, list[int]]
+    # This arm's OWN reserved-block days (e.g. Basic's Mon-Thu Common
+    # Entrance block, Nursery/Reception's Mon-Wed Literacy/Numeracy block) x
+    # GroupPayload.lastPeriodBlockPeriods — the "exclusive block" of
+    # (day, period) slots that only THIS arm's own subjects with
+    # periodBlockRequiredCount > 0 may use. Per-arm (not group-wide) since
+    # two different pools sharing one solve (e.g. CRECHE_NURSERY_PRIMARY)
+    # can reserve different days for entirely different subjects — see
+    # is_open() and the periodBlockRequiredCount constraint loop below.
+    # Empty disables the block entirely for this arm (today's behavior).
+    lastPeriodBlockDays: list[str] = []
 
 
 class GroupPayload(BaseModel):
@@ -128,13 +138,11 @@ class GroupPayload(BaseModel):
     # ClassLevels at or under SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT arms.
     # Empty list = today's per-arm-independent behavior for every arm.
     syncedElectiveClassLevelIds: list[str] = []
-    # LAST_PERIOD_BLOCK_DAYS x LAST_PERIOD_BLOCK_PERIODS — the reserved
-    # "exclusive block" of (day, period) slots (e.g. the last two periods of
-    # Monday-Thursday) that only subjects with periodBlockRequiredCount > 0
-    # may use. Either list empty disables the whole mechanism (today's
-    # behavior, no block reserved) — see is_open() and the
-    # periodBlockRequiredCount constraint loop below.
-    lastPeriodBlockDays: list[str] = []
+    # The literal "last N periods" of the day (e.g. periods 8-9) reserved by
+    # any arm whose OWN ClassArmPayload.lastPeriodBlockDays is non-empty —
+    # shared group-wide since every pool in a solve reserves the SAME
+    # periods, just on different days (see ClassArmPayload's own comment).
+    # Empty disables the whole mechanism for every arm (today's behavior).
     lastPeriodBlockPeriods: list[int] = []
 
 
@@ -263,7 +271,7 @@ def _solve_group(
     variables: dict[tuple[str, str, str, int], Any] = {}
 
     def is_open(
-        arm_blocked: dict[str, set[int]], arm_has_block_subject: bool, subject: SubjectPayload, day: str, period: int
+        arm_blocked: dict[str, set[int]], arm_block_days: list[str], subject: SubjectPayload, day: str, period: int
     ) -> bool:
         staff_blocked_raw = group.staffBlockedPeriods.get(subject.staffId, {})
         blocked_here = arm_blocked.get(day, set()) | set(staff_blocked_raw.get(day, []))
@@ -274,19 +282,17 @@ def _solve_group(
         # LAST_PERIOD_BLOCK_* — this (day, period) is reserved exclusively
         # for subjects with periodBlockRequiredCount > 0; every other
         # subject in the SAME arm is banned from it outright, regardless of
-        # any other availability it would otherwise have. Gated on
-        # arm_has_block_subject: an arm whose own curriculum has NO subject
-        # configured for this block at all (e.g. Nursery/Reception, when the
-        # block was only ever meant for Basic's Math/Verbal/Quant/Lit/
-        # Comprehension) has nothing to reserve the slot FOR, so banning it
-        # anyway would just delete capacity that arm's own dense curriculum
-        # needs — confirmed by testing Nursery 1/2 alone, each infeasible on
-        # its own once the block ate 8 of their weekly slots for no gain.
+        # any other availability it would otherwise have. Gated on this ARM's
+        # OWN lastPeriodBlockDays (empty for an arm whose curriculum has no
+        # subject configured for any block at all, e.g. before either pool
+        # opts in) — banning a day this arm never reserved would just delete
+        # capacity its own curriculum needs for no gain, confirmed by testing
+        # Nursery 1/2 alone, each infeasible once a block they had nothing
+        # configured for still ate 8 of their weekly slots.
         if (
-            arm_has_block_subject
-            and group.lastPeriodBlockDays
+            arm_block_days
             and group.lastPeriodBlockPeriods
-            and day in group.lastPeriodBlockDays
+            and day in arm_block_days
             and period in group.lastPeriodBlockPeriods
             and subject.periodBlockRequiredCount <= 0
         ):
@@ -294,10 +300,10 @@ def _solve_group(
         return not (calculation_subjects_morning and subject.requiresCalculation and period > group.breakAfterPeriod)
 
     arm_blocked_by_id: dict[str, dict[str, set[int]]] = {}
-    arm_has_block_subject_by_id: dict[str, bool] = {}
+    arm_block_days_by_id: dict[str, list[str]] = {}
     for arm in group.classArms:
         arm_blocked_by_id[arm.classArmId] = {day: set(periods_) for day, periods_ in arm.blockedPeriods.items()}
-        arm_has_block_subject_by_id[arm.classArmId] = any(s.periodBlockRequiredCount > 0 for s in arm.subjects)
+        arm_block_days_by_id[arm.classArmId] = arm.lastPeriodBlockDays
         for subject in arm.subjects:
             staff_by_arm_subject[(arm.classArmId, subject.subjectId)] = subject.staffId
             subject_by_arm_id[(arm.classArmId, subject.subjectId)] = subject
@@ -380,7 +386,7 @@ def _solve_group(
                 # otherwise one member would end up with no variable at that
                 # slot while its bundle-mates did.
                 if not all(
-                    is_open(arm_blocked_by_id[arm_id], arm_has_block_subject_by_id[arm_id], subject, day, period)
+                    is_open(arm_blocked_by_id[arm_id], arm_block_days_by_id[arm_id], subject, day, period)
                     for arm_id, subject in members
                 ):
                     continue
@@ -480,34 +486,53 @@ def _solve_group(
                 if day_vars:
                     model.add(sum(day_vars) <= max_per_day)
 
-            # LAST_PERIOD_BLOCK_SUBJECT_COUNTS — exactly this many of this
-            # subject's periodsPerWeek occurrences must land within the
-            # reserved block (is_open() has already banned every OTHER
-            # subject from it entirely, making it exclusive). The remaining
+            # LAST_PERIOD_BLOCK_SUBJECT_COUNTS/EARLY_YEARS_LAST_PERIOD_BLOCK_SUBJECT_COUNTS
+            # — exactly this many of this subject's periodsPerWeek
+            # occurrences must land within ITS ARM's reserved block
+            # (is_open() has already banned every OTHER subject from it
+            # entirely, making it exclusive). The remaining
             # `periodsPerWeek - periodBlockRequiredCount` occurrences (if
             # any) are covered by the plain `sum(subject_vars) ==
             # periodsPerWeek` constraint above and land wherever the solver
             # finds room outside the block — no extra constraint needed for
-            # those, the arithmetic already forces it.
+            # those, the arithmetic already forces it. A second, per-day cap
+            # WITHIN the block (mirroring the max_per_day spread above)
+            # additionally forces an even day-by-day split — e.g. Nursery/
+            # Reception's "1 Literacy + 1 Numeracy every day, Mon-Wed" reads
+            # as periodBlockRequiredCount=3 over a 3-day block, and without
+            # this cap the solver could legally satisfy that total by
+            # clumping both of one day's occurrences together and skipping
+            # another day entirely — technically meeting the weekly count
+            # but not the "every day" shape actually asked for.
+            arm_block_days = arm_block_days_by_id[arm.classArmId]
             if subject.periodBlockRequiredCount > 0:
                 block_vars = [
                     v
                     for (arm_id, subject_id, d, p), v in variables.items()
                     if arm_id == arm.classArmId
                     and subject_id == subject.subjectId
-                    and d in group.lastPeriodBlockDays
+                    and d in arm_block_days
                     and p in group.lastPeriodBlockPeriods
                 ]
                 if len(block_vars) < subject.periodBlockRequiredCount:
                     return None, (
                         f'"{subject.subjectName}" in {arm.classArmDisplayName} needs '
                         f"{subject.periodBlockRequiredCount} period(s) in the reserved block "
-                        f"({', '.join(group.lastPeriodBlockDays)} period(s) "
+                        f"({', '.join(arm_block_days)} period(s) "
                         f"{', '.join(str(p) for p in group.lastPeriodBlockPeriods)}) but only "
                         f"{len(block_vars)} slot(s) are available there — check blocked periods "
                         f"or teacher availability for that block."
                     )
                 model.add(sum(block_vars) == subject.periodBlockRequiredCount)
+                block_max_per_day = max(1, -(-subject.periodBlockRequiredCount // max(1, len(arm_block_days))))
+                for day in arm_block_days:
+                    day_block_vars = [
+                        v
+                        for (arm_id, subject_id, d, p), v in variables.items()
+                        if arm_id == arm.classArmId and subject_id == subject.subjectId and d == day and p in group.lastPeriodBlockPeriods
+                    ]
+                    if day_block_vars:
+                        model.add(sum(day_block_vars) <= block_max_per_day)
 
     # No teacher double-booked across class arms within this solve, except up
     # to a subject's own maxConcurrentArms (SUBJECT_MAX_CONCURRENT_ARMS — see

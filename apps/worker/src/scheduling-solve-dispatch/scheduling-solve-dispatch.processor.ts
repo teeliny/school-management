@@ -113,17 +113,29 @@ interface SubjectDayPreferences {
   allowedDaysBySubject: Map<string, DayOfWeek[]>;
   preferMorningSubjects: Set<string>;
   preferAfternoonSubjects: Set<string>;
-  // LAST_PERIOD_BLOCK_SUBJECT_COUNTS/_DAYS/_PERIODS — see
-  // GroupPayload.lastPeriodBlockDays and ResolvedSubject.
-  // periodBlockRequiredCount's own comments. periodBlockDays/Periods are
-  // empty when the constraint pair is unset (feature disabled); a subject
-  // absent from periodBlockRequiredCountBySubject defaults to 0 (banned
-  // from the block) rather than "unrestricted," the opposite default from
+  // LAST_PERIOD_BLOCK_SUBJECT_COUNTS/_DAYS (PRIMARY/Basic's Common Entrance
+  // exam-prep block — Math/Verbal/Quantitative/Literature/Comprehension) and
+  // EARLY_YEARS_LAST_PERIOD_BLOCK_SUBJECT_COUNTS/_DAYS (Nursery/Reception's
+  // own, differently-scheduled block — Literacy/Numeracy) — see
+  // ClassArmPayload.lastPeriodBlockDays and ResolvedSubject.
+  // periodBlockRequiredCount's own comments for why these are kept as two
+  // entirely separate resolutions rather than one shared list: the two
+  // pools' block days and subjects differ, and matching is purely by
+  // Subject.name (no per-level picker), so a same-named subject in the
+  // OTHER pool must never see this pool's count/days. LAST_PERIOD_BLOCK_PERIODS
+  // is the one dimension actually shared (both pools reserve the literal
+  // last 2 periods of their day), so it stays a single group-wide list.
+  // *PeriodBlockDays is empty when that pool's constraint pair is unset
+  // (feature disabled for that pool); a subject absent from either
+  // *PeriodBlockRequiredCountBySubject map defaults to 0 (banned from ITS
+  // pool's block) rather than "unrestricted," the opposite default from
   // allowedDays/preferMorning/preferAfternoon above — deliberate, since an
   // empty block only ever has meaning once at least one subject claims a
   // slot in it.
-  periodBlockRequiredCountBySubject: Map<string, number>;
-  periodBlockDays: DayOfWeek[];
+  primaryPeriodBlockRequiredCountBySubject: Map<string, number>;
+  primaryPeriodBlockDays: DayOfWeek[];
+  earlyYearsPeriodBlockRequiredCountBySubject: Map<string, number>;
+  earlyYearsPeriodBlockDays: DayOfWeek[];
   periodBlockPeriods: number[];
   // SUBJECT_MAX_CONCURRENT_ARMS — same "Name:Count" format/parser as
   // LAST_PERIOD_BLOCK_SUBJECT_COUNTS (parseSubjectPeriodBlockCounts is
@@ -144,6 +156,17 @@ interface ClassArmPayload {
   classLevelId: string;
   subjects: ResolvedSubject[];
   blockedPeriods: Record<string, number[]>;
+  // This arm's OWN reserved-block days (PRIMARY's Mon-Thu Common Entrance
+  // block, EARLY_YEARS' Mon-Wed Literacy/Numeracy block, or empty for any
+  // other category) x GroupPayload.lastPeriodBlockPeriods — the "exclusive
+  // block" of (day, period) slots that only subjects with THIS arm's own
+  // periodBlockRequiredCount > 0 may use. Per-arm (not group-wide) because
+  // the two pools that share one ClassLevelCategoryGroup
+  // (CRECHE_NURSERY_PRIMARY) reserve different days for different subjects
+  // — see ResolvedSubject.periodBlockRequiredCount's own comment. Empty
+  // disables the block entirely for this arm (today's behavior, no block
+  // reserved).
+  lastPeriodBlockDays: DayOfWeek[];
 }
 
 interface GroupPayload extends PeriodStructure {
@@ -159,12 +182,6 @@ interface GroupPayload extends PeriodStructure {
   // ClassLevel over the threshold, which keep today's per-arm-independent
   // behavior.
   syncedElectiveClassLevelIds: string[];
-  // LAST_PERIOD_BLOCK_DAYS x LAST_PERIOD_BLOCK_PERIODS — the reserved
-  // "exclusive block" of (day, period) slots (e.g. the last two periods of
-  // Monday-Thursday) that only subjects with a periodBlockRequiredCount > 0
-  // may use — see ResolvedSubject's own comment. Either array empty
-  // disables the whole mechanism (today's behavior, no block reserved).
-  lastPeriodBlockDays: DayOfWeek[];
   lastPeriodBlockPeriods: number[];
 }
 
@@ -374,12 +391,19 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           subjectDayPreferences,
         );
         const armSlots = existingSlots.filter((s) => s.classArmId === arm.id);
+        const lastPeriodBlockDays =
+          arm.classLevel.category === ClassLevelCategory.PRIMARY
+            ? subjectDayPreferences.primaryPeriodBlockDays
+            : arm.classLevel.category === ClassLevelCategory.NURSERY || arm.classLevel.category === ClassLevelCategory.RECEPTION
+              ? subjectDayPreferences.earlyYearsPeriodBlockDays
+              : [];
         classArmPayloads.push({
           classArmId: arm.id,
           classArmDisplayName: `${arm.classLevel.name} ${arm.name}`,
           classLevelId: arm.classLevelId,
           subjects,
           blockedPeriods: this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
+          lastPeriodBlockDays,
         });
 
         for (const subject of subjects) {
@@ -404,7 +428,6 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         classArms: classArmPayloads,
         staffBlockedPeriods,
         syncedElectiveClassLevelIds,
-        lastPeriodBlockDays: subjectDayPreferences.periodBlockDays,
         lastPeriodBlockPeriods: subjectDayPreferences.periodBlockPeriods,
       });
     }
@@ -1189,27 +1212,28 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         continue;
       }
       const nameKey = normalizeSubjectName(subject.name);
-      // LAST_PERIOD_BLOCK_SUBJECT_COUNTS models Basic's Common Entrance exam
-      // prep (2 Math/Verbal/Quantitative + 1 Literature/Comprehension in the
-      // last 2 periods, Mon-Thu — the user's own request), but is matched by
-      // Subject.name across the WHOLE ClassLevelCategoryGroup (no per-arm/
-      // per-level picker — see its own key's comment). CRECHE_NURSERY_PRIMARY
-      // covers Nursery/Reception too, and Nursery happens to run its OWN,
-      // differently-scoped "VERBAL REASONING"/"QUANTITATIVE REASONING"
-      // subjects (1 period/week early-years exposure, not exam prep) under
-      // the exact same names — matching those against Basic's block count
-      // both produces an impossible requirement (a count exceeding that
-      // arm's own periodsPerWeek — the reserved block can never hold more
-      // occurrences than the subject has all week) AND, even once clamped,
-      // reserves 2 of Nursery's daily periods for a purpose only 1-2 of its
-      // subjects can ever fill, starving its own (unrelated) dense
-      // curriculum of slots it structurally needs. Restricting resolution to
-      // PRIMARY (Basic) keeps the block exactly where it was designed for,
-      // leaving every other category's arms with today's behavior (no block
-      // reserved) regardless of what a same-named subject happens to be
-      // called there.
+      // LAST_PERIOD_BLOCK_SUBJECT_COUNTS/EARLY_YEARS_LAST_PERIOD_BLOCK_SUBJECT_COUNTS
+      // model two DIFFERENT reserved blocks sharing one ClassLevelCategoryGroup
+      // (CRECHE_NURSERY_PRIMARY): PRIMARY/Basic's Common Entrance exam prep
+      // (2 Math/Verbal/Quantitative + 1 Literature/Comprehension, Mon-Thu)
+      // and NURSERY/RECEPTION's own (1 Literacy + 1 Numeracy/day, Mon-Wed —
+      // both the user's own requests). Each is matched by Subject.name across
+      // the WHOLE group (no per-arm/per-level picker — see either key's own
+      // comment), so an arm only ever consults ITS OWN category's map/count —
+      // reading the other pool's block for it would either produce an
+      // impossible requirement (a count exceeding that arm's own
+      // periodsPerWeek for a same-named-but-differently-scoped subject in the
+      // other pool — the reserved block can never hold more occurrences than
+      // the subject has all week) or reserve periods for a purpose that
+      // pool's own curriculum can't fill, starving it of slots it
+      // structurally needs (both bugs seen firsthand before this split).
+      const isEarlyYears = category === ClassLevelCategory.NURSERY || category === ClassLevelCategory.RECEPTION;
       const rawPeriodBlockCount =
-        category === ClassLevelCategory.PRIMARY ? (subjectDayPreferences.periodBlockRequiredCountBySubject.get(nameKey) ?? 0) : 0;
+        category === ClassLevelCategory.PRIMARY
+          ? (subjectDayPreferences.primaryPeriodBlockRequiredCountBySubject.get(nameKey) ?? 0)
+          : isEarlyYears
+            ? (subjectDayPreferences.earlyYearsPeriodBlockRequiredCountBySubject.get(nameKey) ?? 0)
+            : 0;
       resolved.push({
         subjectId: subject.id,
         subjectName: subject.name,
@@ -1298,6 +1322,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
             "LAST_PERIOD_BLOCK_SUBJECT_COUNTS",
             "LAST_PERIOD_BLOCK_DAYS",
             "LAST_PERIOD_BLOCK_PERIODS",
+            "EARLY_YEARS_LAST_PERIOD_BLOCK_SUBJECT_COUNTS",
+            "EARLY_YEARS_LAST_PERIOD_BLOCK_DAYS",
             "SUBJECT_MAX_CONCURRENT_ARMS",
           ],
         },
@@ -1321,15 +1347,23 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const preferMorningSubjects = parseNameSet("SUBJECT_PREFER_MORNING");
     const preferAfternoonSubjects = parseNameSet("SUBJECT_PREFER_AFTERNOON");
 
-    const periodBlockRequiredCountBySubject = new Map<string, number>();
-    const periodBlockCountsRow = rows.find((r) => r.key === "LAST_PERIOD_BLOCK_SUBJECT_COUNTS");
-    for (const { subjectName, count } of parseSubjectPeriodBlockCounts(periodBlockCountsRow?.value)) {
-      periodBlockRequiredCountBySubject.set(normalizeSubjectName(subjectName), count);
-    }
-    const periodBlockDaysValue = rows.find((r) => r.key === "LAST_PERIOD_BLOCK_DAYS")?.value;
-    const periodBlockDays = (Array.isArray(periodBlockDaysValue) ? periodBlockDaysValue : []).filter(
-      (v): v is DayOfWeek => typeof v === "string" && DAYS_OF_WEEK.includes(v as DayOfWeek),
-    );
+    const parseCountsByName = (key: string): Map<string, number> => {
+      const map = new Map<string, number>();
+      for (const { subjectName, count } of parseSubjectPeriodBlockCounts(rows.find((r) => r.key === key)?.value)) {
+        map.set(normalizeSubjectName(subjectName), count);
+      }
+      return map;
+    };
+    const parseDayList = (key: string): DayOfWeek[] => {
+      const value = rows.find((r) => r.key === key)?.value;
+      return (Array.isArray(value) ? value : []).filter(
+        (v): v is DayOfWeek => typeof v === "string" && DAYS_OF_WEEK.includes(v as DayOfWeek),
+      );
+    };
+    const primaryPeriodBlockRequiredCountBySubject = parseCountsByName("LAST_PERIOD_BLOCK_SUBJECT_COUNTS");
+    const primaryPeriodBlockDays = parseDayList("LAST_PERIOD_BLOCK_DAYS");
+    const earlyYearsPeriodBlockRequiredCountBySubject = parseCountsByName("EARLY_YEARS_LAST_PERIOD_BLOCK_SUBJECT_COUNTS");
+    const earlyYearsPeriodBlockDays = parseDayList("EARLY_YEARS_LAST_PERIOD_BLOCK_DAYS");
     const periodBlockPeriodsValue = rows.find((r) => r.key === "LAST_PERIOD_BLOCK_PERIODS")?.value;
     const periodBlockPeriods = (Array.isArray(periodBlockPeriodsValue) ? periodBlockPeriodsValue : []).filter(
       (v): v is number => typeof v === "number" && Number.isInteger(v) && v > 0,
@@ -1345,8 +1379,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       allowedDaysBySubject,
       preferMorningSubjects,
       preferAfternoonSubjects,
-      periodBlockRequiredCountBySubject,
-      periodBlockDays,
+      primaryPeriodBlockRequiredCountBySubject,
+      primaryPeriodBlockDays,
+      earlyYearsPeriodBlockRequiredCountBySubject,
+      earlyYearsPeriodBlockDays,
       periodBlockPeriods,
       maxConcurrentArmsBySubject,
     };
