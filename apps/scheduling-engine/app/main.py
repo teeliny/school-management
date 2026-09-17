@@ -1,3 +1,4 @@
+import asyncio
 import os
 from typing import Any
 
@@ -93,16 +94,37 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
     INVIGILATION (Step 4), and WEEKLY_DUTY (Step 5) all run real CP-SAT
     models. Any future scope still gets Step 1's stub behavior — an
     immediate empty-result callback — until its own step lands.
+
+    Every solve_* function below is a plain synchronous, CPU-bound call
+    (OR-Tools' `solver.solve(model)` blocks the calling thread for real —
+    there's no way to `await` it directly) — each one is offloaded via
+    `asyncio.to_thread` rather than called inline. This function runs as a
+    FastAPI BackgroundTask, scheduled on the SAME asyncio event loop this
+    (single-process, single-worker) service uses for every other request;
+    calling a blocking function directly here would freeze that event loop
+    for the ENTIRE solve duration (SOLVE_TIME_LIMIT_SECONDS, up to 60s for
+    class_timetable) — during which the service can't accept or respond to
+    ANY other request, including a concurrent dispatch's own /solve call or
+    even GET /health. Two (or more) dispatches close together would then
+    queue up strictly one-after-another with no concurrency at all, and the
+    apps/worker caller waiting on that /solve response has no visibility
+    into "busy" vs "unreachable" — its fetch() just hangs, which is
+    indistinguishable from the dead-connection symptom this was originally
+    mistaken for (a stuck-at-QUEUED ScheduleGenerationRequest). Running the
+    solve on a worker thread instead lets the event loop keep serving other
+    requests concurrently while it runs.
     """
     if payload.scope == "CLASS_TIMETABLE":
-        body: dict[str, Any] = solve_class_timetable(
+        body: dict[str, Any] = await asyncio.to_thread(
+            solve_class_timetable,
             request_id=payload.requestId,
             callback_token=payload.callbackToken,
             calculation_subjects_morning=payload.calculationSubjectsMorning,
             groups=payload.groups,
         )
     elif payload.scope == "EXAM_TIMETABLE":
-        body = solve_exam_timetable(
+        body = await asyncio.to_thread(
+            solve_exam_timetable,
             request_id=payload.requestId,
             callback_token=payload.callbackToken,
             days=payload.days,
@@ -115,7 +137,8 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             class_arms=payload.classArms,
         )
     elif payload.scope == "INVIGILATION":
-        body = solve_invigilation(
+        body = await asyncio.to_thread(
+            solve_invigilation,
             request_id=payload.requestId,
             callback_token=payload.callbackToken,
             max_invigilations_per_staff_per_day=payload.maxInvigilationsPerStaffPerDay,
@@ -125,7 +148,8 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             existing_load=payload.existingLoad,
         )
     elif payload.scope == "WEEKLY_DUTY":
-        body = solve_weekly_duty(
+        body = await asyncio.to_thread(
+            solve_weekly_duty,
             request_id=payload.requestId,
             callback_token=payload.callbackToken,
             groups=payload.dutyGroups,
