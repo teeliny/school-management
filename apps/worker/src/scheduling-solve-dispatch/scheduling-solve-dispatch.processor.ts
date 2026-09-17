@@ -1189,6 +1189,27 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         continue;
       }
       const nameKey = normalizeSubjectName(subject.name);
+      // LAST_PERIOD_BLOCK_SUBJECT_COUNTS models Basic's Common Entrance exam
+      // prep (2 Math/Verbal/Quantitative + 1 Literature/Comprehension in the
+      // last 2 periods, Mon-Thu — the user's own request), but is matched by
+      // Subject.name across the WHOLE ClassLevelCategoryGroup (no per-arm/
+      // per-level picker — see its own key's comment). CRECHE_NURSERY_PRIMARY
+      // covers Nursery/Reception too, and Nursery happens to run its OWN,
+      // differently-scoped "VERBAL REASONING"/"QUANTITATIVE REASONING"
+      // subjects (1 period/week early-years exposure, not exam prep) under
+      // the exact same names — matching those against Basic's block count
+      // both produces an impossible requirement (a count exceeding that
+      // arm's own periodsPerWeek — the reserved block can never hold more
+      // occurrences than the subject has all week) AND, even once clamped,
+      // reserves 2 of Nursery's daily periods for a purpose only 1-2 of its
+      // subjects can ever fill, starving its own (unrelated) dense
+      // curriculum of slots it structurally needs. Restricting resolution to
+      // PRIMARY (Basic) keeps the block exactly where it was designed for,
+      // leaving every other category's arms with today's behavior (no block
+      // reserved) regardless of what a same-named subject happens to be
+      // called there.
+      const rawPeriodBlockCount =
+        category === ClassLevelCategory.PRIMARY ? (subjectDayPreferences.periodBlockRequiredCountBySubject.get(nameKey) ?? 0) : 0;
       resolved.push({
         subjectId: subject.id,
         subjectName: subject.name,
@@ -1199,7 +1220,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         allowedDays: subjectDayPreferences.allowedDaysBySubject.get(nameKey),
         preferMorning: subjectDayPreferences.preferMorningSubjects.has(nameKey),
         preferAfternoon: subjectDayPreferences.preferAfternoonSubjects.has(nameKey),
-        periodBlockRequiredCount: subjectDayPreferences.periodBlockRequiredCountBySubject.get(nameKey) ?? 0,
+        periodBlockRequiredCount: Math.min(rawPeriodBlockCount, subject.periodsPerWeek),
         maxConcurrentArms: subjectDayPreferences.maxConcurrentArmsBySubject.get(nameKey) ?? 1,
       });
     }

@@ -262,7 +262,9 @@ def _solve_group(
     subject_by_arm_id: dict[tuple[str, str], SubjectPayload] = {}
     variables: dict[tuple[str, str, str, int], Any] = {}
 
-    def is_open(arm_blocked: dict[str, set[int]], subject: SubjectPayload, day: str, period: int) -> bool:
+    def is_open(
+        arm_blocked: dict[str, set[int]], arm_has_block_subject: bool, subject: SubjectPayload, day: str, period: int
+    ) -> bool:
         staff_blocked_raw = group.staffBlockedPeriods.get(subject.staffId, {})
         blocked_here = arm_blocked.get(day, set()) | set(staff_blocked_raw.get(day, []))
         if period in blocked_here:
@@ -271,10 +273,18 @@ def _solve_group(
             return False
         # LAST_PERIOD_BLOCK_* — this (day, period) is reserved exclusively
         # for subjects with periodBlockRequiredCount > 0; every other
-        # subject is banned from it outright, regardless of any other
-        # availability it would otherwise have.
+        # subject in the SAME arm is banned from it outright, regardless of
+        # any other availability it would otherwise have. Gated on
+        # arm_has_block_subject: an arm whose own curriculum has NO subject
+        # configured for this block at all (e.g. Nursery/Reception, when the
+        # block was only ever meant for Basic's Math/Verbal/Quant/Lit/
+        # Comprehension) has nothing to reserve the slot FOR, so banning it
+        # anyway would just delete capacity that arm's own dense curriculum
+        # needs — confirmed by testing Nursery 1/2 alone, each infeasible on
+        # its own once the block ate 8 of their weekly slots for no gain.
         if (
-            group.lastPeriodBlockDays
+            arm_has_block_subject
+            and group.lastPeriodBlockDays
             and group.lastPeriodBlockPeriods
             and day in group.lastPeriodBlockDays
             and period in group.lastPeriodBlockPeriods
@@ -284,8 +294,10 @@ def _solve_group(
         return not (calculation_subjects_morning and subject.requiresCalculation and period > group.breakAfterPeriod)
 
     arm_blocked_by_id: dict[str, dict[str, set[int]]] = {}
+    arm_has_block_subject_by_id: dict[str, bool] = {}
     for arm in group.classArms:
         arm_blocked_by_id[arm.classArmId] = {day: set(periods_) for day, periods_ in arm.blockedPeriods.items()}
+        arm_has_block_subject_by_id[arm.classArmId] = any(s.periodBlockRequiredCount > 0 for s in arm.subjects)
         for subject in arm.subjects:
             staff_by_arm_subject[(arm.classArmId, subject.subjectId)] = subject.staffId
             subject_by_arm_id[(arm.classArmId, subject.subjectId)] = subject
@@ -367,7 +379,10 @@ def _solve_group(
                 # each checked against ITS OWN arm's blocked periods) —
                 # otherwise one member would end up with no variable at that
                 # slot while its bundle-mates did.
-                if not all(is_open(arm_blocked_by_id[arm_id], subject, day, period) for arm_id, subject in members):
+                if not all(
+                    is_open(arm_blocked_by_id[arm_id], arm_has_block_subject_by_id[arm_id], subject, day, period)
+                    for arm_id, subject in members
+                ):
                     continue
                 # Every member points at the SAME BoolVar object rather than
                 # each getting its own — this is what forces bundle-mates
@@ -433,8 +448,28 @@ def _solve_group(
 
             # ceil(periodsPerWeek / the days it can actually land on) — the
             # allowed-day subset when SUBJECT_ALLOWED_DAYS restricts this
-            # subject, otherwise the whole week (today's behavior).
-            eligible_day_count = len(subject.allowedDays) if subject.allowedDays else len(group.days)
+            # subject, otherwise the whole week, MINUS Friday when it runs a
+            # genuinely shorter day (fridayPeriodsPerDay < periodsPerDay).
+            # An unrestricted subject counting Friday at full nominal weight
+            # can be squeezed out by OTHER subjects hard-restricted TO that
+            # short Friday (e.g. CREATIVE WRITING/SPELLING's Friday-only
+            # requirement can fully consume its handful of open periods):
+            # a 5-period/week subject capped at exactly 1/day over a nominal
+            # 5-day week has zero slack once Friday's own slots are already
+            # spoken for elsewhere, even though Monday-Thursday alone was
+            # never really its bottleneck. Excluding a short Friday from the
+            # denominator gives such a subject a per-day cap based on the
+            # week's FULL days only, while still letting it land on Friday
+            # opportunistically if room happens to be there — this only
+            # loosens the cap, never forces or forbids anything, so it can't
+            # make an already-feasible arrangement infeasible.
+            has_short_friday = "FRIDAY" in group.days and group.fridayPeriodsPerDay < group.periodsPerDay
+            if subject.allowedDays:
+                eligible_day_count = len(subject.allowedDays)
+            elif has_short_friday:
+                eligible_day_count = max(1, len(group.days) - 1)
+            else:
+                eligible_day_count = len(group.days)
             max_per_day = max(1, -(-subject.periodsPerWeek // eligible_day_count))  # ceil division
             for day in group.days:
                 day_vars = [
