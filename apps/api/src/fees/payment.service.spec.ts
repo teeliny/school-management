@@ -730,6 +730,110 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
   });
 });
 
+describe("PaymentService.reversePayment (Super-Admin correction of a mis-recorded amount)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let queue: ReturnType<typeof buildQueueMock>;
+  let service: PaymentService;
+  let notifications: { notify: jest.Mock };
+
+  function buildSuccessfulPayment(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "payment-abcdef12",
+      status: "SUCCESSFUL",
+      method: "CASH",
+      amount: 5000,
+      recordedByStaffId: "staff-bursar-1",
+      invoice: buildInvoice({ payments: [{ id: "payment-abcdef12", status: "SUCCESSFUL", amount: 5000 }] }),
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    queue = buildQueueMock();
+    ({ service, notifications } = buildService(prisma, queue));
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(buildSuccessfulPayment());
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-bursar-1", userId: "bursar-user-1" });
+  });
+
+  it("marks the payment REVERSED, excludes it from the recomputed balance, and notifies the recording Bursar", async () => {
+    const result = await service.reversePayment("payment-abcdef12", "super-1", "Wrong amount keyed in — actual cash received was less");
+
+    expect(prisma.__tx.payment.update).toHaveBeenCalledWith({
+      where: { id: "payment-abcdef12" },
+      data: expect.objectContaining({
+        status: "REVERSED",
+        reversedByUserId: "super-1",
+        reversalReason: "Wrong amount keyed in — actual cash received was less",
+      }),
+    });
+    // Excluding the reversed payment from successfulPaymentAmounts leaves
+    // nothing paid on a 5000 invoice — status falls all the way back to
+    // UNPAID (FUTURE_DUE_DATE, so not OVERDUE), same recompute formula every
+    // other write path against Invoice.status uses.
+    expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "UNPAID" } });
+    expect(result).toBeDefined();
+    expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "PAYMENT_REVERSED", {
+      amount: "₦5,000.00",
+      studentName: "LOVELACE ADA",
+      reason: "Wrong amount keyed in — actual cash received was less",
+    });
+  });
+
+  it("leaves any other SUCCESSFUL payment on the invoice counted, recomputing to PARTIAL rather than UNPAID", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(
+      buildSuccessfulPayment({
+        invoice: buildInvoice({
+          payments: [
+            { id: "payment-abcdef12", status: "SUCCESSFUL", amount: 5000 },
+            { id: "payment-other", status: "SUCCESSFUL", amount: 1000 },
+          ],
+        }),
+      }),
+    );
+
+    await service.reversePayment("payment-abcdef12", "super-1", "Duplicate entry");
+
+    expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "PARTIAL" } });
+  });
+
+  it("rejects reversing a payment that isn't SUCCESSFUL", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(buildSuccessfulPayment({ status: "REVERSED" }));
+
+    await expect(service.reversePayment("payment-abcdef12", "super-1", "reason")).rejects.toThrow(/SUCCESSFUL/);
+    expect(prisma.__tx.payment.update).not.toHaveBeenCalled();
+  });
+
+  it("allows reversing an approved manual bank-transfer payment", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(buildSuccessfulPayment({ method: "BANK_TRANSFER_MANUAL" }));
+
+    await service.reversePayment("payment-abcdef12", "super-1", "reason");
+
+    expect(prisma.__tx.payment.update).toHaveBeenCalledWith({
+      where: { id: "payment-abcdef12" },
+      data: expect.objectContaining({ status: "REVERSED" }),
+    });
+  });
+
+  it.each(["GATEWAY_CARD", "GATEWAY_TRANSFER", "GATEWAY_USSD", "GATEWAY_RESERVED_ACCOUNT"])(
+    "rejects reversing a %s payment — verified by the provider, not staff-entered",
+    async (method) => {
+      prisma.payment.findUniqueOrThrow.mockResolvedValue(buildSuccessfulPayment({ method }));
+
+      await expect(service.reversePayment("payment-abcdef12", "super-1", "reason")).rejects.toThrow(/CASH or bank-transfer/);
+      expect(prisma.__tx.payment.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not notify when the recording staff member can't be resolved (Super-Admin-override-recorded payment)", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(buildSuccessfulPayment({ recordedByStaffId: null }));
+
+    await service.reversePayment("payment-abcdef12", "super-1", "reason");
+
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+});
+
 function buildBulkPayment(overrides: Record<string, unknown> = {}) {
   return {
     id: "payment-1",

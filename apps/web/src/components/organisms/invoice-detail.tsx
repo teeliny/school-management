@@ -48,10 +48,12 @@ export function InvoiceDetail({
   invoiceId,
   isParent,
   canManageFees,
+  isSuperAdmin,
 }: {
   invoiceId: string;
   isParent: boolean;
   canManageFees: boolean;
+  isSuperAdmin?: boolean;
 }) {
   const [invoice, setInvoice] = useState<InvoiceDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -186,7 +188,12 @@ export function InvoiceDetail({
 
       <div className="border-t border-border pt-3">
         <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted">Payments</p>
-        <InvoicePaymentsList invoiceId={invoiceId} refreshKey={paymentsRefreshKey} />
+        <InvoicePaymentsList
+          invoiceId={invoiceId}
+          refreshKey={paymentsRefreshKey}
+          isSuperAdmin={isSuperAdmin}
+          onReversed={handleRecorded}
+        />
       </div>
 
       {canManageFees && (

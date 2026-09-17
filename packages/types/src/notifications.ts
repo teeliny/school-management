@@ -14,6 +14,7 @@ export type NotificationType =
   | "DISCOUNT_REQUEST_REJECTED"
   | "MANUAL_PAYMENT_APPROVED"
   | "MANUAL_PAYMENT_REJECTED"
+  | "PAYMENT_REVERSED"
   | "SCHEDULE_GENERATION_COMPLETED"
   | "SCHEDULE_GENERATION_TIMED_OUT"
   | "SCHEDULE_GENERATION_FAILED"
@@ -112,6 +113,13 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     subject: "Bank transfer payment rejected",
     bodyTemplate:
       "The manual bank-transfer payment of {{amount}} for {{studentName}}'s invoice was rejected: {{reason}}.",
+    isCritical: false,
+  },
+  {
+    key: "PAYMENT_REVERSED",
+    channel: "IN_APP",
+    subject: "Payment reversed",
+    bodyTemplate: "The {{amount}} payment recorded for {{studentName}}'s invoice was reversed: {{reason}}.",
     isCritical: false,
   },
   {

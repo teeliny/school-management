@@ -48,6 +48,7 @@ import { RecordCashPaymentDto } from "./dto/record-cash-payment.dto";
 import { InitiateGatewayCheckoutDto } from "./dto/initiate-gateway-checkout.dto";
 import { SubmitManualBankTransferDto } from "./dto/submit-manual-bank-transfer.dto";
 import { RejectPaymentDto } from "./dto/reject-payment.dto";
+import { ReversePaymentDto } from "./dto/reverse-payment.dto";
 import { PaymentGatewayCredentialsService } from "./gateway/payment-gateway-credentials";
 import { PAYMENT_GATEWAY_ADAPTER } from "./gateway/payment-gateway.tokens";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
@@ -539,6 +540,78 @@ export class PaymentService {
   }
 
   /**
+   * Super-Admin-only correction path (PRD gap discovered in the field: a
+   * Bursar mis-keyed a CASH amount and the invoice was marked PAID against
+   * money never actually received). Never edits a Payment's amount in
+   * place — that would erase what was literally recorded at the time and
+   * break the receipt/audit trail already issued against it. Instead the
+   * wrong payment is marked REVERSED (excluded from every
+   * successfulPaymentAmounts sum from this point on, same as
+   * FAILED/REJECTED/PENDING) and the Bursar records a fresh, correct-amount
+   * payment separately via recordCash/submitManualBankTransfer. Only a
+   * SUCCESSFUL payment can be reversed — PENDING/FAILED/REJECTED never
+   * touched the invoice's balance, and an already-REVERSED payment reversing
+   * again would double-subtract.
+   */
+  async reversePayment(paymentId: string, reviewerUserId: string, reason: string) {
+    const payment = await this.prisma.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      include: {
+        invoice: {
+          include: { lineItems: true, payments: true, term: true, student: { include: { user: true } } },
+        },
+      },
+    });
+    if (payment.status !== PaymentStatus.SUCCESSFUL) {
+      throw new BadRequestException("Only a SUCCESSFUL payment can be reversed");
+    }
+    // A gateway payment (CARD/TRANSFER/USSD/RESERVED_ACCOUNT) is verified
+    // independently by the provider — the amount that landed on the invoice
+    // is exactly what the gateway confirmed, not something the Bursar keyed
+    // in, so there's nothing here for a Super-Admin to correct. Reversal is
+    // scoped to the two staff-entered paths where a typo/mis-record is
+    // actually possible: CASH (recordCash) and an approved manual bank
+    // transfer (approveManualBankTransfer).
+    if (payment.method !== PaymentMethod.CASH && payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL) {
+      throw new BadRequestException("Only a CASH or bank-transfer payment can be reversed");
+    }
+
+    const invoice = payment.invoice;
+    const reversedAt = new Date();
+
+    const updatedPayment = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.payment.update({
+        where: { id: payment.id },
+        data: { status: PaymentStatus.REVERSED, reversedByUserId: reviewerUserId, reversedAt, reversalReason: reason },
+      });
+
+      const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
+      const successfulPaymentAmounts = invoice.payments
+        .filter((p) => p.status === PaymentStatus.SUCCESSFUL && p.id !== payment.id)
+        .map((p) => Number(p.amount));
+      const outstandingBalance = computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts);
+      const paidTotal = successfulPaymentAmounts.reduce((sum, amount) => sum + amount, 0);
+      const status = computeInvoiceStatus(outstandingBalance, paidTotal, invoice.dueDate, reversedAt);
+
+      await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
+
+      return updated;
+    });
+
+    const bursarUserId = await this.resolveStaffUserId(payment.recordedByStaffId);
+    if (bursarUserId) {
+      const studentName = formatPersonName(invoice.student.user);
+      await this.notifySafely(bursarUserId, "PAYMENT_REVERSED", {
+        amount: Number(payment.amount).toLocaleString("en-NG", { style: "currency", currency: "NGN" }),
+        studentName,
+        reason,
+      });
+    }
+
+    return updatedPayment;
+  }
+
+  /**
    * Bursar's "print and sign" flow: renders the selected SUCCESSFUL
    * payments' receipts 3-to-a-page for physical printing (receipt-bulk-
    * pdf.util.ts), in the caller's selection order. A paymentId that doesn't
@@ -739,6 +812,16 @@ export class PaymentController {
       throw new ForbiddenException("Only the Super-Admin can reject a manual bank-transfer payment");
     }
     return this.service.rejectManualBankTransfer(id, user.id, dto.rejectionReason);
+  }
+
+  /** Super-Admin-only carve-out — see approveManualBankTransfer's comment. */
+  @Patch(":id/reverse")
+  @Audited("Payment", "payment")
+  reversePayment(@Param("id") id: string, @Body() dto: ReversePaymentDto, @CurrentUser() user: RequestUser) {
+    if (!user.roles.includes("SUPER_ADMIN")) {
+      throw new ForbiddenException("Only the Super-Admin can reverse a payment");
+    }
+    return this.service.reversePayment(id, user.id, dto.reason);
   }
 
   /**

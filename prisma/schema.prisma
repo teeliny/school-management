@@ -1838,6 +1838,16 @@ model Payment {
   reviewedByUserId            String?
   reviewedAt                  DateTime?
   rejectionReason             String?
+  // Super-Admin-only correction path (PaymentService.reversePayment): a
+  // SUCCESSFUL payment recorded at the wrong amount is marked REVERSED here
+  // (never edited in place, so the original record stays intact) and a
+  // fresh correct-amount payment is recorded separately. Distinct from
+  // reviewedByUserId/reviewedAt/rejectionReason above (the manual
+  // bank-transfer approve/reject fields) so reversing an already-approved
+  // bank-transfer payment doesn't clobber who approved it.
+  reversedByUserId            String?
+  reversedAt                  DateTime?
+  reversalReason              String?
   createdAt                   DateTime                @default(now())
 
   receipt Receipt?
@@ -1942,6 +1952,7 @@ enum NotificationType {
   DISCOUNT_REQUEST_REJECTED
   MANUAL_PAYMENT_APPROVED
   MANUAL_PAYMENT_REJECTED
+  PAYMENT_REVERSED
   SCHEDULE_GENERATION_COMPLETED
   SCHEDULE_GENERATION_TIMED_OUT
   SCHEDULE_GENERATION_FAILED

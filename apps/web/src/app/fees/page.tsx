@@ -197,7 +197,12 @@ function FeesPageInner() {
               {selectedInvoiceId && (
                 <Card>
                   <CardHeader title="Invoice detail" />
-                  <InvoiceDetail invoiceId={selectedInvoiceId} isParent={isParent} canManageFees={canManageFees} />
+                  <InvoiceDetail
+                    invoiceId={selectedInvoiceId}
+                    isParent={isParent}
+                    canManageFees={canManageFees}
+                    isSuperAdmin={isSuperAdmin}
+                  />
                 </Card>
               )}
             </div>
