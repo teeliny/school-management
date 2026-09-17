@@ -477,16 +477,17 @@ def _solve_group(
 
     # First feasible solution only (BUILD_PLAN.md §9: "a usable draft ...
     # requiring only minor manual edits", not a globally-optimized
-    # timetable) — UNLESS at least one subject sets preferMorning
-    # (SUBJECT_PREFER_MORNING) or a wholeLevelSyncKey alignment reward exists
-    # above, in which case the search maximizes a weighted sum of both
-    # instead of stopping at the first feasible arrangement. Cross-arm
-    # alignment is weighted far above morning-placement (SYNC_MATCH_WEIGHT)
-    # since it's the primary ask or this whole mechanism (per-subject
-    # morning/afternoon placement is a secondary nicety layered on top) —
-    # still bounded by the same SOLVE_TIME_LIMIT_SECONDS, so the solver
-    # returns its best-found FEASIBLE arrangement if it can't prove OPTIMAL
-    # in time, exactly like today's plain feasibility search.
+    # timetable) — UNLESS at least one subject sets preferMorning/
+    # preferAfternoon (SUBJECT_PREFER_MORNING/SUBJECT_PREFER_AFTERNOON) or a
+    # wholeLevelSyncKey alignment reward exists above, in which case the
+    # search maximizes a weighted sum of all three (plus the blanket
+    # "no idle morning periods" reward below) instead of stopping at the
+    # first feasible arrangement. Cross-arm alignment (SYNC_MATCH_WEIGHT)
+    # and morning-packing (MORNING_FILL_WEIGHT, below) are weighted well
+    # above per-subject morning/afternoon placement, which is comparatively
+    # a minor nicety — still bounded by the same SOLVE_TIME_LIMIT_SECONDS,
+    # so the solver returns its best-found FEASIBLE arrangement if it can't
+    # prove OPTIMAL in time, exactly like today's plain feasibility search.
     SYNC_MATCH_WEIGHT = 5
     morning_terms: list[Any] = []
     seen_morning_var_ids: set[int] = set()
@@ -508,8 +509,43 @@ def _solve_group(
             continue
         seen_afternoon_var_ids.add(id(var))
         afternoon_terms.append(var)
-    if sync_reward_terms or morning_terms or afternoon_terms:
-        model.maximize(SYNC_MATCH_WEIGHT * sum(sync_reward_terms) + sum(morning_terms) + sum(afternoon_terms))
+
+    # "No idle morning periods" — reward packing EVERY arm's own morning
+    # slots (period <= breakAfterPeriod that survived is_open(), e.g.
+    # already excluding the school-wide assembly block) with SOME subject,
+    # pushing any leftover/idle capacity into the afternoon instead. Every
+    # variable with period <= breakAfterPeriod counts here regardless of
+    # that subject's own preferMorning/preferAfternoon flag — this is a
+    # blanket "keep mornings full" preference, not a per-subject one. A
+    # pure reward, not a hard "every morning slot must be filled"
+    # constraint: the latter could occasionally conflict with a max-per-day
+    # cap or SUBJECT_ALLOWED_DAYS in a way that makes the whole model
+    # infeasible for no good reason, whereas a heavily-weighted reward
+    # achieves the same outcome whenever it's actually achievable — true
+    # for every arm in a curriculum whose weekly total exceeds the week's
+    # morning capacity (periods <= breakAfterPeriod, per day, times 5 days),
+    # which apps/worker's callers should confirm holds before relying on
+    # this to fully empty out morning gaps. Weighted above SYNC_MATCH_WEIGHT
+    # since an idle mid-morning period reads far worse on a printed
+    # timetable than one specific subject landing at 2pm instead of 10am.
+    MORNING_FILL_WEIGHT = 10
+    morning_fill_terms: list[Any] = []
+    seen_morning_fill_var_ids: set[int] = set()
+    for (arm_id, subject_id, day, period), var in variables.items():
+        if period > group.breakAfterPeriod:
+            continue
+        if id(var) in seen_morning_fill_var_ids:
+            continue
+        seen_morning_fill_var_ids.add(id(var))
+        morning_fill_terms.append(var)
+
+    if sync_reward_terms or morning_terms or afternoon_terms or morning_fill_terms:
+        model.maximize(
+            SYNC_MATCH_WEIGHT * sum(sync_reward_terms)
+            + MORNING_FILL_WEIGHT * sum(morning_fill_terms)
+            + sum(morning_terms)
+            + sum(afternoon_terms)
+        )
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
