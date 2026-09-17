@@ -107,7 +107,19 @@ class GroupPayload(BaseModel):
     syncedElectiveClassLevelIds: list[str] = []
 
 
-SOLVE_TIME_LIMIT_SECONDS = 20.0
+# Higher than the other three solvers' (exam_timetable/invigilation/
+# weekly_duty) 20s default — this is the only one with a `maximize()`
+# objective doing real work at real scale (SYNC_MATCH_WEIGHT's per-pool
+# anchor-matching reward adds thousands of extra reified-AND variables/
+# constraints for a school with several whole-level sync pools — see
+# resolveWholeLevelSyncKeys), so it routinely uses its FULL time budget
+# searching for a better-aligned arrangement rather than stopping at the
+# first feasible one, unlike a plain feasibility search. A request this
+# solve serves is fire-and-forget from the worker's side (main.py's
+# BackgroundTasks — the HTTP call back to apps/worker only ever waits for
+# the initial 202, never for the solve itself), so there's no outer timeout
+# this needs to fit under.
+SOLVE_TIME_LIMIT_SECONDS = 60.0
 
 
 def solve_class_timetable(
@@ -501,6 +513,14 @@ def _solve_group(
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
+    # CP-SAT's portfolio search splits work across this many threads,
+    # sharing discovered bounds/solutions between them — a standard,
+    # correctness-neutral speedup (never changes the search space, only how
+    # fast it's explored) that matters here given the `maximize()` objective
+    # above routinely uses the full time budget. 8 is a safe default even on
+    # a smaller machine; OR-Tools clamps to however many cores are actually
+    # available rather than erroring.
+    solver.parameters.num_search_workers = 8
     status = solver.solve(model)
 
     if status == cp_model.INFEASIBLE:
