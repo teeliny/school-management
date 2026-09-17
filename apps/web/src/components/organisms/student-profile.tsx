@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, User as UserIcon } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
@@ -148,7 +149,7 @@ export function StudentProfile({
                 {canUploadPhoto && (
                   <PhotoUploadButton
                     studentId={student.id}
-                    label={`Upload photo for ${student.user.firstName} ${student.user.lastName}`}
+                    label={`Upload photo for ${formatPersonName(student.user)}`}
                     iconClassName="h-4 w-4"
                     onUploaded={load}
                   />
@@ -158,8 +159,8 @@ export function StudentProfile({
               <div className="flex-1 space-y-3">
                 <div>
                   <h2 className="font-display text-lg font-semibold">
-                    {student.user.firstName} {student.user.middleName ? `${student.user.middleName} ` : ""}
-                    {student.user.lastName}
+                    {formatPersonName(student.user)}
+                    {student.user.middleName ? ` ${student.user.middleName.toUpperCase()}` : ""}
                   </h2>
                   <p className="font-mono text-[12px] text-muted">{student.admissionNumber}</p>
                 </div>
@@ -259,7 +260,7 @@ export function StudentProfile({
                   <div key={guardian.id} className="rounded-lg border border-border p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium">
-                        {guardian.parent.user.firstName} {guardian.parent.user.lastName}
+                        {formatPersonName(guardian.parent.user)}
                       </span>
                       <Badge variant="muted">{guardian.relationship}</Badge>
                       {guardian.isPrimaryContact && <Badge variant="info">Primary</Badge>}

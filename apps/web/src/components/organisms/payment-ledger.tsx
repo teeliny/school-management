@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Wallet, Printer } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -173,14 +174,14 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
                       <Checkbox
                         checked={selectedIds.has(payment.id)}
                         onCheckedChange={(checked) => toggleOne(payment.id, checked === true)}
-                        aria-label={`Select receipt for ${payment.invoice.student.user.firstName} ${payment.invoice.student.user.lastName}`}
+                        aria-label={`Select receipt for ${formatPersonName(payment.invoice.student.user)}`}
                       />
                     )}
                   </td>
                 )}
                 {canManageFees && (
                   <td className="py-2.5 pr-4 font-medium">
-                    {payment.invoice.student.user.firstName} {payment.invoice.student.user.lastName}{" "}
+                    {formatPersonName(payment.invoice.student.user)}{" "}
                     <span className="font-mono text-muted">({payment.invoice.student.admissionNumber})</span>
                   </td>
                 )}

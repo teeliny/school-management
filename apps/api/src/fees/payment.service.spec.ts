@@ -170,7 +170,7 @@ describe("PaymentService.recordCash (PRD §3.9 — CASH takes effect immediately
 
     expect(notifications.notify).toHaveBeenCalledWith("guardian-user-1", "PAYMENT_RECEIVED", {
       amount: "₦5,000.00",
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
     });
   });
 
@@ -463,7 +463,7 @@ describe("PaymentService.initiateGatewayCheckout (PRD FR7.3)", () => {
 
     expect(adapter.initTransaction).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ amount: 5000, customerEmail: "payer@example.com", customerName: "Jane Doe" }),
+      expect.objectContaining({ amount: 5000, customerEmail: "payer@example.com", customerName: "DOE JANE" }),
     );
   });
 });
@@ -518,7 +518,7 @@ describe("PaymentService.resolveGatewayOutcome (PRD FR7.5/FR7.6)", () => {
     expect(queue.add).toHaveBeenCalledWith("generate", { receiptId: "receipt-1" });
     expect(notifications.notify).toHaveBeenCalledWith("payer-user-1", "PAYMENT_RECEIVED", {
       amount: "₦5,000.00",
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
     });
   });
 
@@ -677,7 +677,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     expect(result.outstandingBalance).toBe(0);
     expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "MANUAL_PAYMENT_APPROVED", {
       amount: "₦3,000.00",
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
     });
   });
 
@@ -688,7 +688,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
 
     expect(notifications.notify).toHaveBeenCalledWith("payer-user-1", "MANUAL_PAYMENT_APPROVED", {
       amount: "₦3,000.00",
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
     });
   });
 
@@ -717,7 +717,7 @@ describe("PaymentService.approveManualBankTransfer / rejectManualBankTransfer (P
     expect(result).toBeDefined();
     expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "MANUAL_PAYMENT_REJECTED", {
       amount: "₦3,000.00",
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       reason: "Amount does not match proof",
     });
   });

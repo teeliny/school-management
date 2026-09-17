@@ -142,7 +142,7 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
     expect(prisma.__tx.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "UNPAID" } });
     expect(result.outstandingBalance).toBe(4500);
     expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "DISCOUNT_REQUEST_APPROVED", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
     });
   });
 
@@ -190,7 +190,7 @@ describe("DiscountRequestService.approve / reject (PRD FR7.8)", () => {
     expect(prisma.__tx.invoice.update).not.toHaveBeenCalled();
     expect(result).toBeDefined();
     expect(notifications.notify).toHaveBeenCalledWith("bursar-user-1", "DISCOUNT_REQUEST_REJECTED", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       reason: "Not eligible",
     });
   });

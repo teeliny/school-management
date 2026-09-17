@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Wallet } from "lucide-react";
-import type { ClassLevelCategory, ClassLevelCategoryGroup } from "@school/types";
+import { formatPersonName, type ClassLevelCategory, type ClassLevelCategoryGroup } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { useDebouncedValue } from "../../lib/use-debounced-value";
@@ -305,7 +305,7 @@ export function OutstandingBalancesList({
                 <tr key={row.studentId} className="border-b border-border/60 last:border-none even:bg-card-inset">
                   <td className="py-2.5 pr-4 text-muted">{index + 1}</td>
                   <td className="py-2.5 pr-4 font-medium">
-                    {row.firstName} {row.lastName}{" "}
+                    {formatPersonName(row)}{" "}
                     <span className="font-mono text-muted">({row.admissionNumber})</span>
                     {row.isDebtExcused && (
                       <Badge variant="info" className="ml-2">
@@ -331,7 +331,7 @@ export function OutstandingBalancesList({
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogTitle className="text-lg font-semibold">
-                              Remove excused status for {row.firstName} {row.lastName}?
+                              Remove excused status for {formatPersonName(row)}?
                             </AlertDialogTitle>
                             <AlertDialogDescription className="mt-2 text-sm text-muted">
                               This student will no longer be flagged as excused from debt-collection scrutiny.
@@ -366,7 +366,7 @@ export function OutstandingBalancesList({
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogTitle className="text-lg font-semibold">
-                              Mark {row.firstName} {row.lastName} as excused?
+                              Mark {formatPersonName(row)} as excused?
                             </AlertDialogTitle>
                             <AlertDialogDescription className="mt-2 text-sm text-muted">
                               Informational only — their outstanding balance is unchanged, but Principal/Headteacher

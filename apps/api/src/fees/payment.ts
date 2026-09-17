@@ -23,7 +23,13 @@ import { ConfigService } from "@nestjs/config";
 import type { Queue } from "bullmq";
 import { memoryStorage } from "multer";
 import { NotificationType, PaymentGatewayProvider, PaymentMethod, PaymentStatus, Prisma } from "@prisma/client";
-import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
+import {
+  computeInvoiceStatus,
+  computeOutstandingBalance,
+  formatPersonName,
+  QUEUE_NAMES,
+  type ReceiptGenerationJob,
+} from "@school/types";
 import {
   mapChannelToPaymentMethod,
   type GatewayTransactionResult,
@@ -208,7 +214,7 @@ export class PaymentService {
 
     await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
 
-    const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+    const studentName = formatPersonName(invoice.student.user);
     const formattedAmount = dto.amount.toLocaleString("en-NG", { style: "currency", currency: "NGN" });
     for (const guardian of invoice.student.guardians) {
       await this.notifySafely(guardian.parent.userId, "PAYMENT_RECEIVED", { amount: formattedAmount, studentName });
@@ -283,7 +289,7 @@ export class PaymentService {
       amount: outstandingBalance,
       reference,
       customerEmail: payer.email,
-      customerName: `${payer.firstName} ${payer.lastName}`,
+      customerName: formatPersonName(payer),
       description: "School fees payment",
       redirectUrl: `${this.config.get<string>("WEB_BASE_URL")}/payments/complete`,
     });
@@ -383,7 +389,7 @@ export class PaymentService {
     await this.receiptQueue.add("generate", { receiptId: txResult.receipt.id });
 
     if (payment.paidByUserId) {
-      const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+      const studentName = formatPersonName(invoice.student.user);
       const formattedAmount = result.amountPaid.toLocaleString("en-NG", { style: "currency", currency: "NGN" });
       await this.notifySafely(payment.paidByUserId, "PAYMENT_RECEIVED", { amount: formattedAmount, studentName });
     }
@@ -488,7 +494,7 @@ export class PaymentService {
 
     await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
 
-    const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+    const studentName = formatPersonName(invoice.student.user);
     const formattedAmount = Number(payment.amount).toLocaleString("en-NG", { style: "currency", currency: "NGN" });
     const bursarUserId = await this.resolveStaffUserId(payment.recordedByStaffId);
     if (bursarUserId) {
@@ -521,7 +527,7 @@ export class PaymentService {
 
     const bursarUserId = await this.resolveStaffUserId(payment.recordedByStaffId);
     if (bursarUserId) {
-      const studentName = `${payment.invoice.student.user.firstName} ${payment.invoice.student.user.lastName}`;
+      const studentName = formatPersonName(payment.invoice.student.user);
       await this.notifySafely(bursarUserId, "MANUAL_PAYMENT_REJECTED", {
         amount: Number(payment.amount).toLocaleString("en-NG", { style: "currency", currency: "NGN" }),
         studentName,
@@ -576,14 +582,14 @@ export class PaymentService {
         receiptNumber: receipt.receiptNumber,
         serialNumber: receipt.serialNumber,
         issuedAt: receipt.issuedAt,
-        studentName: `${invoice.student.user.firstName} ${invoice.student.user.lastName}`,
+        studentName: formatPersonName(invoice.student.user),
         admissionNumber: invoice.student.admissionNumber,
         termName: invoice.term.name,
         amount: Number(payment.amount),
         method: payment.method,
         paidAt: payment.paidAt,
         outstandingBalanceAfter,
-        recordedByName: payment.recordedByStaff ? `${payment.recordedByStaff.user.firstName} ${payment.recordedByStaff.user.lastName}` : null,
+        recordedByName: payment.recordedByStaff ? formatPersonName(payment.recordedByStaff.user) : null,
         isReprint,
         printCount: updated.printCount,
       });

@@ -13,6 +13,7 @@ import {
   UserStatus,
 } from "@prisma/client";
 import * as argon2 from "argon2";
+import { formatPersonName } from "@school/types";
 import { PrismaService } from "../../prisma/prisma.service";
 import { MailerService } from "../../mailer/mailer.service";
 import { generateRawToken, hashToken } from "../../common/crypto/token";
@@ -350,7 +351,7 @@ export class InvitationService {
     ]);
     const schoolName = school?.name ?? "Your School";
     const roleLabel = ROLE_LABEL[invitedRole];
-    const inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}` : null;
+    const inviterName = inviter ? formatPersonName(inviter) : null;
 
     const intro = inviterName
       ? `${inviterName} added you to ${schoolName} as ${roleLabel}.`

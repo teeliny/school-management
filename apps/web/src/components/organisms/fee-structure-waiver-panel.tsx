@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useDebouncedValue } from "../../lib/use-debounced-value";
 import { Button } from "../atoms/button";
@@ -104,7 +105,7 @@ export function FeeStructureWaiverPanel({ feeStructureId }: { feeStructureId: st
             <li key={student.id} className="flex items-center gap-2">
               <Checkbox checked={selected.has(student.id)} onCheckedChange={() => toggle(student)} />
               <span>
-                {student.user.firstName} {student.user.lastName} <span className="font-mono text-muted">({student.admissionNumber})</span>
+                {formatPersonName(student.user)} <span className="font-mono text-muted">({student.admissionNumber})</span>
               </span>
             </li>
           ))}

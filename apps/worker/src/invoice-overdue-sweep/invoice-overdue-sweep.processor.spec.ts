@@ -46,11 +46,11 @@ describe("InvoiceOverdueSweepProcessor.process", () => {
     expect(prisma.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "OVERDUE" } });
     expect(notifications.notify).toHaveBeenCalledTimes(2);
     expect(notifications.notify).toHaveBeenCalledWith("guardian-1", "INVOICE_OVERDUE", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       outstandingAmount: 5000,
     });
     expect(notifications.notify).toHaveBeenCalledWith("guardian-2", "INVOICE_OVERDUE", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       outstandingAmount: 5000,
     });
   });
@@ -91,7 +91,7 @@ describe("InvoiceOverdueSweepProcessor.process", () => {
     expect(prisma.invoice.update).toHaveBeenCalledWith({ where: { id: "invoice-1" }, data: { status: "OVERDUE" } });
     expect(notifications.notify).toHaveBeenCalledTimes(2);
     expect(notifications.notify).toHaveBeenCalledWith("guardian-1", "INVOICE_OVERDUE", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       outstandingAmount: 4000,
     });
   });

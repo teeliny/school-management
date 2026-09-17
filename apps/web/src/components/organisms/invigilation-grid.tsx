@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import { GripVertical } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge } from "../atoms/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
@@ -23,10 +24,6 @@ interface InvigilationAssignmentItem {
 interface StaffOption {
   id: string;
   user: { firstName: string; lastName: string };
-}
-
-function staffName(u: { firstName: string; lastName: string }) {
-  return `${u.firstName} ${u.lastName}`;
 }
 
 function DroppableCell({ cellId, children }: { cellId: string; children: React.ReactNode }) {
@@ -280,7 +277,7 @@ function AssignmentCard({
             <SelectContent>
               {staffOptions.map((s) => (
                 <SelectItem key={s.id} value={s.id}>
-                  {staffName(s.user)}
+                  {formatPersonName(s.user)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -289,7 +286,7 @@ function AssignmentCard({
           {fieldStatus === "error" && <span className="text-[10px] text-danger">Failed to save</span>}
         </div>
       ) : (
-        <div className="font-medium">{staffName(row.staff.user)}</div>
+        <div className="font-medium">{formatPersonName(row.staff.user)}</div>
       )}
     </div>
   );

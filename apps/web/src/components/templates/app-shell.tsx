@@ -28,6 +28,7 @@ import {
   Menu,
   type LucideIcon,
 } from "lucide-react";
+import { formatPersonName, personInitials } from "@school/types";
 import { CrestBadge } from "../atoms/crest-badge";
 import { ThemeToggle } from "../molecules/theme-toggle";
 import { siteContent } from "../../lib/site-content";
@@ -331,8 +332,7 @@ export function AppShell({
   const pathname = usePathname();
   const isAdmin =
     user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN");
-  const initials =
-    `${user.firstName[0] ?? ""}${user.lastName[0] ?? ""}`.toUpperCase();
+  const initials = personInitials(user);
 
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Closing on route change covers both a nav-link tap (already handled by
@@ -421,7 +421,7 @@ export function AppShell({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <div className="px-2 py-1.5 text-xs text-muted">
-                  {user.firstName} {user.lastName}
+                  {formatPersonName(user)}
                   <div className="mt-0.5">{user.roles.join(", ")}</div>
                 </div>
                 {user.parentProfileId && (

@@ -12,7 +12,13 @@ import {
   ReportCommentType,
   TermReportCardStatus,
 } from "@prisma/client";
-import { computeSchoolDaysOpened, findGradeScaleMatch, QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
+import {
+  computeSchoolDaysOpened,
+  findGradeScaleMatch,
+  formatPersonName,
+  QUEUE_NAMES,
+  type ReportCardGenerationJob,
+} from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
 import { SubjectTermResultService } from "../subject-term-result/subject-term-result.service";
@@ -164,7 +170,7 @@ export class ReportCardProcessor extends WorkerHost {
     const { verificationTokenHash, qrCodeBuffer } = await this.buildVerificationAssets();
 
     const pdfBuffer = await renderMidTermPdf(snapshot, {
-      studentName: `${student.user.firstName} ${student.user.lastName}`,
+      studentName: formatPersonName(student.user),
       admissionNumber: student.admissionNumber,
       termName: term.name,
       schoolName: school.name,
@@ -415,7 +421,7 @@ export class ReportCardProcessor extends WorkerHost {
     const { verificationTokenHash, qrCodeBuffer } = await this.buildVerificationAssets();
 
     const pdfBuffer = await renderFullTermPdf(content, {
-      studentName: `${student.user.firstName} ${student.user.lastName}`,
+      studentName: formatPersonName(student.user),
       admissionNumber: student.admissionNumber,
       termName: term.name,
       schoolName: school.name,
@@ -502,7 +508,7 @@ export class ReportCardProcessor extends WorkerHost {
       orderBy: [{ isPrimaryContact: "desc" }, { createdAt: "asc" }],
       include: { parent: { include: { user: true } } },
     });
-    return guardian ? `${guardian.parent.user.firstName} ${guardian.parent.user.lastName}` : null;
+    return guardian ? formatPersonName(guardian.parent.user) : null;
   }
 
   /**

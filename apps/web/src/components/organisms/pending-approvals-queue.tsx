@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2 } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -85,7 +86,7 @@ export function PendingApprovalsQueue() {
           kind: "PAYMENT",
           id: p.id,
           createdAt: p.createdAt,
-          studentName: `${p.invoice.student.user.firstName} ${p.invoice.student.user.lastName}`,
+          studentName: formatPersonName(p.invoice.student.user),
           admissionNumber: p.invoice.student.admissionNumber,
           amountLabel: formatCurrency(p.amount),
           proofUrl: p.proofOfPaymentUrl,
@@ -95,7 +96,7 @@ export function PendingApprovalsQueue() {
           kind: "DISCOUNT",
           id: d.id,
           createdAt: d.createdAt,
-          studentName: `${d.invoice.student.user.firstName} ${d.invoice.student.user.lastName}`,
+          studentName: formatPersonName(d.invoice.student.user),
           admissionNumber: d.invoice.student.admissionNumber,
           amountLabel: d.feeStructure
             ? `Waive ${d.feeStructure.name} (${formatCurrency(d.value)})`

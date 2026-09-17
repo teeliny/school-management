@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Logger, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { DiscountRequestStatus, DiscountRequestType, NotificationType, Prisma } from "@prisma/client";
-import { computeInvoiceStatus, computeOutstandingBalance } from "@school/types";
+import { computeInvoiceStatus, computeOutstandingBalance, formatPersonName } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -214,7 +214,7 @@ export class DiscountRequestService {
     });
 
     if (discountRequest.requestedByStaff) {
-      const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+      const studentName = formatPersonName(invoice.student.user);
       await this.notifySafely(discountRequest.requestedByStaff.userId, "DISCOUNT_REQUEST_APPROVED", { studentName });
     }
 
@@ -237,7 +237,7 @@ export class DiscountRequestService {
     });
 
     if (discountRequest.requestedByStaff) {
-      const studentName = `${discountRequest.invoice.student.user.firstName} ${discountRequest.invoice.student.user.lastName}`;
+      const studentName = formatPersonName(discountRequest.invoice.student.user);
       await this.notifySafely(discountRequest.requestedByStaff.userId, "DISCOUNT_REQUEST_REJECTED", {
         studentName,
         reason: rejectionReason,

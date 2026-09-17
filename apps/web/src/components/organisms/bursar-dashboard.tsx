@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { formatPersonName } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -144,7 +145,7 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                   {pendingPayments.map((p) => (
                     <tr key={p.id} className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3">
-                        {p.invoice.student.user.firstName} {p.invoice.student.user.lastName}
+                        {formatPersonName(p.invoice.student.user)}
                       </td>
                       <td className="py-1.5 pr-3 font-mono">{formatCurrency(p.amount)}</td>
                       <td className="py-1.5 pr-3 font-mono text-muted">{new Date(p.createdAt).toLocaleDateString()}</td>
@@ -182,7 +183,7 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                   {discountRequests.map((d) => (
                     <tr key={d.id} className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3">
-                        {d.invoice.student.user.firstName} {d.invoice.student.user.lastName}
+                        {formatPersonName(d.invoice.student.user)}
                       </td>
                       <td className="py-1.5 pr-3 font-mono">
                         {d.type === "PERCENTAGE" ? `${d.value}%` : formatCurrency(d.value)}
@@ -212,7 +213,7 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
               {recentReceipts.map((p) => (
                 <li key={p.id} className="flex items-center justify-between rounded-lg border border-border p-2.5">
                   <span>
-                    {p.invoice.student.user.firstName} {p.invoice.student.user.lastName}{" "}
+                    {formatPersonName(p.invoice.student.user)}{" "}
                     <span className="font-mono text-muted" title={p.receipt?.receiptNumber ?? undefined}>
                       {p.receipt?.serialNumber ?? p.receipt?.receiptNumber ?? "—"}
                     </span>

@@ -3,6 +3,7 @@
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown, Search } from "lucide-react";
 import { useState } from "react";
+import { formatPersonName } from "@school/types";
 import { cn } from "../../lib/cn";
 import { Input } from "../atoms/input";
 import { useInfiniteScroll } from "../../lib/use-infinite-scroll";
@@ -121,7 +122,7 @@ export function StudentMultiCombobox({
               <p className="px-2 py-1.5 text-[12px] text-muted">No students found</p>
             )}
             {students.map((student) => {
-              let label = `${student.user.firstName} ${student.user.lastName} (${student.admissionNumber})`;
+              let label = `${formatPersonName(student.user)} (${student.admissionNumber})`;
               if (!classArmId && student.currentClass) {
                 label += ` — ${student.currentClass.classLevel.name} ${student.currentClass.name}`;
               }

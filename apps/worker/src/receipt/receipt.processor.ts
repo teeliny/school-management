@@ -2,7 +2,7 @@ import { Inject, Logger } from "@nestjs/common";
 import { Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
 import { PaymentStatus } from "@prisma/client";
-import { computeOutstandingBalance, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
+import { computeOutstandingBalance, formatPersonName, QUEUE_NAMES, type ReceiptGenerationJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
 import { renderReceiptPdf } from "./receipt-pdf.util";
@@ -66,16 +66,14 @@ export class ReceiptProcessor extends WorkerHost {
       issuedAt: receipt.issuedAt,
       schoolName: school.name,
       schoolAddress: school.address,
-      studentName: `${invoice.student.user.firstName} ${invoice.student.user.lastName}`,
+      studentName: formatPersonName(invoice.student.user),
       admissionNumber: invoice.student.admissionNumber,
       termName: invoice.term.name,
       amount: Number(payment.amount),
       method: payment.method,
       paidAt: payment.paidAt,
       outstandingBalanceAfter,
-      recordedByName: payment.recordedByStaff
-        ? `${payment.recordedByStaff.user.firstName} ${payment.recordedByStaff.user.lastName}`
-        : null,
+      recordedByName: payment.recordedByStaff ? formatPersonName(payment.recordedByStaff.user) : null,
     });
 
     const key = `receipts/${receipt.id}.pdf`;

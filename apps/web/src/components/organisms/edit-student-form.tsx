@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
@@ -123,7 +124,7 @@ export function EditStudentForm({
           student.guardians.map((g) => ({
             kind: "existing",
             existingParentProfileId: g.parent.id,
-            name: `${g.parent.user.firstName} ${g.parent.user.lastName}`,
+            name: formatPersonName(g.parent.user),
             email: g.parent.user.email,
             relationship: g.relationship,
             isPrimaryContact: g.isPrimaryContact,

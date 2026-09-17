@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Receipt } from "lucide-react";
-import type { ClassLevelCategory, ClassLevelCategoryGroup } from "@school/types";
+import { formatPersonName, type ClassLevelCategory, type ClassLevelCategoryGroup } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { useDebouncedValue } from "../../lib/use-debounced-value";
@@ -283,12 +283,12 @@ export function InvoiceList({
                 <td className="py-2.5 pr-4 font-medium">
                   {canManageFees ? (
                     <>
-                      {invoice.student.user.firstName} {invoice.student.user.lastName}{" "}
+                      {formatPersonName(invoice.student.user)}{" "}
                       <span className="font-mono text-muted">({invoice.student.admissionNumber})</span>
                     </>
                   ) : (
                     <>
-                      {invoice.student.user.firstName} {invoice.student.user.lastName}{" "}
+                      {formatPersonName(invoice.student.user)}{" "}
                       <span className="text-muted">· {invoice.term.name}</span>
                     </>
                   )}

@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { categoryToGroup, computePeriodTime, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
+import {
+  categoryToGroup,
+  computePeriodTime,
+  DAYS_OF_WEEK,
+  formatPersonName,
+  type ClassLevelCategoryGroup,
+  type DayOfWeek,
+} from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
@@ -279,7 +286,7 @@ export function AllClassesTimetableView({
                                 >
                                   <div className="font-medium">{slot.subject.name}</div>
                                   <div className="text-muted">
-                                    {slot.staff.user.firstName} {slot.staff.user.lastName}
+                                    {formatPersonName(slot.staff.user)}
                                   </div>
                                   {slot.venue && <div className="text-muted">{slot.venue}</div>}
                                   {slot.approvalStatus === "PENDING_REVIEW" && (

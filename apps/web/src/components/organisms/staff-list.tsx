@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, User as UserIcon } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -65,14 +66,14 @@ export function StaffList({
     const filtered = staff.filter((member) => {
       const matchesTerm =
         !term ||
-        `${member.user.firstName} ${member.user.lastName}`.toLowerCase().includes(term) ||
+        formatPersonName(member.user).toLowerCase().includes(term) ||
         (member.employeeId ?? "").toLowerCase().includes(term) ||
         member.user.email.toLowerCase().includes(term);
       const matchesStatus = !statusFilter || member.status === statusFilter;
       return matchesTerm && matchesStatus;
     });
     return [...filtered].sort((a, b) => {
-      const cmp = `${a.user.firstName} ${a.user.lastName}`.localeCompare(`${b.user.firstName} ${b.user.lastName}`);
+      const cmp = formatPersonName(a.user).localeCompare(formatPersonName(b.user));
       return nameSort === "asc" ? cmp : -cmp;
     });
   }, [staff, search, statusFilter, nameSort]);
@@ -154,7 +155,7 @@ export function StaffList({
                           <UserIcon className="h-2.5 w-2.5" />
                         </span>
                       )}
-                      {member.user.firstName} {member.user.lastName}
+                      {formatPersonName(member.user)}
                     </span>
                   </td>
                   <td className="py-2.5 pr-4 font-mono text-muted">{member.user.email}</td>

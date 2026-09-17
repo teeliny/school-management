@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -127,7 +128,7 @@ export function InvoiceDetail({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-medium">
-            {invoice.student.user.firstName} {invoice.student.user.lastName}{" "}
+            {formatPersonName(invoice.student.user)}{" "}
             <span className="font-mono text-muted">({invoice.student.admissionNumber})</span>
           </p>
           <p className="text-[12px] text-muted">

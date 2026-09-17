@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
@@ -224,7 +225,7 @@ export function StaffAssignmentForm({
           <SelectContent>
             {staffOptions.map((staff) => (
               <SelectItem key={staff.id} value={staff.id}>
-                {staff.user.firstName} {staff.user.lastName}
+                {formatPersonName(staff.user)}
               </SelectItem>
             ))}
           </SelectContent>

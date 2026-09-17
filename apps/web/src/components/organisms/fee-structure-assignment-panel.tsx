@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { useDebouncedValue } from "../../lib/use-debounced-value";
 import { Button } from "../atoms/button";
@@ -93,7 +94,7 @@ export function FeeStructureAssignmentPanel({ feeStructureId }: { feeStructureId
           {results.map((student) => (
             <li key={student.id} className="flex items-center justify-between gap-2">
               <span>
-                {student.user.firstName} {student.user.lastName} <span className="font-mono text-muted">({student.admissionNumber})</span>
+                {formatPersonName(student.user)} <span className="font-mono text-muted">({student.admissionNumber})</span>
               </span>
               {assignedStudentIds.has(student.id) ? (
                 <span className="text-muted">Already opted in</span>
@@ -120,7 +121,7 @@ export function FeeStructureAssignmentPanel({ feeStructureId }: { feeStructureId
           <ul className="space-y-0.5">
             {assignments.map((a) => (
               <li key={a.id}>
-                {a.student.user.firstName} {a.student.user.lastName}{" "}
+                {formatPersonName(a.student.user)}{" "}
                 <span className="font-mono text-muted">({a.student.admissionNumber})</span>{" "}
                 <span className="text-muted">· {a.invoiceId ? "billed" : "pending next invoice"}</span>
               </li>

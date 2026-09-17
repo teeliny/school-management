@@ -2,7 +2,7 @@ import { Logger, OnModuleInit } from "@nestjs/common";
 import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job, Queue } from "bullmq";
 import { InvoiceStatus } from "@prisma/client";
-import { computeInvoiceStatus, computeOutstandingBalance, QUEUE_NAMES } from "@school/types";
+import { computeInvoiceStatus, computeOutstandingBalance, formatPersonName, QUEUE_NAMES } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { WorkerNotificationService } from "../notifications/worker-notification.service";
 
@@ -64,7 +64,7 @@ export class InvoiceOverdueSweepProcessor extends WorkerHost implements OnModule
       await this.prisma.invoice.update({ where: { id: invoice.id }, data: { status: InvoiceStatus.OVERDUE } });
       flipped++;
 
-      const studentName = `${invoice.student.user.firstName} ${invoice.student.user.lastName}`;
+      const studentName = formatPersonName(invoice.student.user);
       for (const guardian of invoice.student.guardians) {
         try {
           await this.notifications.notify(guardian.parent.userId, "INVOICE_OVERDUE", {

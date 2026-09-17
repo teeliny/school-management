@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { usePaginatedStudents } from "../../lib/use-paginated-students";
 import { Input } from "../atoms/input";
@@ -178,7 +179,7 @@ export function GradebookTable({
                 className="border-b border-border/60 last:border-none even:bg-card-inset"
               >
                 <td className="py-2.5 pr-4 font-medium">
-                  {student.user.firstName} {student.user.lastName}{" "}
+                  {formatPersonName(student.user)}{" "}
                   <span className="font-mono text-muted">({student.admissionNumber})</span>
                 </td>
                 <td className="w-32 py-2.5">

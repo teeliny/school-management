@@ -184,11 +184,11 @@ describe("TermReportCardService.publish — FULL_TERM completeness gate (PRD FR4
 
     expect(notifications.notify).toHaveBeenCalledTimes(2);
     expect(notifications.notify).toHaveBeenCalledWith("guardian-user-1", "REPORT_CARD_PUBLISHED", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       termName: "1st Term",
     });
     expect(notifications.notify).toHaveBeenCalledWith("guardian-user-2", "REPORT_CARD_PUBLISHED", {
-      studentName: "Ada Lovelace",
+      studentName: "LOVELACE ADA",
       termName: "1st Term",
     });
   });
@@ -304,7 +304,7 @@ describe("TermReportCardService.classReadiness / generateForClass", () => {
       reportType: "FULL_TERM",
     });
     expect(result.skipped).toEqual([
-      expect.objectContaining({ studentId: "student-b", studentName: "Bea Smith" }),
+      expect.objectContaining({ studentId: "student-b", studentName: "SMITH BEA" }),
     ]);
   });
 });

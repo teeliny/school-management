@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { formatPersonName } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import type { ParentChild } from "../../lib/use-parent-children";
@@ -147,7 +148,7 @@ function WardToday({
     <div>
       <RoleTag label="Parent" variant="success" />
       <div className="mb-1 text-[12.5px] font-medium">
-        {child.user.firstName} {child.user.lastName}
+        {formatPersonName(child.user)}
       </div>
       {slots ? <TodayList slots={slots} /> : <p className="text-sm text-muted">Loading…</p>}
     </div>

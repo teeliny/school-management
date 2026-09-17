@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import { Card, CardHeader } from "../molecules/card";
 import { Label } from "../atoms/label";
@@ -27,7 +28,7 @@ interface TermOption {
 }
 
 function studentOptionLabel(student: StudentOption) {
-  return `${student.user.firstName} ${student.user.lastName} (${student.admissionNumber})`;
+  return `${formatPersonName(student.user)} (${student.admissionNumber})`;
 }
 
 /**

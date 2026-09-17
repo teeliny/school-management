@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { formatPersonName } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -99,7 +100,7 @@ export function ParentDashboard({
           <TabsList>
             {children.map((child) => (
               <TabsTrigger key={child.id} value={child.id}>
-                {child.user.firstName} {child.user.lastName}
+                {formatPersonName(child.user)}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -192,7 +193,7 @@ function WardSection({
 
   return (
     <Card>
-      <CardHeader title={`${child.user.firstName} ${child.user.lastName}`} sub="Overview this term" />
+      <CardHeader title={formatPersonName(child.user)} sub="Overview this term" />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="space-y-3">
           {invoices ? (

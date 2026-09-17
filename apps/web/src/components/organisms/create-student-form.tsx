@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Camera, X } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
@@ -109,7 +110,7 @@ export function CreateStudentForm({ onCreated }: { onCreated?: () => void }) {
           })),
         },
       });
-      setSuccess(`${firstName} ${lastName} was created — admission number ${created.admissionNumber}.`);
+      setSuccess(`${formatPersonName({ firstName, lastName })} was created — admission number ${created.admissionNumber}.`);
 
       // Photo is optional and uploaded only after the student record exists
       // (POST /students/:id/photo needs a studentId) — a failure here

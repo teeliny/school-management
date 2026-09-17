@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { usePaginatedStudents } from "../../lib/use-paginated-students";
 import { Button } from "../atoms/button";
@@ -311,7 +312,7 @@ export function ClassTeacherSkillsPanel({
             <div key={student.id} className="rounded-lg border border-border p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[13px] font-medium">
-                  {student.user.firstName} {student.user.lastName}{" "}
+                  {formatPersonName(student.user)}{" "}
                   <span className="font-mono text-muted">({student.admissionNumber})</span>
                 </p>
                 <div className="flex items-center gap-2">

@@ -1,5 +1,6 @@
 import { Controller, Get, Injectable, Query, UseGuards } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { formatPersonName } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -64,7 +65,7 @@ export class AuditLogService {
       data: rows.map((row) => ({
         id: row.id,
         createdAt: row.createdAt,
-        actorName: row.actor ? `${row.actor.firstName} ${row.actor.lastName}` : null,
+        actorName: row.actor ? formatPersonName(row.actor) : null,
         actorEmail: row.actor?.email ?? null,
         action: row.action,
         entityType: row.entityType,

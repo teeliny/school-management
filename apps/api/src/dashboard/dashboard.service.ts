@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from "@nestjs/common";
 import { AssessmentComponentStatus, AssignmentType, AttendancePersonType, AttendanceSessionType, ClassLevelCategory, ClassLevelCategoryGroup, StaffStatus, StudentStatus } from "@prisma/client";
-import { computeSchoolDaysOpened } from "@school/types";
+import { computeSchoolDaysOpened, formatPersonName } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
@@ -178,7 +178,7 @@ export class DashboardService {
     return rows.map((row) => ({
       id: row.id,
       createdAt: row.createdAt,
-      actorName: row.actor ? `${row.actor.firstName} ${row.actor.lastName}` : null,
+      actorName: row.actor ? formatPersonName(row.actor) : null,
       action: row.action,
       entityType: row.entityType,
       entityId: row.entityId,

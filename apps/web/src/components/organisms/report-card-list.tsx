@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge, type BadgeVariant } from "../atoms/badge";
@@ -155,7 +156,7 @@ export function ReportCardList({
   }
 
   function studentLabel(card: TermReportCardItem) {
-    return `${card?.student?.user?.firstName} ${card?.student?.user?.lastName} (${card?.student?.admissionNumber})`;
+    return `${formatPersonName(card.student.user)} (${card.student.admissionNumber})`;
   }
   function termLabel(id: string) {
     return terms.find((t) => t.id === id)?.name ?? id;

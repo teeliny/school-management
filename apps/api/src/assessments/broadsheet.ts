@@ -1,6 +1,6 @@
 import { BadRequestException, Controller, ForbiddenException, Get, Injectable, Query, UseGuards } from "@nestjs/common";
 import type { ClassLevelCategory } from "@prisma/client";
-import { findGradeScaleMatch, type GradeScaleRow } from "@school/types";
+import { findGradeScaleMatch, formatPersonName, type GradeScaleRow } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -327,7 +327,7 @@ export class BroadsheetService {
       return {
         studentId: student.id,
         admissionNumber: student.admissionNumber,
-        studentName: `${student.user.firstName} ${student.user.lastName}`,
+        studentName: formatPersonName(student.user),
         classArmId: arm?.id ?? "",
         classArmName: arm?.name ?? "",
         subjects,

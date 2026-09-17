@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ClipboardCheck } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { cn } from "../../lib/cn";
@@ -102,10 +103,10 @@ export function AttendanceRollCall({
         mode === "STAFF_DAILY"
           ? (await apiFetch<StaffProfileItem[]>("/staff-profiles", { auth: true }))
               .filter((s) => s.status === "ACTIVE")
-              .map((s) => ({ id: s.id, primaryLabel: `${s.user.firstName} ${s.user.lastName}`, secondaryLabel: s.employeeId ?? "—" }))
+              .map((s) => ({ id: s.id, primaryLabel: formatPersonName(s.user), secondaryLabel: s.employeeId ?? "—" }))
           : (await apiFetch<StudentListItem[]>(`/students?classArmId=${classArmId}`, { auth: true })).map((s) => ({
               id: s.id,
-              primaryLabel: `${s.user.firstName} ${s.user.lastName}`,
+              primaryLabel: formatPersonName(s.user),
               secondaryLabel: s.admissionNumber,
             }));
       setRoster(rosterPeople);

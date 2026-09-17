@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { CLASS_LEVEL_CATEGORIES, type ClassLevelCategory } from "@school/types";
+import { CLASS_LEVEL_CATEGORIES, formatPersonName, type ClassLevelCategory } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
@@ -333,7 +333,7 @@ export function AdminDashboard({ user }: { user: CurrentUser }) {
             {bouncedParents.map((p) => (
               <li key={p.id} className="flex items-center justify-between rounded-lg border border-border p-2.5">
                 <span>
-                  {p.user.firstName} {p.user.lastName} <span className="text-muted">({p.user.email})</span>
+                  {formatPersonName(p.user)} <span className="text-muted">({p.user.email})</span>
                 </span>
                 <Badge variant="danger">Flagged</Badge>
               </li>

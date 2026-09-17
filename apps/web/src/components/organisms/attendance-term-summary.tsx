@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Users } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { SkeletonTable } from "../molecules/skeleton-table";
 import { EmptyState } from "../molecules/empty-state";
@@ -74,7 +75,7 @@ export function AttendanceTermSummary({ classArmId, termId }: { classArmId: stri
             {data.students.map((student) => (
               <tr key={student.studentId} className="border-b border-border/60 last:border-none even:bg-card-inset">
                 <td className="py-2.5 pr-4 font-medium">
-                  {student.firstName} {student.lastName}{" "}
+                  {formatPersonName(student)}{" "}
                   <span className="font-mono text-muted">({student.admissionNumber})</span>
                 </td>
                 <td className="py-2.5 pr-3 font-mono">{student.present}</td>

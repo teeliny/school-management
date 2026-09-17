@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
@@ -106,7 +107,7 @@ export function EditStaffForm({
       {error && <p className="text-sm text-danger">{error}</p>}
 
       <p className="text-sm font-medium">
-        {firstName} {lastName}
+        {formatPersonName({ firstName, lastName })}
       </p>
 
       <div className="grid grid-cols-2 gap-4">

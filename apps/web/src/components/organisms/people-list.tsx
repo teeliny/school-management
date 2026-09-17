@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, User as UserIcon } from "lucide-react";
-import type { ClassLevelCategory } from "@school/types";
+import { formatPersonName, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -87,12 +87,12 @@ export function PeopleList({
       const matchesTerm =
         !term ||
         student.admissionNumber.toLowerCase().includes(term) ||
-        `${student.user.firstName} ${student.user.lastName}`.toLowerCase().includes(term);
+        formatPersonName(student.user).toLowerCase().includes(term);
       const matchesStatus = !statusFilter || student.status === statusFilter;
       return matchesTerm && matchesStatus;
     });
     return [...filtered].sort((a, b) => {
-      const cmp = `${a.user.firstName} ${a.user.lastName}`.localeCompare(`${b.user.firstName} ${b.user.lastName}`);
+      const cmp = formatPersonName(a.user).localeCompare(formatPersonName(b.user));
       return nameSort === "asc" ? cmp : -cmp;
     });
   }, [students, search, statusFilter, nameSort]);
@@ -189,11 +189,11 @@ export function PeopleList({
                         <UserIcon className="h-2.5 w-2.5" />
                       </span>
                     )}
-                    {student.user.firstName} {student.user.lastName}
+                    {formatPersonName(student.user)}
                     {canUploadPhoto && (
                       <PhotoUploadButton
                         studentId={student.id}
-                        label={`Upload photo for ${student.user.firstName} ${student.user.lastName}`}
+                        label={`Upload photo for ${formatPersonName(student.user)}`}
                       />
                     )}
                   </span>

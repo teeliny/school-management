@@ -23,7 +23,14 @@ import {
   TimetableApprovalStatus,
   TimetableGeneratedBy,
 } from "@prisma/client";
-import { categoryToGroup, computePeriodTime, parseSpecialPeriods, timeRangesOverlap, type PeriodStructure } from "@school/types";
+import {
+  categoryToGroup,
+  computePeriodTime,
+  formatPersonName,
+  parseSpecialPeriods,
+  timeRangesOverlap,
+  type PeriodStructure,
+} from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -159,7 +166,7 @@ export class TimetableSlotService {
         input.subjectId ? this.prisma.subject.findUnique({ where: { id: input.subjectId } }) : null,
         this.prisma.subject.findUnique({ where: { id: existingSlot.subjectId } }),
       ]);
-      const staffName = staff ? `${staff.user.firstName} ${staff.user.lastName}` : input.staffId;
+      const staffName = staff ? formatPersonName(staff.user) : input.staffId;
       this.logger.warn(
         `Timetable staff conflict — teacher "${staffName}" (${input.staffId}): new ` +
           `${input.dayOfWeek} ${input.startTime}-${input.endTime} slot wants subject ` +
@@ -517,7 +524,7 @@ export class TimetableSlotService {
       }
     } else if (filters.staffId) {
       const staff = await this.prisma.staffProfile.findUnique({ where: { id: filters.staffId }, include: { user: true } });
-      if (staff) title = `${staff.user.firstName} ${staff.user.lastName} — Personal Timetable`;
+      if (staff) title = `${formatPersonName(staff.user)} — Personal Timetable`;
       const classArmIds = [...new Set(rows.map((row) => row.classArmId))];
       if (classArmIds.length > 0) {
         const arms = await this.prisma.classArm.findMany({
@@ -539,7 +546,7 @@ export class TimetableSlotService {
       // vocabulary. Shown in full, wrapping onto as many lines as needed
       // (renderTimetablePdf never truncates).
       lines: filters.classArmId
-        ? [row.subject.name.trim(), `${row.staff.user.firstName} ${row.staff.user.lastName}`]
+        ? [row.subject.name.trim(), formatPersonName(row.staff.user)]
         : [row.subject.name.trim(), row.classArm.displayName],
     }));
 

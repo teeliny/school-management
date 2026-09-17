@@ -23,7 +23,7 @@ import {
   TermReportCardStatus,
   TermReportCardType,
 } from "@prisma/client";
-import { QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
+import { formatPersonName, QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { hashToken } from "../common/crypto/token";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -167,7 +167,7 @@ export class TermReportCardService {
         where: { studentId: reportCard.studentId },
         include: { parent: true },
       });
-      const studentName = `${reportCard.student.user.firstName} ${reportCard.student.user.lastName}`;
+      const studentName = formatPersonName(reportCard.student.user);
       for (const guardian of guardians) {
         await this.notifySafely(guardian.parent.userId, "REPORT_CARD_PUBLISHED", {
           studentName,
@@ -284,7 +284,7 @@ export class TermReportCardService {
 
       return {
         studentId: student.id,
-        studentName: `${student.user.firstName} ${student.user.lastName}`,
+        studentName: formatPersonName(student.user),
         ready: missing.length === 0,
         missing,
       };
@@ -440,7 +440,7 @@ export class TermReportCardService {
 
     return {
       valid: true as const,
-      studentName: `${reportCard.student.user.firstName} ${reportCard.student.user.lastName}`,
+      studentName: formatPersonName(reportCard.student.user),
       admissionNumber: reportCard.student.admissionNumber,
       className: reportCard.student.currentClass
         ? `${reportCard.student.currentClass.classLevel.name} ${reportCard.student.currentClass.name}`

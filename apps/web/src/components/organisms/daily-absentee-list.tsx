@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { UserCheck } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Label } from "../atoms/label";
@@ -184,7 +185,7 @@ export function DailyAbsenteeList() {
               {rows.map((row) => (
                 <tr key={row.key} className="border-b border-border/60 last:border-none even:bg-card-inset">
                   <td className="py-2.5 pr-4 font-medium">
-                    {row.firstName} {row.lastName}{" "}
+                    {formatPersonName({ firstName: row.firstName ?? "", lastName: row.lastName ?? "" })}{" "}
                     {row.admissionNumber && <span className="font-mono text-muted">({row.admissionNumber})</span>}
                   </td>
                   <td className="py-2.5 pr-4 text-muted">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 import { ChevronDown } from "lucide-react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Button } from "../atoms/button";
 import { Badge } from "../atoms/badge";
@@ -43,7 +44,7 @@ function groupByStaff(assignments: StaffAssignment[]): TeacherSummary[] {
   }
 
   return [...byStaff.entries()].map(([staffId, rows]) => {
-    const staffName = `${rows[0]!.staff.user.firstName} ${rows[0]!.staff.user.lastName}`;
+    const staffName = formatPersonName(rows[0]!.staff.user);
     const classTeacherAssignments = rows.filter((a) => a.assignmentType === "CLASS_TEACHER");
     const subjectRows = rows.filter((a) => a.assignmentType === "SUBJECT_TEACHER");
     const otherAssignments = rows.filter(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { FormField } from "../molecules/form-field";
 import { Button } from "../atoms/button";
@@ -210,7 +211,7 @@ export function TimetableSlotForm({
           <SelectContent>
             {staffOptions.map((staff) => (
               <SelectItem key={staff.id} value={staff.id}>
-                {staff.user.firstName} {staff.user.lastName}
+                {formatPersonName(staff.user)}
               </SelectItem>
             ))}
           </SelectContent>

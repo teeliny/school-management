@@ -3,7 +3,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DndContext, useDraggable, useDroppable, type DragEndEvent } from "@dnd-kit/core";
 import { GripVertical } from "lucide-react";
-import { categoryToGroup, computePeriodTime, DAYS_OF_WEEK, type ClassLevelCategoryGroup, type DayOfWeek } from "@school/types";
+import {
+  categoryToGroup,
+  computePeriodTime,
+  DAYS_OF_WEEK,
+  formatPersonName,
+  type ClassLevelCategoryGroup,
+  type DayOfWeek,
+} from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
@@ -471,7 +478,7 @@ function SlotCard({
                 <SelectContent>
                   {staffOptions.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
-                      {s.user.firstName} {s.user.lastName}
+                      {formatPersonName(s.user)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -490,7 +497,7 @@ function SlotCard({
         <ClickReveal trigger={<span className="truncate font-medium">{slot.subject.code || slot.subject.name}</span>}>
           <div className="font-medium">{slot.subject.name}</div>
           <div className="text-muted">
-            {slot.staff.user.firstName} {slot.staff.user.lastName}
+            {formatPersonName(slot.staff.user)}
           </div>
           {slot.venue && <div className="text-muted">{slot.venue}</div>}
         </ClickReveal>

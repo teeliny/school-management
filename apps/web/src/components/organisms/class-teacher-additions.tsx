@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { formatPersonName } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
@@ -118,7 +119,7 @@ function ClassTeacherSection({
               { auth: true },
             ).catch(() => []);
             const hasClassTeacherComment = comments.some((c) => c.commentType === "CLASS_TEACHER");
-            return hasClassTeacherComment ? null : `${student.user.firstName} ${student.user.lastName}`;
+            return hasClassTeacherComment ? null : formatPersonName(student.user);
           }),
         );
         setMissingComments(results.filter((name): name is string => name !== null));

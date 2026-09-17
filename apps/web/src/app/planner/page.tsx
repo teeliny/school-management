@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { ClassLevelCategory } from "@school/types";
+import { formatPersonName, type ClassLevelCategory } from "@school/types";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
 import { AppShell } from "../../components/templates/app-shell";
@@ -478,10 +478,10 @@ function PlannerPageInner() {
                         <SelectItem value="ALL">All teachers</SelectItem>
                         {staffProfiles
                           .slice()
-                          .sort((a, b) => `${a.user.firstName} ${a.user.lastName}`.localeCompare(`${b.user.firstName} ${b.user.lastName}`))
+                          .sort((a, b) => formatPersonName(a.user).localeCompare(formatPersonName(b.user)))
                           .map((staff) => (
                             <SelectItem key={staff.id} value={staff.id}>
-                              {staff.user.firstName} {staff.user.lastName}
+                              {formatPersonName(staff.user)}
                             </SelectItem>
                           ))}
                       </SelectContent>

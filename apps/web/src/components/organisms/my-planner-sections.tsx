@@ -5,6 +5,7 @@ import {
   categoryToGroup,
   computePeriodTime,
   DAYS_OF_WEEK,
+  formatPersonName,
   type ClassLevelCategory,
   type ClassLevelCategoryGroup,
   type DayOfWeek,
@@ -210,7 +211,7 @@ export function MyWardTimetableSection({
             <TabsList>
               {wards.map((w) => (
                 <TabsTrigger key={w.id} value={w.id}>
-                  {w.user.firstName} {w.user.lastName}
+                  {formatPersonName(w.user)}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -333,7 +334,7 @@ export function MyWardExamSection({
             <TabsList>
               {wards.map((w) => (
                 <TabsTrigger key={w.id} value={w.id}>
-                  {w.user.firstName} {w.user.lastName}
+                  {formatPersonName(w.user)}
                 </TabsTrigger>
               ))}
             </TabsList>
