@@ -20,6 +20,7 @@ import {
   normalizeSubjectName,
   parseSpecialPeriods,
   parseSubjectDayRestrictions,
+  parseSubjectPeriodBlockCounts,
   parseSyncAllSubjectsPoolEntries,
   QUEUE_NAMES,
   timeRangesOverlap,
@@ -85,6 +86,26 @@ interface ResolvedSubject {
   // time — those still schedule fully independently, just without the
   // reward nudging them toward a shared slot they structurally can't share).
   wholeLevelSyncKey?: string;
+  // LAST_PERIOD_BLOCK_SUBJECT_COUNTS (CLASS_TIMETABLE only) — when > 0,
+  // exactly this many of this subject's periodsPerWeek occurrences must fall
+  // within GroupPayload's reserved period block (LAST_PERIOD_BLOCK_DAYS x
+  // LAST_PERIOD_BLOCK_PERIODS); its remaining occurrences, if any, are
+  // otherwise unrestricted. 0 (the default for every subject not named in
+  // the constraint) means this subject is hard-BANNED from that block
+  // entirely — see class_timetable.py's is_open() and the periodBlockCount
+  // constraint loop for the enforcement.
+  periodBlockRequiredCount: number;
+  // SUBJECT_MAX_CONCURRENT_ARMS (CLASS_TIMETABLE only) — 1 (the default for
+  // every subject not named in the constraint) is today's behavior, one
+  // teacher can never be in two arms' sessions at once. A school can raise
+  // this for a subject taught by a single specialist shared across many
+  // arms of a wholeLevelSyncKey pool (Music/French are the motivating
+  // case): once other constraints (e.g. LAST_PERIOD_BLOCK_*) leave that
+  // specialist's few allowedDays with fewer distinct slots than there are
+  // arms to visit, this lets up to N arms combine into one shared session
+  // with the same teacher at the same (day, period) — see
+  // class_timetable.py's staff_subject_keys constraint for the enforcement.
+  maxConcurrentArms: number;
 }
 
 /** Parsed once per group by resolveSubjectDayPreferences — see its own comment. */
@@ -92,6 +113,24 @@ interface SubjectDayPreferences {
   allowedDaysBySubject: Map<string, DayOfWeek[]>;
   preferMorningSubjects: Set<string>;
   preferAfternoonSubjects: Set<string>;
+  // LAST_PERIOD_BLOCK_SUBJECT_COUNTS/_DAYS/_PERIODS — see
+  // GroupPayload.lastPeriodBlockDays and ResolvedSubject.
+  // periodBlockRequiredCount's own comments. periodBlockDays/Periods are
+  // empty when the constraint pair is unset (feature disabled); a subject
+  // absent from periodBlockRequiredCountBySubject defaults to 0 (banned
+  // from the block) rather than "unrestricted," the opposite default from
+  // allowedDays/preferMorning/preferAfternoon above — deliberate, since an
+  // empty block only ever has meaning once at least one subject claims a
+  // slot in it.
+  periodBlockRequiredCountBySubject: Map<string, number>;
+  periodBlockDays: DayOfWeek[];
+  periodBlockPeriods: number[];
+  // SUBJECT_MAX_CONCURRENT_ARMS — same "Name:Count" format/parser as
+  // LAST_PERIOD_BLOCK_SUBJECT_COUNTS (parseSubjectPeriodBlockCounts is
+  // reused as-is). A subject absent here defaults to 1 in
+  // resolveSubjectsForClassArm, matching ResolvedSubject.maxConcurrentArms'
+  // own default.
+  maxConcurrentArmsBySubject: Map<string, number>;
 }
 
 interface ClassArmPayload {
@@ -120,6 +159,13 @@ interface GroupPayload extends PeriodStructure {
   // ClassLevel over the threshold, which keep today's per-arm-independent
   // behavior.
   syncedElectiveClassLevelIds: string[];
+  // LAST_PERIOD_BLOCK_DAYS x LAST_PERIOD_BLOCK_PERIODS — the reserved
+  // "exclusive block" of (day, period) slots (e.g. the last two periods of
+  // Monday-Thursday) that only subjects with a periodBlockRequiredCount > 0
+  // may use — see ResolvedSubject's own comment. Either array empty
+  // disables the whole mechanism (today's behavior, no block reserved).
+  lastPeriodBlockDays: DayOfWeek[];
+  lastPeriodBlockPeriods: number[];
 }
 
 interface ExamSubjectPayload {
@@ -358,6 +404,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         classArms: classArmPayloads,
         staffBlockedPeriods,
         syncedElectiveClassLevelIds,
+        lastPeriodBlockDays: subjectDayPreferences.periodBlockDays,
+        lastPeriodBlockPeriods: subjectDayPreferences.periodBlockPeriods,
       });
     }
 
@@ -1151,6 +1199,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         allowedDays: subjectDayPreferences.allowedDaysBySubject.get(nameKey),
         preferMorning: subjectDayPreferences.preferMorningSubjects.has(nameKey),
         preferAfternoon: subjectDayPreferences.preferAfternoonSubjects.has(nameKey),
+        periodBlockRequiredCount: subjectDayPreferences.periodBlockRequiredCountBySubject.get(nameKey) ?? 0,
+        maxConcurrentArms: subjectDayPreferences.maxConcurrentArmsBySubject.get(nameKey) ?? 1,
       });
     }
     return resolved;
@@ -1219,7 +1269,17 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       where: {
         scope: ScheduleScope.CLASS_TIMETABLE,
         classLevelCategoryGroup: group,
-        key: { in: ["SUBJECT_ALLOWED_DAYS", "SUBJECT_PREFER_MORNING", "SUBJECT_PREFER_AFTERNOON"] },
+        key: {
+          in: [
+            "SUBJECT_ALLOWED_DAYS",
+            "SUBJECT_PREFER_MORNING",
+            "SUBJECT_PREFER_AFTERNOON",
+            "LAST_PERIOD_BLOCK_SUBJECT_COUNTS",
+            "LAST_PERIOD_BLOCK_DAYS",
+            "LAST_PERIOD_BLOCK_PERIODS",
+            "SUBJECT_MAX_CONCURRENT_ARMS",
+          ],
+        },
         isActive: true,
       },
     });
@@ -1240,7 +1300,35 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const preferMorningSubjects = parseNameSet("SUBJECT_PREFER_MORNING");
     const preferAfternoonSubjects = parseNameSet("SUBJECT_PREFER_AFTERNOON");
 
-    return { allowedDaysBySubject, preferMorningSubjects, preferAfternoonSubjects };
+    const periodBlockRequiredCountBySubject = new Map<string, number>();
+    const periodBlockCountsRow = rows.find((r) => r.key === "LAST_PERIOD_BLOCK_SUBJECT_COUNTS");
+    for (const { subjectName, count } of parseSubjectPeriodBlockCounts(periodBlockCountsRow?.value)) {
+      periodBlockRequiredCountBySubject.set(normalizeSubjectName(subjectName), count);
+    }
+    const periodBlockDaysValue = rows.find((r) => r.key === "LAST_PERIOD_BLOCK_DAYS")?.value;
+    const periodBlockDays = (Array.isArray(periodBlockDaysValue) ? periodBlockDaysValue : []).filter(
+      (v): v is DayOfWeek => typeof v === "string" && DAYS_OF_WEEK.includes(v as DayOfWeek),
+    );
+    const periodBlockPeriodsValue = rows.find((r) => r.key === "LAST_PERIOD_BLOCK_PERIODS")?.value;
+    const periodBlockPeriods = (Array.isArray(periodBlockPeriodsValue) ? periodBlockPeriodsValue : []).filter(
+      (v): v is number => typeof v === "number" && Number.isInteger(v) && v > 0,
+    );
+
+    const maxConcurrentArmsBySubject = new Map<string, number>();
+    const maxConcurrentArmsRow = rows.find((r) => r.key === "SUBJECT_MAX_CONCURRENT_ARMS");
+    for (const { subjectName, count } of parseSubjectPeriodBlockCounts(maxConcurrentArmsRow?.value)) {
+      maxConcurrentArmsBySubject.set(normalizeSubjectName(subjectName), count);
+    }
+
+    return {
+      allowedDaysBySubject,
+      preferMorningSubjects,
+      preferAfternoonSubjects,
+      periodBlockRequiredCountBySubject,
+      periodBlockDays,
+      periodBlockPeriods,
+      maxConcurrentArmsBySubject,
+    };
   }
 
   private mergeBlockedPeriods(a: Record<string, number[]>, b: Record<string, number[]>): Record<string, number[]> {

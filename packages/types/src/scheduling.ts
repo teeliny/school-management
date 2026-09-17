@@ -483,6 +483,49 @@ export function parseSyncAllSubjectsPoolEntries(raw: unknown): SyncAllSubjectsPo
   return result;
 }
 
+/** One subject's required weekly session count within a reserved period block — see LAST_PERIOD_BLOCK_SUBJECT_COUNTS below. */
+export interface SubjectPeriodBlockCount {
+  subjectName: string;
+  count: number;
+}
+
+/**
+ * Parses LAST_PERIOD_BLOCK_SUBJECT_COUNTS's `"SubjectName:Count"` string-list
+ * format — same colon-delimited convention as SUBJECT_ALLOWED_DAYS/
+ * SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES above. Paired with two sibling keys
+ * that define WHERE the reserved block itself is:
+ *   LAST_PERIOD_BLOCK_DAYS: string[] of DayOfWeek — e.g. ["MONDAY",
+ *     "TUESDAY", "WEDNESDAY", "THURSDAY"].
+ *   LAST_PERIOD_BLOCK_PERIODS: number[] of period indices — e.g. [8, 9] for
+ *     "the last two periods" of a 9-period day. A period index that doesn't
+ *     exist on some day (e.g. Friday commonly runs fewer periods — see
+ *     GroupPayload.fridayPeriodsPerDay) simply never matches on that day,
+ *     with no special-casing needed.
+ * Any subject named here gets forced to have EXACTLY `count` of its
+ * `periodsPerWeek` occurrences fall within that block (apps/worker resolves
+ * this per subject by name, same case/whitespace-insensitive matching as
+ * every other subject-name key) — its remaining occurrences, if
+ * `periodsPerWeek` exceeds `count`, are otherwise unrestricted. Every OTHER
+ * subject (not named here) is hard-BANNED from the block entirely, making it
+ * exclusive to only the subjects listed. Empty/unset LAST_PERIOD_BLOCK_DAYS
+ * or LAST_PERIOD_BLOCK_PERIODS disables the whole mechanism (today's
+ * behavior, no block reserved).
+ */
+export function parseSubjectPeriodBlockCounts(raw: unknown): SubjectPeriodBlockCount[] {
+  if (!Array.isArray(raw)) return [];
+  const result: SubjectPeriodBlockCount[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const match = /^(.+):(\d+)$/.exec(entry.trim());
+    if (!match) continue;
+    const [, subjectName, countStr] = match as unknown as [string, string, string];
+    const count = Number(countStr);
+    if (!Number.isInteger(count) || count <= 0) continue;
+    result.push({ subjectName: subjectName.trim(), count });
+  }
+  return result;
+}
+
 /** "HH:mm" -> minutes since midnight. */
 export function timeToMinutes(time: string): number {
   const [h, m] = time.split(":");

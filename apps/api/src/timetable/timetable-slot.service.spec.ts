@@ -1,4 +1,4 @@
-import { DayOfWeek, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
+import { ClassLevelCategory, DayOfWeek, TimetableApprovalStatus, TimetableGeneratedBy } from "@prisma/client";
 import { TimetableSlotService } from "./timetable-slot";
 import type { CreateTimetableSlotDto } from "./dto/timetable-slot.dto";
 
@@ -12,6 +12,12 @@ function buildPrismaMock() {
     },
     classArm: {
       findUnique: jest.fn(),
+    },
+    subject: {
+      findUnique: jest.fn(),
+    },
+    schedulingConstraint: {
+      findFirst: jest.fn(),
     },
   };
 }
@@ -101,7 +107,7 @@ describe("TimetableSlotService — double-booking conflicts", () => {
       { id: "existing-1", startTime: "08:00", endTime: "08:40", subjectId: "subj-1", classArmId: "arm-2" },
     ]);
     prisma.classArm.findUnique.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
-      Promise.resolve({ classLevelId: id === "arm-1" ? "level-1" : "level-1" }),
+      Promise.resolve({ classLevel: { id: "level-1", category: ClassLevelCategory.PRIMARY } }),
     );
     prisma.timetableSlot.create.mockResolvedValue({ id: "new-slot" });
 
@@ -110,18 +116,35 @@ describe("TimetableSlotService — double-booking conflicts", () => {
     expect(prisma.timetableSlot.create).toHaveBeenCalledTimes(1);
   });
 
-  it("still rejects the same subject/teacher at an overlapping time in a DIFFERENT class level", async () => {
+  it("still rejects the same subject/teacher at an overlapping time in a DIFFERENT class level when SUBJECT_MAX_CONCURRENT_ARMS isn't configured for it", async () => {
     prisma.timetableSlot.findMany.mockResolvedValueOnce([
       { id: "existing-1", startTime: "08:00", endTime: "08:40", subjectId: "subj-1", classArmId: "arm-2" },
     ]);
     prisma.classArm.findUnique.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
-      Promise.resolve({ classLevelId: id === "arm-1" ? "level-1" : "level-2" }),
+      Promise.resolve({ classLevel: { id: id === "arm-1" ? "level-1" : "level-2", category: ClassLevelCategory.PRIMARY } }),
     );
+    prisma.schedulingConstraint.findFirst.mockResolvedValue(null);
 
     await expect(service.create(buildDto({ startTime: "08:20", endTime: "09:00" }), "user-1")).rejects.toThrow(
       /Teacher is already booked/,
     );
     expect(prisma.timetableSlot.create).not.toHaveBeenCalled();
+  });
+
+  it("allows a cross-level shared session when SUBJECT_MAX_CONCURRENT_ARMS(2) is configured for this subject (Music/French's shared specialist)", async () => {
+    prisma.timetableSlot.findMany.mockResolvedValueOnce([
+      { id: "existing-1", startTime: "08:00", endTime: "08:40", subjectId: "subj-1", classArmId: "arm-2" },
+    ]);
+    prisma.classArm.findUnique.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
+      Promise.resolve({ classLevel: { id: id === "arm-1" ? "level-1" : "level-2", category: ClassLevelCategory.PRIMARY } }),
+    );
+    prisma.subject.findUnique.mockResolvedValue({ name: "Music" });
+    prisma.schedulingConstraint.findFirst.mockResolvedValue({ value: ["MUSIC:2", "FRENCH:2"] });
+    prisma.timetableSlot.create.mockResolvedValue({ id: "new-slot" });
+
+    await service.create(buildDto({ startTime: "08:20", endTime: "09:00" }), "user-1");
+
+    expect(prisma.timetableSlot.create).toHaveBeenCalledTimes(1);
   });
 
   it("still rejects an overlapping slot for a DIFFERENT subject even with the same teacher (not an elective-block match)", async () => {

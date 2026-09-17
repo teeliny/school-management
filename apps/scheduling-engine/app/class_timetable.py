@@ -62,6 +62,29 @@ class SubjectPayload(BaseModel):
     # None means "no alignment reward," today's behavior for every subject
     # that isn't pooled or is explicitly excluded.
     wholeLevelSyncKey: str | None = None
+    # LAST_PERIOD_BLOCK_SUBJECT_COUNTS (apps/worker resolves this per
+    # Subject.name, same convention as allowedDays/preferMorning). > 0 means
+    # exactly this many of this subject's periodsPerWeek occurrences must
+    # fall within GroupPayload's reserved block (lastPeriodBlockDays x
+    # lastPeriodBlockPeriods) — its remaining occurrences, if any, are
+    # otherwise unrestricted. 0 (the default) means this subject is
+    # hard-BANNED from that block entirely, making the block exclusive to
+    # only the subjects a school has explicitly named — see is_open() and
+    # the periodBlockRequiredCount constraint loop below.
+    periodBlockRequiredCount: int = 0
+    # SUBJECT_MAX_CONCURRENT_ARMS (apps/worker resolves this per
+    # Subject.name, same convention as allowedDays/preferMorning). 1 (the
+    # default) is today's behavior — this subject's one staffId can never be
+    # in two places at once, enforced by the staff_keys constraint below. A
+    # school can raise this for a subject taught by a single specialist
+    # shared across many arms of a whole-level sync pool (Music/French are
+    # the motivating case): with periods reserved elsewhere for the
+    # LAST_PERIOD_BLOCK_* subjects, a specialist confined to one or two
+    # allowedDays may not have enough distinct slots to visit every arm
+    # separately, so this lets up to N arms combine into one shared session
+    # with that same teacher at the same (day, period) instead of each
+    # requiring its own separate slot.
+    maxConcurrentArms: int = 1
 
 
 class ClassArmPayload(BaseModel):
@@ -105,6 +128,14 @@ class GroupPayload(BaseModel):
     # ClassLevels at or under SYNC_SSS_ELECTIVE_BLOCKS_MAX_ARM_COUNT arms.
     # Empty list = today's per-arm-independent behavior for every arm.
     syncedElectiveClassLevelIds: list[str] = []
+    # LAST_PERIOD_BLOCK_DAYS x LAST_PERIOD_BLOCK_PERIODS — the reserved
+    # "exclusive block" of (day, period) slots (e.g. the last two periods of
+    # Monday-Thursday) that only subjects with periodBlockRequiredCount > 0
+    # may use. Either list empty disables the whole mechanism (today's
+    # behavior, no block reserved) — see is_open() and the
+    # periodBlockRequiredCount constraint loop below.
+    lastPeriodBlockDays: list[str] = []
+    lastPeriodBlockPeriods: list[int] = []
 
 
 # Higher than the other three solvers' (exam_timetable/invigilation/
@@ -237,6 +268,18 @@ def _solve_group(
         if period in blocked_here:
             return False
         if subject.allowedDays and day not in subject.allowedDays:
+            return False
+        # LAST_PERIOD_BLOCK_* — this (day, period) is reserved exclusively
+        # for subjects with periodBlockRequiredCount > 0; every other
+        # subject is banned from it outright, regardless of any other
+        # availability it would otherwise have.
+        if (
+            group.lastPeriodBlockDays
+            and group.lastPeriodBlockPeriods
+            and day in group.lastPeriodBlockDays
+            and period in group.lastPeriodBlockPeriods
+            and subject.periodBlockRequiredCount <= 0
+        ):
             return False
         return not (calculation_subjects_morning and subject.requiresCalculation and period > group.breakAfterPeriod)
 
@@ -402,33 +445,86 @@ def _solve_group(
                 if day_vars:
                     model.add(sum(day_vars) <= max_per_day)
 
-    # No teacher double-booked across class arms within this solve — deduped
-    # by variable identity (not just by (arm, subject) pair) so a staff
-    # member teaching a synced elective bundle in more than one arm of the
-    # same ClassLevel isn't flagged against themselves: those pairs already
-    # share the exact same BoolVar object (bundles above), so without this
-    # dedupe summing it twice would force it to always be 0 (2v ≤ 1 with
-    # boolean v), banning the very slot the sync is supposed to enable. A
-    # genuine double-booking — the same staff member on two DIFFERENT
-    # variables at the same slot — still gets its ≤1 constraint as before.
-    staff_keys: dict[str, list[tuple[str, str]]] = {}
+            # LAST_PERIOD_BLOCK_SUBJECT_COUNTS — exactly this many of this
+            # subject's periodsPerWeek occurrences must land within the
+            # reserved block (is_open() has already banned every OTHER
+            # subject from it entirely, making it exclusive). The remaining
+            # `periodsPerWeek - periodBlockRequiredCount` occurrences (if
+            # any) are covered by the plain `sum(subject_vars) ==
+            # periodsPerWeek` constraint above and land wherever the solver
+            # finds room outside the block — no extra constraint needed for
+            # those, the arithmetic already forces it.
+            if subject.periodBlockRequiredCount > 0:
+                block_vars = [
+                    v
+                    for (arm_id, subject_id, d, p), v in variables.items()
+                    if arm_id == arm.classArmId
+                    and subject_id == subject.subjectId
+                    and d in group.lastPeriodBlockDays
+                    and p in group.lastPeriodBlockPeriods
+                ]
+                if len(block_vars) < subject.periodBlockRequiredCount:
+                    return None, (
+                        f'"{subject.subjectName}" in {arm.classArmDisplayName} needs '
+                        f"{subject.periodBlockRequiredCount} period(s) in the reserved block "
+                        f"({', '.join(group.lastPeriodBlockDays)} period(s) "
+                        f"{', '.join(str(p) for p in group.lastPeriodBlockPeriods)}) but only "
+                        f"{len(block_vars)} slot(s) are available there — check blocked periods "
+                        f"or teacher availability for that block."
+                    )
+                model.add(sum(block_vars) == subject.periodBlockRequiredCount)
+
+    # No teacher double-booked across class arms within this solve, except up
+    # to a subject's own maxConcurrentArms (SUBJECT_MAX_CONCURRENT_ARMS — see
+    # SubjectPayload.maxConcurrentArms). Grouped first by staffId, then by
+    # subjectId: two arms taught the SAME subject by the SAME staff member
+    # may share a slot, up to that subject's cap — letting one specialist
+    # combine several arms into a single physical session when the week
+    # doesn't have enough distinct slots to visit each arm separately. A
+    # staff member appearing at two DIFFERENT subjects at the same time is
+    # never allowed regardless of any cap — that's a hard physical
+    # impossibility (one person can't deliver two different lessons in two
+    # different sessions simultaneously), not a capacity choice. Deduped by
+    # variable identity first (not just by (arm, subject) pair) so a synced
+    # elective bundle sharing one BoolVar across arms of the same ClassLevel
+    # isn't double-counted against its own cap.
+    staff_subject_keys: dict[str, dict[str, list[str]]] = {}
     for (arm_id, subject_id), staff_id in staff_by_arm_subject.items():
-        staff_keys.setdefault(staff_id, []).append((arm_id, subject_id))
-    for arm_subject_pairs in staff_keys.values():
-        if len(arm_subject_pairs) < 2:
+        staff_subject_keys.setdefault(staff_id, {}).setdefault(subject_id, []).append(arm_id)
+
+    for staff_id, arms_by_subject in staff_subject_keys.items():
+        if sum(len(arm_ids) for arm_ids in arms_by_subject.values()) < 2:
             continue
         for day in group.days:
             for period in periods_for_day(day):
-                seen_var_ids: set[int] = set()
-                vars_here = []
-                for arm_id, subject_id in arm_subject_pairs:
-                    v = variables.get((arm_id, subject_id, day, period))
-                    if v is None or id(v) in seen_var_ids:
+                vars_by_subject: dict[str, list[Any]] = {}
+                for subject_id, arm_ids in arms_by_subject.items():
+                    seen_var_ids: set[int] = set()
+                    vars_for_subject = []
+                    for arm_id in arm_ids:
+                        v = variables.get((arm_id, subject_id, day, period))
+                        if v is None or id(v) in seen_var_ids:
+                            continue
+                        seen_var_ids.add(id(v))
+                        vars_for_subject.append(v)
+                    if vars_for_subject:
+                        vars_by_subject[subject_id] = vars_for_subject
+
+                if not vars_by_subject:
+                    continue
+
+                for subject_id, vars_for_subject in vars_by_subject.items():
+                    if len(vars_for_subject) < 2:
                         continue
-                    seen_var_ids.add(id(v))
-                    vars_here.append(v)
-                if len(vars_here) > 1:
-                    model.add(sum(vars_here) <= 1)
+                    max_concurrent = subject_by_arm_id[(arms_by_subject[subject_id][0], subject_id)].maxConcurrentArms
+                    model.add(sum(vars_for_subject) <= max_concurrent)
+
+                subject_ids_here = list(vars_by_subject.keys())
+                for i, subject_a in enumerate(subject_ids_here):
+                    for subject_b in subject_ids_here[i + 1 :]:
+                        for var_a in vars_by_subject[subject_a]:
+                            for var_b in vars_by_subject[subject_b]:
+                                model.add(var_a + var_b <= 1)
 
     # Each (arm, subject) is already capped at one occurrence/day above,
     # which is what actually spreads a calculation subject's periods across

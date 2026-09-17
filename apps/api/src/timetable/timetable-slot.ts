@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import {
   AssignmentType,
+  ClassLevelCategory,
   ClassLevelCategoryGroup,
   DayOfWeek,
   Prisma,
@@ -27,7 +28,9 @@ import {
   categoryToGroup,
   computePeriodTime,
   formatPersonName,
+  normalizeSubjectName,
   parseSpecialPeriods,
+  parseSubjectPeriodBlockCounts,
   timeRangesOverlap,
   type PeriodStructure,
 } from "@school/types";
@@ -106,23 +109,36 @@ export class TimetableSlotService {
     for (const slot of staffSlots) {
       if (!timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) continue;
 
-      // Elective-block exemption: the SAME subject, taught by the SAME
-      // staff member, already sitting in a sibling arm of the SAME class
-      // level, isn't a double-booking — it's the "this elective's teacher
-      // covers every arm's students at one shared slot" pattern (PRD's
-      // options-column concept), the same exemption the AI solver's own
-      // bundle logic already grants for a synced cross-arm elective
-      // (class_timetable.py's staff_keys dedupe). Only exempted when BOTH
-      // the subject AND the class level match — a different subject sharing
-      // this teacher (real double-booking, e.g. the Agric teacher accidentally
-      // picked for a Food & Nutrition slot) or a different class level (no
-      // shared elective relationship) still gets flagged as a real conflict.
+      // Elective-block / shared-specialist exemption: the SAME subject,
+      // taught by the SAME staff member, already sitting in a sibling arm,
+      // isn't a double-booking — it's an intentional "one teacher covers
+      // several arms at one shared slot" pattern, granted via either of two
+      // routes:
+      //   1. Same class level — the PRD options-column concept (an
+      //      elective's teacher covers every arm's students of ONE level at
+      //      a shared slot), matching class_timetable.py's bundle logic.
+      //   2. SUBJECT_MAX_CONCURRENT_ARMS > 1 for this subject — the
+      //      whole-level-sync relaxation (Music/French's shared specialist
+      //      combining UP TO N arms, which may span DIFFERENT class levels
+      //      entirely, e.g. Basic 1 + Basic 4 — see
+      //      class_timetable.py's staff_subject_keys constraint). Checked by
+      //      subject NAME (SUBJECT_MAX_CONCURRENT_ARMS is keyed by
+      //      Subject.name, same convention as every other subject-level
+      //      SchedulingConstraint — the editor has no subjectId picker) and
+      //      the GROUP both arms' class levels resolve to, since the
+      //      constraint is scoped per ClassLevelCategoryGroup.
+      // A different subject sharing this teacher (real double-booking, e.g.
+      // the Agric teacher accidentally picked for a Food & Nutrition slot)
+      // never matches either route and is still flagged as a real conflict.
       if (input.subjectId && input.classArmId && slot.subjectId === input.subjectId && slot.classArmId !== input.classArmId) {
         const [newArm, existingArm] = await Promise.all([
-          client.classArm.findUnique({ where: { id: input.classArmId }, select: { classLevelId: true } }),
-          client.classArm.findUnique({ where: { id: slot.classArmId }, select: { classLevelId: true } }),
+          client.classArm.findUnique({ where: { id: input.classArmId }, select: { classLevel: { select: { id: true, category: true } } } }),
+          client.classArm.findUnique({ where: { id: slot.classArmId }, select: { classLevel: { select: { id: true, category: true } } } }),
         ]);
-        if (newArm && existingArm && newArm.classLevelId === existingArm.classLevelId) continue;
+        if (newArm && existingArm) {
+          if (newArm.classLevel.id === existingArm.classLevel.id) continue;
+          if (await this.subjectAllowsConcurrentArms(input.subjectId, newArm.classLevel.category, client)) continue;
+        }
       }
 
       void this.logStaffConflict(input, slot);
@@ -143,6 +159,37 @@ export class TimetableSlotService {
         }
       }
     }
+  }
+
+  /**
+   * SUBJECT_MAX_CONCURRENT_ARMS lookup for the cross-level shared-specialist
+   * exemption above — true when this subject is explicitly configured (by
+   * name, CLASS_TIMETABLE scope, the category's own group) to allow more
+   * than one arm sharing a slot. Queried fresh per conflict rather than
+   * cached: this only runs on the already-rare "same subject/staff,
+   * different arm, overlapping time" path, not on every conflict check.
+   */
+  private async subjectAllowsConcurrentArms(
+    subjectId: string,
+    category: ClassLevelCategory,
+    client: PrismaService | Prisma.TransactionClient,
+  ): Promise<boolean> {
+    const [subject, row] = await Promise.all([
+      client.subject.findUnique({ where: { id: subjectId }, select: { name: true } }),
+      client.schedulingConstraint.findFirst({
+        where: {
+          scope: ScheduleScope.CLASS_TIMETABLE,
+          classLevelCategoryGroup: categoryToGroup(category),
+          key: "SUBJECT_MAX_CONCURRENT_ARMS",
+          isActive: true,
+        },
+      }),
+    ]);
+    if (!subject || !row) return false;
+    const nameKey = normalizeSubjectName(subject.name);
+    return parseSubjectPeriodBlockCounts(row.value).some(
+      (entry) => normalizeSubjectName(entry.subjectName) === nameKey && entry.count > 1,
+    );
   }
 
   /**
