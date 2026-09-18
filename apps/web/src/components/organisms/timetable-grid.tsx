@@ -111,7 +111,12 @@ export function TimetableGrid({
 
   const group: ClassLevelCategoryGroup | null = classArm ? categoryToGroup(classArm.classLevel.category) : null;
   const structure = usePeriodStructure(group);
-  const { specialPeriods, fridayTrailingActivity } = useSpecialPeriods(group);
+  const { specialPeriods, earlyYearsSpecialPeriods, fridayTrailingActivity } = useSpecialPeriods(group);
+  // EARLY_YEARS_SPECIAL_PERIODS (e.g. Thursday's Textbooks block) only
+  // applies to NURSERY/RECEPTION arms — see useSpecialPeriods' own comment.
+  const isEarlyYearsArm =
+    classArm?.classLevel.category === "NURSERY" || classArm?.classLevel.category === "RECEPTION";
+  const effectiveSpecialPeriods = isEarlyYearsArm ? [...specialPeriods, ...earlyYearsSpecialPeriods] : specialPeriods;
   const columns = useMemo(() => (structure ? buildPeriodColumns(structure) : []), [structure]);
   const fridayCutoff = useMemo(
     () => (structure ? fridayCutoffColumnIndex(structure, columns) : -1),
@@ -319,7 +324,7 @@ export function TimetableGrid({
                       if (col.kind === "break") {
                         return <div key={i} className="min-h-[52px] rounded-lg bg-muted/10" />;
                       }
-                      const special = findSpecialPeriod(specialPeriods, day, col.index);
+                      const special = findSpecialPeriod(effectiveSpecialPeriods, day, col.index);
                       if (special) {
                         return (
                           <div

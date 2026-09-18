@@ -80,9 +80,15 @@ export interface FridayTrailingActivity {
 
 /**
  * Grid-display-only companion to `usePeriodStructure` — SPECIAL_PERIODS
- * (fixed non-subject blocks like Wednesday Sports/Extra-Curricular) and
- * Friday's trailing-activity label/end-time. Neither affects solver
- * arithmetic (the worker already bakes SPECIAL_PERIODS into blockedPeriods
+ * (fixed non-subject blocks like Wednesday Sports/Extra-Curricular),
+ * EARLY_YEARS_SPECIAL_PERIODS (the NURSERY/RECEPTION-only counterpart, e.g.
+ * Thursday's Textbooks block — see apps/worker's
+ * resolveEarlyYearsSpecialPeriodBlocks; returned separately, not merged,
+ * since a caller rendering more than one class arm at once — e.g.
+ * AllClassesTimetableView — needs to apply it only to NURSERY/RECEPTION
+ * rows, never to CRECHE/PRIMARY ones sharing this same group), and Friday's
+ * trailing-activity label/end-time. None of these affect solver arithmetic
+ * (the worker already bakes both SPECIAL_PERIODS keys into blockedPeriods
  * before dispatch, and the trailing activity is purely cosmetic — nothing
  * can be scheduled there regardless, since FRIDAY_PERIODS_PER_DAY already
  * stops the day earlier), so kept out of `PeriodStructure` itself, which
@@ -90,14 +96,17 @@ export interface FridayTrailingActivity {
  */
 export function useSpecialPeriods(group: ClassLevelCategoryGroup | null): {
   specialPeriods: SpecialPeriod[];
+  earlyYearsSpecialPeriods: SpecialPeriod[];
   fridayTrailingActivity: FridayTrailingActivity | null;
 } {
   const [specialPeriods, setSpecialPeriods] = useState<SpecialPeriod[]>([]);
+  const [earlyYearsSpecialPeriods, setEarlyYearsSpecialPeriods] = useState<SpecialPeriod[]>([]);
   const [fridayTrailingActivity, setFridayTrailingActivity] = useState<FridayTrailingActivity | null>(null);
 
   useEffect(() => {
     if (!group) {
       setSpecialPeriods([]);
+      setEarlyYearsSpecialPeriods([]);
       setFridayTrailingActivity(null);
       return;
     }
@@ -106,6 +115,7 @@ export function useSpecialPeriods(group: ClassLevelCategoryGroup | null): {
         const forGroup = rows.filter((r) => r.classLevelCategoryGroup === group && r.isActive);
         const get = (key: string) => forGroup.find((r) => r.key === key)?.value;
         setSpecialPeriods(parseSpecialPeriods(get("SPECIAL_PERIODS")));
+        setEarlyYearsSpecialPeriods(parseSpecialPeriods(get("EARLY_YEARS_SPECIAL_PERIODS")));
         const label = get("FRIDAY_TRAILING_ACTIVITY_LABEL");
         const endTime = get("FRIDAY_TRAILING_ACTIVITY_END_TIME");
         setFridayTrailingActivity(
@@ -114,9 +124,10 @@ export function useSpecialPeriods(group: ClassLevelCategoryGroup | null): {
       })
       .catch(() => {
         setSpecialPeriods([]);
+        setEarlyYearsSpecialPeriods([]);
         setFridayTrailingActivity(null);
       });
   }, [group]);
 
-  return { specialPeriods, fridayTrailingActivity };
+  return { specialPeriods, earlyYearsSpecialPeriods, fridayTrailingActivity };
 }
