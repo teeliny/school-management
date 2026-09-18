@@ -374,6 +374,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       // same for every class arm in the group, unlike the per-arm/per-staff
       // TimetableSlot-based blocks below, so resolved once per group.
       const specialPeriodBlocks = await this.resolveSpecialPeriodBlocks(group);
+      // NURSERY/RECEPTION-only counterpart (e.g. Thursday's Textbooks block)
+      // — merged in only for early-years arms below, never for CRECHE/PRIMARY
+      // arms sharing this same group's solve.
+      const earlyYearsSpecialPeriodBlocks = await this.resolveEarlyYearsSpecialPeriodBlocks(group);
       const subjectDayPreferences = await this.resolveSubjectDayPreferences(group);
       const syncedElectiveClassLevelIds = syncSssElectiveBlocksAcrossArms
         ? await this.resolveSyncedElectiveClassLevelIds(arms, term.academicSessionId, syncSssElectiveBlocksMaxArmCount)
@@ -391,10 +395,12 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           subjectDayPreferences,
         );
         const armSlots = existingSlots.filter((s) => s.classArmId === arm.id);
+        const isEarlyYearsCategory =
+          arm.classLevel.category === ClassLevelCategory.NURSERY || arm.classLevel.category === ClassLevelCategory.RECEPTION;
         const lastPeriodBlockDays =
           arm.classLevel.category === ClassLevelCategory.PRIMARY
             ? subjectDayPreferences.primaryPeriodBlockDays
-            : arm.classLevel.category === ClassLevelCategory.NURSERY || arm.classLevel.category === ClassLevelCategory.RECEPTION
+            : isEarlyYearsCategory
               ? subjectDayPreferences.earlyYearsPeriodBlockDays
               : [];
         classArmPayloads.push({
@@ -402,7 +408,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           classArmDisplayName: `${arm.classLevel.name} ${arm.name}`,
           classLevelId: arm.classLevelId,
           subjects,
-          blockedPeriods: this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
+          blockedPeriods: this.mergeBlockedPeriods(
+            this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
+            isEarlyYearsCategory ? earlyYearsSpecialPeriodBlocks : {},
+          ),
           lastPeriodBlockDays,
         });
 
@@ -1284,8 +1293,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * computeBlockedPeriods produces.
    */
   private async resolveSpecialPeriodBlocks(group: ClassLevelCategoryGroup): Promise<Record<string, number[]>> {
+    return this.resolveSpecialPeriodBlocksByKey(group, "SPECIAL_PERIODS");
+  }
+
+  /**
+   * EARLY_YEARS_SPECIAL_PERIODS — the NURSERY/RECEPTION-only counterpart to
+   * SPECIAL_PERIODS above (e.g. Thursday's "Textbooks" block, periods 2-7).
+   * Same "day:startPeriod-endPeriod:label" format, but merged into
+   * blockedPeriods only for NURSERY/RECEPTION class arms (see the
+   * classArmPayloads loop), never for CRECHE/PRIMARY arms sharing this same
+   * CRECHE_NURSERY_PRIMARY group solve.
+   */
+  private async resolveEarlyYearsSpecialPeriodBlocks(group: ClassLevelCategoryGroup): Promise<Record<string, number[]>> {
+    return this.resolveSpecialPeriodBlocksByKey(group, "EARLY_YEARS_SPECIAL_PERIODS");
+  }
+
+  private async resolveSpecialPeriodBlocksByKey(group: ClassLevelCategoryGroup, key: string): Promise<Record<string, number[]>> {
     const row = await this.prisma.schedulingConstraint.findFirst({
-      where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, key: "SPECIAL_PERIODS", isActive: true },
+      where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, key, isActive: true },
     });
     const blocked = new Map<DayOfWeek, Set<number>>(DAYS_OF_WEEK.map((day) => [day, new Set<number>()]));
     for (const special of parseSpecialPeriods(row?.value)) {
