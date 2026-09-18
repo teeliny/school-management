@@ -248,4 +248,30 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     expect(result).toEqual([]);
     expect(prisma.studentProfile.findMany).not.toHaveBeenCalled();
   });
+
+  it("narrows to actively-enrolled students when subjectId and termId are both supplied (gradebook roster)", async () => {
+    const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+    await service.findAllForUser(adminUser, { subjectId: "subj-1", termId: "term-1" });
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          subjectEnrollments: {
+            some: { subjectId: "subj-1", termId: "term-1", status: "ACTIVE" },
+          },
+        },
+      }),
+    );
+  });
+
+  it("ignores subjectId/termId when only one of the pair is supplied", async () => {
+    const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+    await service.findAllForUser(adminUser, { subjectId: "subj-1" });
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.not.objectContaining({ where: expect.anything() }),
+    );
+  });
 });

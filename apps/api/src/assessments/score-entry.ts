@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { AssessmentComponentStatus, AssignmentType } from "@prisma/client";
+import { AssessmentComponentStatus, AssignmentType, EnrollmentStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -76,6 +76,28 @@ export class ScoreEntryService {
       classLevelId: classArm.classLevelId,
     });
 
+    // Applies regardless of override, same as the two status checks above:
+    // GENERAL/DEPARTMENT (elective) subjects only cover students who
+    // explicitly opted in (StudentSubjectEnrollmentService.enroll) — a
+    // COMPULSORY subject auto-enrolls everyone in the class instead, so this
+    // is never a real block for the common case. This mirrors the enrollment
+    // gate TermReportCardService.assertFullTermPublishGate already uses to
+    // decide which subjects a student needs a result for; without it, a
+    // ScoreEntry could be written for a subject the student never enrolled
+    // in and would never surface in that completeness check.
+    const enrollment = await this.prisma.studentSubjectEnrollment.findFirst({
+      where: {
+        studentId: dto.studentId,
+        subjectId: dto.subjectId,
+        classArmId: dto.classArmId,
+        termId: component.termId,
+        status: EnrollmentStatus.ACTIVE,
+      },
+    });
+    if (!enrollment) {
+      throw new BadRequestException("This student is not actively enrolled in this subject for this class arm/term");
+    }
+
     if (isOverride) {
       // A Principal/Headteacher's override reaches here via CASL's
       // unconditioned "manage ScoreEntry" grant (ability.factory.ts) — scope
@@ -142,13 +164,24 @@ export class ScoreEntryService {
     });
   }
 
-  // Powers the "X of Y students scored" indicator on the gradebook — total
-  // roster size for the class arm vs. how many of them have a ScoreEntry for
-  // this exact subject+component, independent of any search filter applied
-  // to the visible (paginated) student list.
+  // Powers the "X of Y students scored" indicator on the gradebook —
+  // actively-enrolled roster size for this exact subject+term (not the whole
+  // class arm — see the enrollment gate in enter() above) vs. how many of
+  // them have a ScoreEntry for this exact subject+component, independent of
+  // any search filter applied to the visible (paginated) student list.
   async summary(filters: { classArmId: string; subjectId: string; assessmentComponentId: string }) {
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: filters.assessmentComponentId },
+    });
     const [totalStudents, enteredCount] = await Promise.all([
-      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.studentSubjectEnrollment.count({
+        where: {
+          classArmId: filters.classArmId,
+          subjectId: filters.subjectId,
+          termId: component.termId,
+          status: EnrollmentStatus.ACTIVE,
+        },
+      }),
       this.prisma.scoreEntry.count({ where: filters }),
     ]);
     return { totalStudents, enteredCount };

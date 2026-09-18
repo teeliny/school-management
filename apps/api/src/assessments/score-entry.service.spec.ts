@@ -10,6 +10,7 @@ function buildPrismaMock() {
     assessmentComponent: { findUniqueOrThrow: jest.fn() },
     subject: { findUniqueOrThrow: jest.fn() },
     scoreEntry: { upsert: jest.fn(), findUnique: jest.fn() },
+    studentSubjectEnrollment: { findFirst: jest.fn(), count: jest.fn() },
   };
 }
 
@@ -71,6 +72,9 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     // Default: no existing row, i.e. this write is a first entry — tests
     // that want to exercise the "correction" path override this.
     prisma.scoreEntry.findUnique.mockResolvedValue(null);
+    // Default: the student is actively enrolled — tests exercising the
+    // enrollment gate itself override this.
+    prisma.studentSubjectEnrollment.findFirst.mockResolvedValue({ id: "enrollment-1" });
   });
 
   it("allows the assigned subject teacher to score while the component is OPEN", async () => {
@@ -163,6 +167,30 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
   });
 
+  it("checks the student's active subject enrollment for this class arm/term before writing", async () => {
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
+
+    await service.enter(buildDto(), USER, false);
+
+    expect(prisma.studentSubjectEnrollment.findFirst).toHaveBeenCalledWith({
+      where: {
+        studentId: "student-1",
+        subjectId: "subj-1",
+        classArmId: "arm-1",
+        termId: "term-1",
+        status: "ACTIVE",
+      },
+    });
+  });
+
+  it("blocks score entry — even as an Admin override — when the student has no active enrollment for this subject/term", async () => {
+    prisma.studentSubjectEnrollment.findFirst.mockResolvedValue(null);
+
+    await expect(service.enter(buildDto(), USER, true)).rejects.toThrow(/not actively enrolled/);
+    expect(prisma.scoreEntry.upsert).not.toHaveBeenCalled();
+  });
+
   it("rejects score entry against a group subject for a regular teacher", async () => {
     prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: true });
 
@@ -246,5 +274,22 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     const result = await service.enter(buildDto({ score: 15 }), USER, false);
 
     expect(result).toEqual({ scoreEntry: { id: "score-1", score: 15 }, before: existing });
+  });
+});
+
+describe("ScoreEntryService.summary", () => {
+  it("counts the actively-enrolled roster for this subject/term, not the whole class arm", async () => {
+    const prisma = buildPrismaMock();
+    prisma.scoreEntry.count = jest.fn().mockResolvedValue(12);
+    prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({ id: "comp-1", termId: "term-1" });
+    prisma.studentSubjectEnrollment.count.mockResolvedValue(18);
+    const service = new ScoreEntryService(prisma as never, {} as never, {} as never, {} as never);
+
+    const result = await service.summary({ classArmId: "arm-1", subjectId: "subj-1", assessmentComponentId: "comp-1" });
+
+    expect(prisma.studentSubjectEnrollment.count).toHaveBeenCalledWith({
+      where: { classArmId: "arm-1", subjectId: "subj-1", termId: "term-1", status: "ACTIVE" },
+    });
+    expect(result).toEqual({ totalStudents: 18, enteredCount: 12 });
   });
 });

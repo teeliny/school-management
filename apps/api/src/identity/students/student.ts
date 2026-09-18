@@ -16,7 +16,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { memoryStorage } from "multer";
-import { AssignmentType, ClassLevelCategory, Prisma, Role } from "@prisma/client";
+import { AssignmentType, ClassLevelCategory, EnrollmentStatus, Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../../casl/policies.guard";
@@ -475,6 +475,14 @@ export class StudentService {
    * `skip`/`take` paginate. `take` being present is what switches the return
    * shape to `{ data, total }` — omitting it (every caller before this)
    * keeps the plain-array response so no existing consumer breaks.
+   *
+   * `filters.subjectId`/`termId` (only applied together) narrow further to
+   * students with an ACTIVE StudentSubjectEnrollment for that subject in
+   * that term — the gradebook's roster for a given subject+component, since
+   * GENERAL/DEPARTMENT (elective) subjects only cover the students who
+   * actually opted in, not the whole class arm. Same enrollment source of
+   * truth TermReportCardService.assertFullTermPublishGate already uses to
+   * decide which subjects a student needs a result for.
    */
   async findAllForUser(
     user: RequestUser,
@@ -482,6 +490,8 @@ export class StudentService {
       classArmId?: string;
       classLevelId?: string;
       classLevelCategory?: ClassLevelCategory;
+      subjectId?: string;
+      termId?: string;
       search?: string;
       skip?: number;
       take?: number;
@@ -505,6 +515,15 @@ export class StudentService {
       scopeWhere,
       ...(filters.classArmId ? [{ currentClassId: filters.classArmId }] : []),
       ...(Object.keys(currentClassWhere).length > 0 ? [{ currentClass: currentClassWhere }] : []),
+      ...(filters.subjectId && filters.termId
+        ? [
+            {
+              subjectEnrollments: {
+                some: { subjectId: filters.subjectId, termId: filters.termId, status: EnrollmentStatus.ACTIVE },
+              },
+            },
+          ]
+        : []),
       ...(filters.search
         ? [
             {
@@ -686,6 +705,8 @@ export class StudentController {
     @Query("classArmId") classArmId?: string,
     @Query("classLevelId") classLevelId?: string,
     @Query("classLevelCategory") classLevelCategory?: ClassLevelCategory,
+    @Query("subjectId") subjectId?: string,
+    @Query("termId") termId?: string,
     @Query("search") search?: string,
     @Query("skip") skip?: string,
     @Query("take") take?: string,
@@ -694,6 +715,8 @@ export class StudentController {
       classArmId,
       classLevelId,
       classLevelCategory,
+      subjectId,
+      termId,
       search,
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),

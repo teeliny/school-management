@@ -28,18 +28,25 @@ interface ScoreSummary {
 export function GradebookTable({
   classArmId,
   subjectId,
+  termId,
   assessmentComponentId,
   maxScore,
   readOnly,
 }: {
   classArmId: string;
   subjectId: string;
+  termId: string;
   assessmentComponentId: string;
   maxScore: number;
   readOnly: boolean;
 }) {
+  // Scoped to students actively enrolled in this subject for this term, not
+  // the whole class arm — a GENERAL/DEPARTMENT (elective) subject only
+  // covers students who opted in (StudentSubjectEnrollmentService.enroll).
   const { students, total, loading, error: listError, hasMore, search, setSearch, loadMore } = usePaginatedStudents({
     classArmId,
+    subjectId,
+    termId,
   });
   const [scores, setScores] = useState<Record<string, number>>({});
   const [draftScores, setDraftScores] = useState<Record<string, string>>({});

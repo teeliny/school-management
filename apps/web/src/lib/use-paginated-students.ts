@@ -24,16 +24,25 @@ const PAGE_SIZE = 25;
  * list, scoped to one class arm (`classArmId`, the gradebook/Skills &
  * Comments panels' shape) or a whole class-level category (`classLevelCategory`,
  * e.g. SSS-only for department assignment) — exactly one should be passed.
+ * `subjectId`+`termId` (only applied together, by the API) further narrow the
+ * roster to students with an ACTIVE StudentSubjectEnrollment for that
+ * subject/term — the gradebook passes both so an elective (GENERAL/
+ * DEPARTMENT) subject only lists students who actually opted in, not the
+ * whole class arm.
  * `search` is debounced 300ms before it triggers a request; changing the
  * scope or the debounced search resets to the first page.
  */
 export function usePaginatedStudents({
   classArmId,
   classLevelCategory,
+  subjectId,
+  termId,
   pageSize = PAGE_SIZE,
 }: {
   classArmId?: string;
   classLevelCategory?: string;
+  subjectId?: string;
+  termId?: string;
   pageSize?: number;
 }) {
   const [searchInput, setSearchInput] = useState("");
@@ -56,6 +65,8 @@ export function usePaginatedStudents({
       const params = new URLSearchParams({ skip: String(skip), take: String(pageSize) });
       if (classArmId) params.set("classArmId", classArmId);
       if (classLevelCategory) params.set("classLevelCategory", classLevelCategory);
+      if (subjectId) params.set("subjectId", subjectId);
+      if (termId) params.set("termId", termId);
       if (search) params.set("search", search);
       apiFetch<StudentsPage>(`/students?${params.toString()}`, { auth: true })
         .then((res) => {
@@ -71,21 +82,21 @@ export function usePaginatedStudents({
           if (thisRequest === requestId.current) setLoading(false);
         });
     },
-    [scoped, classArmId, classLevelCategory, search, pageSize],
+    [scoped, classArmId, classLevelCategory, subjectId, termId, search, pageSize],
   );
 
   // A stale search term from the previous scope would otherwise carry over
   // and silently scope the very first fetch for the new one.
   useEffect(() => {
     setSearchInput("");
-  }, [classArmId, classLevelCategory]);
+  }, [classArmId, classLevelCategory, subjectId, termId]);
 
   useEffect(() => {
     setStudents([]);
     setTotal(0);
     if (!scoped) return;
     loadPage(0);
-  }, [scoped, classArmId, classLevelCategory, search, loadPage]);
+  }, [scoped, classArmId, classLevelCategory, subjectId, termId, search, loadPage]);
 
   const loadMore = useCallback(() => {
     loadPage(students.length);

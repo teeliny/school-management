@@ -264,6 +264,7 @@ export default function GradebookPage() {
           <GradebookTable
             classArmId={classArmId}
             subjectId={subjectId}
+            termId={termId}
             assessmentComponentId={componentId}
             maxScore={selectedComponent.maxScore}
             readOnly={!isAdmin && selectedComponent.status !== "OPEN"}
