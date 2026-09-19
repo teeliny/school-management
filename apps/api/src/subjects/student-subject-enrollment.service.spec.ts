@@ -1,6 +1,7 @@
 import { ClassLevelCategory, EnrollmentStatus, SubjectType } from "@prisma/client";
 import { StudentSubjectEnrollmentService } from "./student-subject-enrollment";
 import type { CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
+import type { RequestUser } from "../auth/jwt.strategy";
 
 function buildPrismaMock() {
   return {
@@ -9,8 +10,11 @@ function buildPrismaMock() {
     classSubjectTermStatus: { findUnique: jest.fn() },
     classSubjectLevelStatus: { findUnique: jest.fn() },
     studentDepartment: { findUnique: jest.fn() },
-    studentProfile: { findMany: jest.fn() },
-    studentSubjectEnrollment: { upsert: jest.fn() },
+    studentProfile: { findMany: jest.fn(), findUnique: jest.fn() },
+    studentSubjectEnrollment: { upsert: jest.fn(), findMany: jest.fn() },
+    staffProfile: { findUnique: jest.fn() },
+    staffAssignment: { findMany: jest.fn(), count: jest.fn() },
+    parentProfile: { findUnique: jest.fn() },
     term: { findFirst: jest.fn() },
   };
 }
@@ -391,5 +395,113 @@ describe("StudentSubjectEnrollmentService.enroll (PRD FR2.5, FR2.4)", () => {
 
     await expect(service.enroll(buildDto())).rejects.toThrow(/disabled for this class level/);
     expect(prisma.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+});
+
+// The GET endpoint behind the student profile page's "Subjects" section —
+// visibility must match StudentService.findOneForUser exactly (same
+// canAccessStudent choke point) so a user who can't open the profile can't
+// read its subjects either via a direct API call.
+describe("StudentSubjectEnrollmentService.findForStudentAsUser", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let service: StudentSubjectEnrollmentService;
+
+  const STUDENT_IN_JSS = {
+    userId: "student-user-1",
+    currentClassId: "arm-1",
+    currentClass: { classLevel: { category: ClassLevelCategory.JSS } },
+    guardians: [],
+  };
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    service = new StudentSubjectEnrollmentService(
+      prisma as never,
+      buildClassSubjectTermStatusMock() as never,
+      buildClassSubjectLevelStatusMock() as never,
+      buildRecomputeQueueMock() as never,
+    );
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([]);
+  });
+
+  function staffUser(assignmentTypes: string[] = []): RequestUser {
+    return { id: "user-1", roles: ["STAFF"], assignmentTypes };
+  }
+
+  it("throws NotFoundException when the student doesn't exist", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(null);
+
+    await expect(service.findForStudentAsUser("missing", {}, staffUser())).rejects.toThrow(/not found/i);
+  });
+
+  it("lets ADMIN read any student's enrollments without a scoping check", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+    const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+    await service.findForStudentAsUser("student-1", {}, adminUser);
+
+    expect(prisma.staffProfile.findUnique).not.toHaveBeenCalled();
+    expect(prisma.studentSubjectEnrollment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ studentId: "student-1" }) }),
+    );
+  });
+
+  it("allows a PRINCIPAL to read a JSS student's enrollments (category-scoped, no DB round trip)", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+
+    await service.findForStudentAsUser("student-1", {}, staffUser(["PRINCIPAL"]));
+
+    expect(prisma.studentSubjectEnrollment.findMany).toHaveBeenCalled();
+  });
+
+  it("blocks a HEADTEACHER from reading a JSS student's enrollments (out of their Creche-Primary section)", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+
+    await expect(service.findForStudentAsUser("student-1", {}, staffUser(["HEADTEACHER"]))).rejects.toThrow(
+      /insufficient permissions/i,
+    );
+    expect(prisma.studentSubjectEnrollment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("allows a CLASS_TEACHER assigned to the student's own class arm", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+    prisma.staffAssignment.count.mockResolvedValue(0); // no REGISTRAR/BURSAR
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    prisma.staffAssignment.findMany.mockResolvedValue([{ classArmId: "arm-1" }]);
+
+    await service.findForStudentAsUser("student-1", {}, staffUser());
+
+    expect(prisma.studentSubjectEnrollment.findMany).toHaveBeenCalled();
+  });
+
+  it("blocks a class teacher assigned to a different class arm", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+    prisma.staffAssignment.count.mockResolvedValue(0);
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    prisma.staffAssignment.findMany.mockResolvedValue([{ classArmId: "arm-other" }]);
+
+    await expect(service.findForStudentAsUser("student-1", {}, staffUser())).rejects.toThrow(
+      /insufficient permissions/i,
+    );
+  });
+
+  it("allows a REGISTRAR (school-wide staff assignment) regardless of class", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    prisma.staffAssignment.count.mockResolvedValue(1); // active REGISTRAR/BURSAR assignment
+
+    await service.findForStudentAsUser("student-1", {}, staffUser());
+
+    expect(prisma.studentSubjectEnrollment.findMany).toHaveBeenCalled();
+  });
+
+  it("blocks a PARENT who isn't this student's guardian", async () => {
+    prisma.studentProfile.findUnique.mockResolvedValue(STUDENT_IN_JSS);
+    prisma.parentProfile.findUnique.mockResolvedValue({ id: "parent-1" });
+    const parentUser: RequestUser = { id: "user-2", roles: ["PARENT"], assignmentTypes: [] };
+
+    await expect(service.findForStudentAsUser("student-1", {}, parentUser)).rejects.toThrow(
+      /insufficient permissions/i,
+    );
   });
 });

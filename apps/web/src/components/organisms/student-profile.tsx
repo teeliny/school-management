@@ -33,6 +33,17 @@ interface Guardian {
   };
 }
 
+interface SubjectEnrollment {
+  id: string;
+  status: "ACTIVE" | "DROPPED";
+  subject: { name: string; code: string };
+}
+
+const ENROLLMENT_STATUS_VARIANT: Record<SubjectEnrollment["status"], BadgeVariant> = {
+  ACTIVE: "success",
+  DROPPED: "muted",
+};
+
 interface StudentDetail {
   id: string;
   admissionNumber: string;
@@ -87,8 +98,9 @@ export function StudentProfile({
 }) {
   const [student, setStudent] = useState<StudentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { termId } = useCurrentTerm();
+  const { academicSessionId, termId } = useCurrentTerm();
   const [components, setComponents] = useState<AssessmentComponentOption[]>([]);
+  const [subjects, setSubjects] = useState<SubjectEnrollment[] | null>(null);
 
   const load = useCallback(() => {
     apiFetch<StudentDetail>(`/students/${studentId}`, { auth: true })
@@ -120,6 +132,26 @@ export function StudentProfile({
   }, [termId, category]);
   const midTermComponent = components.find((c) => c.type === "MID_TERM");
   const examComponent = components.find((c) => c.type === "EXAM");
+
+  // Scoped server-side to whoever's allowed to view this student at all
+  // (StudentSubjectEnrollmentService.findForStudentAsUser mirrors
+  // StudentService.findOneForUser) — no extra role gating needed here.
+  useEffect(() => {
+    if (!termId || !academicSessionId) {
+      setSubjects(null);
+      return;
+    }
+    apiFetch<SubjectEnrollment[]>(
+      `/student-subject-enrollments?studentId=${studentId}&academicSessionId=${academicSessionId}&termId=${termId}`,
+      { auth: true },
+    )
+      .then(setSubjects)
+      .catch(() => setSubjects([]));
+  }, [studentId, academicSessionId, termId]);
+
+  const sortedSubjects = subjects
+    ? [...subjects].sort((a, b) => a.subject.name.localeCompare(b.subject.name))
+    : null;
 
   return (
     <div className="space-y-4">
@@ -248,6 +280,25 @@ export function StudentProfile({
                 </Button>
               )}
             </div>
+          </Card>
+
+          <Card>
+            <CardHeader title="Subjects" sub="This term's subject enrollments" />
+            {sortedSubjects === null ? (
+              <p className="text-sm text-muted">
+                {termId ? "Loading…" : "No current term set."}
+              </p>
+            ) : sortedSubjects.length === 0 ? (
+              <p className="text-sm text-muted">No subject enrollments for this term.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {sortedSubjects.map((enrollment) => (
+                  <Badge key={enrollment.id} variant={ENROLLMENT_STATUS_VARIANT[enrollment.status]}>
+                    {enrollment.subject.name}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </Card>
 
           <Card>

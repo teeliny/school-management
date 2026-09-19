@@ -28,6 +28,7 @@ import { UserService } from "../users/user.service";
 import { InvitationService } from "../invitations/invitation.service";
 import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
 import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
+import { activeAssignedClassArmIds, canAccessStudent, hasActiveSchoolWideAssignment } from "../../common/student-access";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../../storage/storage-adapter";
 import { Audited } from "../../audit/audited.decorator";
 import { CreateStudentDto, GuardianInputDto } from "./dto/create-student.dto";
@@ -587,10 +588,10 @@ export class StudentService {
     if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) return {};
 
     if (user.roles.includes("STAFF")) {
-      if (await this.hasActiveSchoolWideAssignment(user.id)) return {};
+      if (await hasActiveSchoolWideAssignment(this.prisma, user.id)) return {};
       const categories = resolvePrincipalHeadteacherCategories(user);
       if (categories) return { currentClass: { classLevel: { category: { in: categories } } } };
-      const classArmIds = await this.activeAssignedClassArmIds(user.id);
+      const classArmIds = await activeAssignedClassArmIds(this.prisma, user.id);
       if (classArmIds.length === 0) return null;
       return { currentClassId: { in: classArmIds } };
     }
@@ -622,65 +623,9 @@ export class StudentService {
       },
     });
 
-    if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) return student;
-    if (user.roles.includes("STUDENT") && student.userId === user.id) return student;
-
-    if (user.roles.includes("PARENT")) {
-      const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
-      if (parentProfile && student.guardians.some((g) => g.parentId === parentProfile.id)) {
-        return student;
-      }
-    }
-
-    if (user.roles.includes("STAFF")) {
-      if (await this.hasActiveSchoolWideAssignment(user.id)) return student;
-      const categories = resolvePrincipalHeadteacherCategories(user);
-      if (categories && student.currentClass && categories.includes(student.currentClass.classLevel.category)) {
-        return student;
-      }
-      if (student.currentClassId) {
-        const classArmIds = await this.activeAssignedClassArmIds(user.id);
-        if (classArmIds.includes(student.currentClassId)) return student;
-      }
-    }
+    if (await canAccessStudent(this.prisma, student, user)) return student;
 
     throw new ForbiddenException("Insufficient permissions to view this student");
-  }
-
-  private async activeAssignedClassArmIds(userId: string): Promise<string[]> {
-    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
-    if (!staffProfile) return [];
-
-    const assignments = await this.prisma.staffAssignment.findMany({
-      where: {
-        staffId: staffProfile.id,
-        isActive: true,
-        assignmentType: { in: [AssignmentType.CLASS_TEACHER, AssignmentType.SUBJECT_TEACHER] },
-        classArmId: { not: null },
-      },
-    });
-
-    return [...new Set(assignments.map((a) => a.classArmId).filter((id): id is string => id !== null))];
-  }
-
-  // PRINCIPAL/HEADTEACHER are deliberately excluded here — they're scoped to
-  // their own section instead (resolvePrincipalHeadteacherCategories, called
-  // separately by both callers of this method before falling back to it).
-  private async hasActiveSchoolWideAssignment(userId: string): Promise<boolean> {
-    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId } });
-    if (!staffProfile) return false;
-
-    const count = await this.prisma.staffAssignment.count({
-      where: {
-        staffId: staffProfile.id,
-        isActive: true,
-        // BURSAR needs to find any student to attach an invoice/payment/fee
-        // opt-in to (FeeStructureStudentAssignmentService), and REGISTRAR
-        // enrolls/maintains any student — neither is tied to a classArmId.
-        assignmentType: { in: [AssignmentType.REGISTRAR, AssignmentType.BURSAR] },
-      },
-    });
-    return count > 0;
   }
 }
 

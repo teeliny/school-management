@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Injectable,
   NotFoundException,
@@ -19,6 +20,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
+import { CurrentUser } from "../auth/current-user.decorator";
+import type { RequestUser } from "../auth/jwt.strategy";
+import { canAccessStudent } from "../common/student-access";
 import { CreateBulkEnrollmentDto, CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 import { ClassSubjectTermStatusService } from "./class-subject-term-status";
 import { ClassSubjectLevelStatusService } from "./class-subject-level-status";
@@ -335,6 +339,32 @@ export class StudentSubjectEnrollmentService {
       orderBy: { createdAt: "asc" },
     });
   }
+
+  // Same visibility rule as the student profile page itself
+  // (StudentService.findOneForUser) — if you can't view the student, you
+  // can't view their subjects either.
+  async findForStudentAsUser(
+    studentId: string,
+    filters: { academicSessionId?: string; termId?: string },
+    user: RequestUser,
+  ) {
+    const student = await this.prisma.studentProfile.findUnique({
+      where: { id: studentId },
+      select: {
+        userId: true,
+        currentClassId: true,
+        currentClass: { select: { classLevel: { select: { category: true } } } },
+        guardians: { select: { parentId: true } },
+      },
+    });
+    if (!student) throw new NotFoundException("Student not found");
+
+    if (!(await canAccessStudent(this.prisma, student, user))) {
+      throw new ForbiddenException("Insufficient permissions to view this student's subject enrollments");
+    }
+
+    return this.findForStudent(studentId, filters);
+  }
 }
 
 @Controller("student-subject-enrollments")
@@ -359,10 +389,11 @@ export class StudentSubjectEnrollmentController {
   @Get()
   findForStudent(
     @Query("studentId") studentId: string,
+    @CurrentUser() user: RequestUser,
     @Query("academicSessionId") academicSessionId?: string,
     @Query("termId") termId?: string,
   ) {
-    return this.service.findForStudent(studentId, { academicSessionId, termId });
+    return this.service.findForStudentAsUser(studentId, { academicSessionId, termId }, user);
   }
 
   @Patch(":id/drop")
