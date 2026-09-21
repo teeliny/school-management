@@ -6,6 +6,7 @@ import type { CreateAttendanceSessionDto } from "./dto/attendance-session.dto";
 const abilityFactory = new AbilityFactory();
 
 const ADMIN: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+const SUPER_ADMIN: RequestUser = { id: "super-1", roles: ["SUPER_ADMIN"], assignmentTypes: [] };
 const REGISTRAR: RequestUser = { id: "registrar-1", roles: ["STAFF"], assignmentTypes: ["REGISTRAR"] };
 const CLASS_TEACHER: RequestUser = { id: "teacher-1", roles: ["STAFF"], assignmentTypes: ["CLASS_TEACHER"] };
 const SUBJECT_TEACHER: RequestUser = { id: "teacher-2", roles: ["STAFF"], assignmentTypes: ["SUBJECT_TEACHER"] };
@@ -36,7 +37,11 @@ function buildStaffAssignmentsMock() {
 }
 
 function buildSchoolProfileMock() {
-  return { get: jest.fn().mockResolvedValue({ attendanceBackdateWindowDays: 3, attendanceGranularity: "DAILY" }) };
+  return {
+    get: jest
+      .fn()
+      .mockResolvedValue({ attendanceBackdateWindowDays: 3, attendanceGranularity: "DAILY", timezone: "Africa/Lagos" }),
+  };
 }
 
 function buildStudentDailyDto(overrides: Partial<CreateAttendanceSessionDto> = {}): CreateAttendanceSessionDto {
@@ -127,9 +132,19 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
     expect(prisma.$transaction).toHaveBeenCalled();
   });
 
+  // Not "today" — see the dedicated "staff attendance 9am lock" describe
+  // block below for that behavior; these two just test the pre-existing
+  // role checks, which shouldn't be entangled with the new lock.
+  const YESTERDAY = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
   it("rejects a plain staff member (no REGISTRAR assignment) recording STAFF-type attendance", async () => {
     const ability = abilityFactory.createForUser(PLAIN_STAFF);
-    const dto = buildStudentDailyDto({ type: "STAFF", classArmId: undefined, records: [{ personId: "staff-9", status: "PRESENT" }] });
+    const dto = buildStudentDailyDto({
+      type: "STAFF",
+      classArmId: undefined,
+      date: YESTERDAY,
+      records: [{ personId: "staff-9", status: "PRESENT" }],
+    });
 
     await expect(service.create(dto, PLAIN_STAFF, ability)).rejects.toThrow(/not permitted to record staff attendance/);
     expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -138,7 +153,12 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
   it("allows a Registrar to record STAFF-type attendance", async () => {
     prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
     const ability = abilityFactory.createForUser(REGISTRAR);
-    const dto = buildStudentDailyDto({ type: "STAFF", classArmId: undefined, records: [{ personId: "staff-9", status: "PRESENT" }] });
+    const dto = buildStudentDailyDto({
+      type: "STAFF",
+      classArmId: undefined,
+      date: YESTERDAY,
+      records: [{ personId: "staff-9", status: "PRESENT" }],
+    });
 
     await service.create(dto, REGISTRAR, ability);
 
@@ -200,5 +220,65 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
     await expect(service.create(buildStudentDailyDto({ kind: "PERIOD" }), SUBJECT_TEACHER, ability)).rejects.toThrow(
       /subjectId is required/,
     );
+  });
+
+  describe("staff attendance 9am lock", () => {
+    function buildTodaysStaffDto(overrides: Partial<CreateAttendanceSessionDto> = {}) {
+      return buildStudentDailyDto({
+        type: "STAFF",
+        classArmId: undefined,
+        date: new Date("2026-03-10"),
+        records: [{ personId: "staff-9", status: "PRESENT" }],
+        ...overrides,
+      });
+    }
+
+    afterEach(() => jest.useRealTimers());
+
+    it("blocks Admin override from creating today's STAFF session after 9am Lagos time", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-03-10T09:30:00Z")); // 10:30am Lagos (UTC+1)
+      const ability = abilityFactory.createForUser(ADMIN);
+
+      await expect(service.create(buildTodaysStaffDto(), ADMIN, ability)).rejects.toThrow(/locks at 9:00am/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("blocks a Registrar from creating today's STAFF session after 9am Lagos time", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-03-10T09:30:00Z"));
+      const ability = abilityFactory.createForUser(REGISTRAR);
+
+      await expect(service.create(buildTodaysStaffDto(), REGISTRAR, ability)).rejects.toThrow(/locks at 9:00am/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("allows Super-Admin to create today's STAFF session even after 9am Lagos time", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-03-10T12:00:00Z"));
+      prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
+      const ability = abilityFactory.createForUser(SUPER_ADMIN);
+
+      await service.create(buildTodaysStaffDto(), SUPER_ADMIN, ability);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    it("allows a Registrar to create today's STAFF session before 9am Lagos time", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-03-10T07:00:00Z")); // 8am Lagos
+      prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
+      const ability = abilityFactory.createForUser(REGISTRAR);
+
+      await service.create(buildTodaysStaffDto(), REGISTRAR, ability);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    it("does not lock a STAFF session dated before today, even after 9am", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-03-10T12:00:00Z"));
+      prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
+      const ability = abilityFactory.createForUser(REGISTRAR);
+
+      await service.create(buildTodaysStaffDto({ date: new Date("2026-03-09") }), REGISTRAR, ability);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
   });
 });

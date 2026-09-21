@@ -6,6 +6,7 @@ import {
   AttendanceSessionType,
   AttendanceStatus,
   ClassLevelCategory,
+  StaffStatus,
   StudentStatus,
 } from "@prisma/client";
 import { CLASS_LEVEL_CATEGORIES, computeAttendancePercentage, computeSchoolDaysOpened } from "@school/types";
@@ -108,6 +109,62 @@ export class AttendanceAnalyticsService {
     };
   }
 
+  /**
+   * Whole-school staff counterpart to `forClassArm` above — every ACTIVE
+   * staff member's present/absent/late/excused tally + percentage for the
+   * term, plus a school-wide average. Gated at the controller by `read
+   * AttendanceSession` (Super-Admin/Admin/Registrar/Principal/Headteacher/
+   * Vice-Principal), the same set `forStaff`/`forClassArm` already use — no
+   * further row-level narrowing, since (as with dailyStaffAttendanceIssues)
+   * staff aren't modeled with any section key to scope by.
+   */
+  async forAllStaff(termId: string) {
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
+    const opened = await this.schoolDaysOpened(term.startDate, term.endDate);
+
+    const staff = await this.prisma.staffProfile.findMany({
+      where: { status: StaffStatus.ACTIVE },
+      select: { id: true, employeeId: true, user: { select: { firstName: true, lastName: true } } },
+      orderBy: { user: { lastName: "asc" } },
+    });
+
+    const records = await this.prisma.attendanceRecord.findMany({
+      where: {
+        personType: AttendancePersonType.STAFF,
+        attendanceSession: { type: AttendanceSessionType.STAFF, date: { gte: term.startDate, lte: term.endDate } },
+      },
+      select: { personId: true, status: true },
+    });
+    const recordsByStaff = new Map<string, { status: AttendanceStatus }[]>();
+    for (const record of records) {
+      const bucket = recordsByStaff.get(record.personId) ?? [];
+      bucket.push(record);
+      recordsByStaff.set(record.personId, bucket);
+    }
+
+    const perStaff = staff.map((s) => {
+      const summary = summarize(recordsByStaff.get(s.id) ?? []);
+      return {
+        staffId: s.id,
+        employeeId: s.employeeId,
+        firstName: s.user.firstName,
+        lastName: s.user.lastName,
+        ...summary,
+        percentage: computeAttendancePercentage(summary.present, opened),
+      };
+    });
+
+    const presentTotal = perStaff.reduce((sum, s) => sum + s.present, 0);
+    const possibleTotal = perStaff.length * opened;
+
+    return {
+      termId,
+      schoolDaysOpened: opened,
+      staff: perStaff,
+      schoolAveragePercentage: computeAttendancePercentage(presentTotal, possibleTotal),
+    };
+  }
+
   async forStaff(staffId: string, termId: string) {
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
     const opened = await this.schoolDaysOpened(term.startDate, term.endDate);
@@ -123,6 +180,98 @@ export class AttendanceAnalyticsService {
     const summary = summarize(records);
 
     return { staffId, termId, schoolDaysOpened: opened, ...summary, percentage: computeAttendancePercentage(summary.present, opened) };
+  }
+
+  /**
+   * Staff-side counterpart to `dailyAttendanceIssues` below, flat rather than
+   * class-arm-grouped since STAFF sessions are always school-wide (no
+   * classArmId — see AttendanceSessionService.assertShapeConsistency) and
+   * always DAILY (the frontend's STAFF_DAILY roll-call mode never splits by
+   * MORNING/AFTERNOON the way STUDENT_DAILY can under
+   * MORNING_AND_AFTERNOON granularity). Every ACTIVE staff member who is
+   * ABSENT/LATE/EXCUSED or NOT_MARKED (no record at all, whether the
+   * session was never taken or just this one person was left off it) — same
+   * "PRESENT is never interesting" convention. Gated at the controller by
+   * `read AttendanceSession` (Super-Admin/Admin/Registrar/Principal/
+   * Headteacher/Vice-Principal) with no further row-level narrowing, unlike
+   * the student version's Principal/Headteacher category scope — staff
+   * aren't modeled with any equivalent section key to scope by.
+   */
+  async dailyStaffAttendanceIssues(dateStr: string) {
+    const date = new Date(dateStr);
+
+    const staff = await this.prisma.staffProfile.findMany({
+      where: { status: StaffStatus.ACTIVE },
+      select: { id: true, employeeId: true, user: { select: { firstName: true, lastName: true } } },
+      orderBy: { user: { lastName: "asc" } },
+    });
+
+    const session = await this.prisma.attendanceSession.findFirst({
+      where: { type: AttendanceSessionType.STAFF, kind: AttendanceSessionKind.DAILY, date },
+      select: { id: true, records: { select: { personId: true, status: true, remark: true } } },
+    });
+
+    if (!session) {
+      return {
+        date: dateStr,
+        sessionId: null,
+        taken: false,
+        entries: staff.map((s) => ({
+          staffId: s.id,
+          employeeId: s.employeeId,
+          firstName: s.user.firstName,
+          lastName: s.user.lastName,
+          status: "NOT_MARKED" as DailyAttendanceIssueStatus,
+          remark: null as string | null,
+        })),
+      };
+    }
+
+    const recordByStaff = new Map(session.records.map((r) => [r.personId, r]));
+    return {
+      date: dateStr,
+      sessionId: session.id,
+      taken: true,
+      entries: staff
+        .map((s) => {
+          const record = recordByStaff.get(s.id);
+          const status: AttendanceStatus | "NOT_MARKED" = record?.status ?? "NOT_MARKED";
+          return {
+            staffId: s.id,
+            employeeId: s.employeeId,
+            firstName: s.user.firstName,
+            lastName: s.user.lastName,
+            status,
+            remark: record?.remark ?? null,
+          };
+        })
+        .filter((entry): entry is typeof entry & { status: DailyAttendanceIssueStatus } => entry.status !== AttendanceStatus.PRESENT),
+    };
+  }
+
+  /**
+   * Lets any staff member check whether *their own* attendance has already
+   * been marked for a given day — self-service, no CASL grant needed (a
+   * plain teacher holds none on AttendanceSession at all), so a Principal/
+   * Headteacher/Registrar running late can be nudged before the 9am lock
+   * (assertStaffAttendanceNotLocked) closes the day out. Controller route
+   * has no `@CheckPolicies` for the same reason `/students/wards` doesn't.
+   */
+  async myTodayStaffAttendanceStatus(user: RequestUser, dateStr: string) {
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
+    if (!staffProfile) throw new ForbiddenException("You have no staff profile to check attendance for");
+
+    const date = new Date(dateStr);
+    const record = await this.prisma.attendanceRecord.findFirst({
+      where: {
+        personId: staffProfile.id,
+        personType: AttendancePersonType.STAFF,
+        attendanceSession: { type: AttendanceSessionType.STAFF, kind: AttendanceSessionKind.DAILY, date },
+      },
+      select: { status: true, remark: true },
+    });
+
+    return { date: dateStr, marked: !!record, status: record?.status ?? null, remark: record?.remark ?? null };
   }
 
   /**
@@ -346,6 +495,28 @@ export class AttendanceAnalyticsController {
   @CheckPolicies((ability) => ability.can("read", "AttendanceSession"))
   forClassArm(@Param("classArmId") classArmId: string, @Query("termId") termId: string, @CurrentUser() user: RequestUser) {
     return this.service.forClassArm(classArmId, termId, user);
+  }
+
+  @Get("staff")
+  @CheckPolicies((ability) => ability.can("read", "AttendanceSession"))
+  forAllStaff(@Query("termId") termId: string) {
+    return this.service.forAllStaff(termId);
+  }
+
+  // Declared ahead of `staff/:staffId` so "daily-issues"/"me" are never
+  // captured as a :staffId path param.
+  @Get("staff/daily-issues")
+  @CheckPolicies((ability) => ability.can("read", "AttendanceSession"))
+  dailyStaffAttendanceIssues(@Query("date") date: string | undefined) {
+    return this.service.dailyStaffAttendanceIssues(date ?? new Date().toISOString().slice(0, 10));
+  }
+
+  // No @CheckPolicies — self-service, same shape as `/students/wards`: any
+  // staff member (no CASL grant on AttendanceSession required) can check
+  // whether their own attendance has been marked yet.
+  @Get("staff/me/today")
+  myTodayStaffAttendanceStatus(@Query("date") date: string | undefined, @CurrentUser() user: RequestUser) {
+    return this.service.myTodayStaffAttendanceStatus(user, date ?? new Date().toISOString().slice(0, 10));
   }
 
   @Get("staff/:staffId")

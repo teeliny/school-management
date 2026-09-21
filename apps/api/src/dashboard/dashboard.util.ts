@@ -402,3 +402,57 @@ export function summarizeStudentAttendance(records: { status: AttendanceStatus; 
     recentAbsences,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Most-absent staff ranking (DashboardService.mostAbsentStaff) — net-new
+// widget, not one of PRD FR9.x's documented dashboard stats. Same
+// present/absent/late/excused tally as summarizeStudentAttendance above,
+// just grouped by personId first since this covers every staff member in
+// one pass rather than one person's own records.
+// ---------------------------------------------------------------------------
+
+interface StaffAttendanceCounts {
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+}
+interface StaffDirectoryEntry {
+  employeeId: string | null;
+  firstName: string;
+  lastName: string;
+}
+
+export function rankMostAbsentStaff(
+  records: { personId: string; status: AttendanceStatus }[],
+  staffDirectory: Map<string, StaffDirectoryEntry>,
+  limit: number,
+) {
+  const countsByStaff = new Map<string, StaffAttendanceCounts>();
+  for (const record of records) {
+    const counts = countsByStaff.get(record.personId) ?? { present: 0, absent: 0, late: 0, excused: 0 };
+    if (record.status === AttendanceStatus.PRESENT) counts.present += 1;
+    else if (record.status === AttendanceStatus.ABSENT) counts.absent += 1;
+    else if (record.status === AttendanceStatus.LATE) counts.late += 1;
+    else counts.excused += 1;
+    countsByStaff.set(record.personId, counts);
+  }
+
+  return [...countsByStaff.entries()]
+    .map(([staffId, counts]) => {
+      const staff = staffDirectory.get(staffId);
+      return {
+        staffId,
+        employeeId: staff?.employeeId ?? null,
+        firstName: staff?.firstName ?? null,
+        lastName: staff?.lastName ?? null,
+        ...counts,
+      };
+    })
+    // A staff member with zero absences isn't "most absent" — dropping them
+    // means a school with few/no absences returns a short (or empty) list
+    // rather than padding it with 0-absence rows.
+    .filter((row) => row.absent > 0)
+    .sort((a, b) => b.absent - a.absent)
+    .slice(0, limit);
+}

@@ -15,6 +15,7 @@ import { TeachingStaffDashboard } from "../../components/organisms/teaching-staf
 import { ClassTeacherAdditions } from "../../components/organisms/class-teacher-additions";
 import { PrincipalHeadteacherAdditions } from "../../components/organisms/principal-headteacher-additions";
 import { RegistrarAdditions } from "../../components/organisms/registrar-additions";
+import { MostAbsentStaffCard } from "../../components/organisms/most-absent-staff-card";
 import { BursarDashboard } from "../../components/organisms/bursar-dashboard";
 import { ParentDashboard } from "../../components/organisms/parent-dashboard";
 import { StudentDashboard } from "../../components/organisms/student-dashboard";
@@ -77,6 +78,7 @@ export default function DashboardPage() {
         <PrincipalHeadteacherAdditions user={user} />
       )}
       {user.assignmentTypes.includes("REGISTRAR") && <RegistrarAdditions user={user} />}
+      <MostAbsentStaffCard user={user} />
       {user.assignmentTypes.includes("BURSAR") && <BursarDashboard user={user} />}
       {user.parentProfileId && (
         <ParentDashboard user={user} children={children} selectedChildId={selectedChildId} onSelectChild={setSelectedChildId} />

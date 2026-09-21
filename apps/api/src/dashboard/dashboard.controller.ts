@@ -75,4 +75,9 @@ export class DashboardController {
   ) {
     return this.service.myAttendanceSummary(user, studentId, termId);
   }
+
+  @Get("most-absent-staff")
+  mostAbsentStaff(@CurrentUser() user: RequestUser, @Query("termId") termId: string, @Query("limit") limit?: string) {
+    return this.service.mostAbsentStaff(user, termId, limit === undefined ? 5 : Number(limit));
+  }
 }

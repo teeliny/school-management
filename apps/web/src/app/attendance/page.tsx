@@ -15,7 +15,9 @@ import { SearchableSelect } from "../../components/molecules/searchable-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/molecules/tabs";
 import { AttendanceRollCall, type RollCallMode } from "../../components/organisms/attendance-roll-call";
 import { AttendanceTermSummary } from "../../components/organisms/attendance-term-summary";
+import { StaffAttendanceTermSummary } from "../../components/organisms/staff-attendance-term-summary";
 import { DailyAbsenteeList } from "../../components/organisms/daily-absentee-list";
+import { StaffDailyAbsenteeList } from "../../components/organisms/staff-daily-absentee-list";
 import { SchoolHolidayManager } from "../../components/organisms/school-holiday-manager";
 
 interface ClassArmOption {
@@ -31,6 +33,11 @@ interface SubjectOption {
   childSubjects?: { id: string; name: string }[];
 }
 interface TermOption {
+  id: string;
+  name: string;
+  academicSessionId: string;
+}
+interface AcademicSessionOption {
   id: string;
   name: string;
 }
@@ -79,6 +86,7 @@ function AttendancePageInner() {
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   const [subjects, setSubjects] = useState<SubjectOption[]>([]);
   const [terms, setTerms] = useState<TermOption[]>([]);
+  const [academicSessions, setAcademicSessions] = useState<AcademicSessionOption[]>([]);
   const [myAssignments, setMyAssignments] = useState<StaffAssignmentItem[]>([]);
   const [schoolProfile, setSchoolProfile] = useState<SchoolProfile | null>(null);
 
@@ -96,6 +104,9 @@ function AttendancePageInner() {
   useEffect(() => {
     apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
     apiFetch<TermOption[]>("/terms", { auth: true }).then(setTerms).catch(() => setTerms([]));
+    apiFetch<AcademicSessionOption[]>("/academic-sessions", { auth: true })
+      .then(setAcademicSessions)
+      .catch(() => setAcademicSessions([]));
     apiFetch<StaffAssignmentItem[]>("/staff-assignments/mine", { auth: true })
       .then(setMyAssignments)
       .catch(() => setMyAssignments([]));
@@ -111,6 +122,16 @@ function AttendancePageInner() {
       ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t))
     : false;
   const isRegistrar = user ? user.assignmentTypes.includes("REGISTRAR") : false;
+
+  // Terms across every academic session (not just current) are already in
+  // one flat list — labeling each with its session disambiguates same-named
+  // terms ("First Term" exists in every session) so a previous session's
+  // term can actually be picked out, not just technically present in the
+  // dropdown.
+  const academicSessionNameById = useMemo(
+    () => new Map(academicSessions.map((s) => [s.id, s.name])),
+    [academicSessions],
+  );
 
   const myClassTeacherAssignments = useMemo(
     () => myAssignments.filter((a) => a.assignmentType === "CLASS_TEACHER" && a.isActive),
@@ -216,7 +237,14 @@ function AttendancePageInner() {
           ? Boolean(classArmId && subjectId && date && periodLabel)
           : false;
 
-  const showTermSummarySection = (isAdmin || isRegistrar) && (mode === "STUDENT_DAILY" || mode === "STUDENT_PERIOD");
+  // Same visibility as the "Staff register" roll-call mode (isAdmin already
+  // covers Principal/Headteacher/Vice-Principal) — a plain class teacher
+  // has no CASL grant on STAFF-type AttendanceSession at all, so showing
+  // this to them would just surface a 403. Shared by both the daily staff
+  // absentee list and the whole-school staff term summary below.
+  const showStaffAbsenteesSection = isAdmin || isRegistrar;
+  const showClassTermSummarySection = (isAdmin || isRegistrar) && (mode === "STUDENT_DAILY" || mode === "STUDENT_PERIOD");
+  const showTermSummarySection = showClassTermSummarySection || showStaffAbsenteesSection;
   const showAbsenteesSection = isAdmin || isRegistrar || myClassTeacherAssignments.length > 0;
   const showHolidaysSection = isAdmin;
 
@@ -342,9 +370,8 @@ function AttendancePageInner() {
 
         {showTermSummarySection && (
           <TabsContent value="term-summary">
-            <Card>
-              <CardHeader title="Term attendance" sub="Attendance trend for the selected class" />
-              <div className="mb-3">
+            <div className="space-y-4">
+              <div className="max-w-[320px]">
                 <Label htmlFor="att-summary-term">Term</Label>
                 <Select value={summaryTermId} onValueChange={setSummaryTermId}>
                   <SelectTrigger id="att-summary-term" className="mt-1">
@@ -353,27 +380,53 @@ function AttendancePageInner() {
                   <SelectContent>
                     {terms.map((term) => (
                       <SelectItem key={term.id} value={term.id}>
-                        {term.name}
+                        {academicSessionNameById.get(term.academicSessionId) ?? "—"} · {term.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="mt-1 text-[11px] text-muted">Covers every academic session, not just the current one.</p>
               </div>
-              {classArmId && summaryTermId ? (
-                <AttendanceTermSummary classArmId={classArmId} termId={summaryTermId} />
-              ) : (
-                <p className="text-sm text-muted">Select a class arm on the Roll Call tab and a term above.</p>
+
+              {showClassTermSummarySection && (
+                <Card>
+                  <CardHeader title="Class term attendance" sub="Attendance trend for the selected class" />
+                  {classArmId && summaryTermId ? (
+                    <AttendanceTermSummary classArmId={classArmId} termId={summaryTermId} />
+                  ) : (
+                    <p className="text-sm text-muted">Select a class arm on the Roll Call tab and a term above.</p>
+                  )}
+                </Card>
               )}
-            </Card>
+
+              {showStaffAbsenteesSection && (
+                <Card>
+                  <CardHeader title="Staff term attendance" sub="Whole-school attendance, this term" />
+                  {summaryTermId ? (
+                    <StaffAttendanceTermSummary termId={summaryTermId} />
+                  ) : (
+                    <p className="text-sm text-muted">Select a term above.</p>
+                  )}
+                </Card>
+              )}
+            </div>
           </TabsContent>
         )}
 
         {showAbsenteesSection && (
           <TabsContent value="absentees">
-            <Card>
-              <CardHeader title="Daily absentees" sub="Who's out today, class by class" />
-              <DailyAbsenteeList />
-            </Card>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader title="Daily student absentees" sub="Who's out today, class by class" />
+                <DailyAbsenteeList />
+              </Card>
+              {showStaffAbsenteesSection && (
+                <Card>
+                  <CardHeader title="Daily staff absentees" sub="Who's out today, school-wide" />
+                  <StaffDailyAbsenteeList />
+                </Card>
+              )}
+            </div>
           </TabsContent>
         )}
 

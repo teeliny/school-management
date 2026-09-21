@@ -20,6 +20,7 @@ import {
   groupStudentsByDepartment,
   groupStudentsByLevel,
   rankBroadsheetSnapshot,
+  rankMostAbsentStaff,
   STUCK_THRESHOLD_MS,
   sumOutstandingBalances,
   summarizeStudentAttendance,
@@ -449,6 +450,51 @@ export class DashboardService {
     });
 
     return summarizeStudentAttendance(records, opened);
+  }
+
+  /**
+   * "Top N most-absent staff this term" — net-new widget, not one of PRD
+   * §6.9's documented FR9.x dashboard stats (confirmed absent from both the
+   * PRD and BUILD_PLAN.md). Gated the same as `read AttendanceSession`
+   * (Super-Admin/Admin/Registrar/Principal/Headteacher/Vice-Principal, per
+   * ability.factory.ts) rather than attendanceOverview's narrower
+   * Admin/Super-Admin/Registrar-only set above — a ranking built from the
+   * same underlying data AttendanceAnalyticsService.forStaff already lets
+   * Principal/Headteacher/VP drill into one staff member at a time
+   * shouldn't be more restrictive than that per-staff view.
+   */
+  async mostAbsentStaff(user: RequestUser, termId: string, limit: number) {
+    const canView =
+      user.roles.includes("SUPER_ADMIN") ||
+      user.roles.includes("ADMIN") ||
+      ["REGISTRAR", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) => user.assignmentTypes.includes(t));
+    if (!canView) {
+      throw new ForbiddenException(
+        "Only Admin, Super-Admin, Registrar, Principal, Headteacher, or Vice Principal can view staff attendance rankings",
+      );
+    }
+
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
+
+    const [staff, records] = await Promise.all([
+      this.prisma.staffProfile.findMany({
+        where: { status: StaffStatus.ACTIVE },
+        select: { id: true, employeeId: true, user: { select: { firstName: true, lastName: true } } },
+      }),
+      this.prisma.attendanceRecord.findMany({
+        where: {
+          personType: AttendancePersonType.STAFF,
+          attendanceSession: { type: AttendanceSessionType.STAFF, date: { gte: term.startDate, lte: term.endDate } },
+        },
+        select: { personId: true, status: true },
+      }),
+    ]);
+
+    const staffDirectory = new Map(
+      staff.map((s) => [s.id, { employeeId: s.employeeId, firstName: s.user.firstName, lastName: s.user.lastName }]),
+    );
+
+    return { termId, mostAbsentStaff: rankMostAbsentStaff(records, staffDirectory, limit) };
   }
 
   private async assertCanViewStudent(user: RequestUser, studentId: string) {

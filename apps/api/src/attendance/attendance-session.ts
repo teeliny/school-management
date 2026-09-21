@@ -22,6 +22,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { SchoolProfileService } from "../academic-structure/school-profile";
+import { isStaffAttendanceLockedForToday, STAFF_ATTENDANCE_LOCK_HOUR } from "../common/staff-attendance-lock";
 import { Audited } from "../audit/audited.decorator";
 import type { AuditRequestOverrides } from "../audit/audit.interceptor";
 import { AttendanceRecordInputDto, CreateAttendanceSessionDto } from "./dto/attendance-session.dto";
@@ -46,6 +47,7 @@ export class AttendanceSessionService {
    */
   async create(dto: CreateAttendanceSessionDto, user: RequestUser, ability: AppAbility) {
     this.assertShapeConsistency(dto);
+    await this.assertStaffAttendanceNotLocked(dto.type, dto.date, user);
 
     const isAdminOverride = this.checkIsAdminOverride(ability);
     const takenByStaffId = await this.resolveTakenByStaffId(dto, user, ability, isAdminOverride);
@@ -121,6 +123,25 @@ export class AttendanceSessionService {
       ability.can("manage", subject("AttendanceSession", { type: AttendanceSessionType.STUDENT })) &&
       ability.can("manage", subject("AttendanceSession", { type: AttendanceSessionType.STAFF }))
     );
+  }
+
+  /**
+   * The daily 9am lock on STAFF attendance — deliberately role-literal
+   * (SUPER_ADMIN only) rather than routed through CASL/checkIsAdminOverride:
+   * Admin and Principal/Headteacher/Registrar all hold a grant that would
+   * otherwise let them bypass this too, which is exactly what the lock is
+   * meant to prevent. Only applies to today's own date; older dates remain
+   * governed by assertWithinBackdateWindow as before.
+   */
+  private async assertStaffAttendanceNotLocked(type: AttendanceSessionType, date: Date, user: RequestUser): Promise<void> {
+    if (type !== AttendanceSessionType.STAFF) return;
+    if (user.roles.includes("SUPER_ADMIN")) return;
+    const profile = await this.schoolProfile.get();
+    if (isStaffAttendanceLockedForToday(date, profile.timezone)) {
+      throw new ForbiddenException(
+        `Staff attendance for today locks at ${STAFF_ATTENDANCE_LOCK_HOUR}:00am — only the Super-Admin can mark or correct it now`,
+      );
+    }
   }
 
   private assertShapeConsistency(dto: CreateAttendanceSessionDto) {

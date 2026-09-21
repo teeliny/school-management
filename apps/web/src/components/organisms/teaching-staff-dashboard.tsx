@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { CheckCircle2, Clock } from "lucide-react";
 import type { ClassLevelCategory } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
@@ -10,6 +11,13 @@ import { Card, CardHeader } from "../molecules/card";
 import { ProgressBar } from "../molecules/progress-bar";
 import { Badge } from "../atoms/badge";
 import { AttendanceRollCall } from "./attendance-roll-call";
+
+interface MyStaffAttendanceStatus {
+  date: string;
+  marked: boolean;
+  status: "PRESENT" | "ABSENT" | "LATE" | "EXCUSED" | null;
+  remark: string | null;
+}
 
 interface StaffAssignmentItem {
   assignmentType: string;
@@ -62,6 +70,11 @@ export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
     queryKey: ["school-profile"],
     queryFn: () => apiFetch<{ attendanceBackdateWindowDays: number }>("/school-profile", { auth: true }),
   });
+  const { data: myAttendanceToday } = useQuery({
+    queryKey: ["attendance", "staff", "me", "today"],
+    queryFn: () => apiFetch<MyStaffAttendanceStatus>("/attendance/analytics/staff/me/today", { auth: true }),
+    enabled: Boolean(user.staffProfileId),
+  });
   useEffect(() => {
     if (schoolProfile) setBackdateWindowDays(schoolProfile.attendanceBackdateWindowDays);
   }, [schoolProfile]);
@@ -102,6 +115,28 @@ export function TeachingStaffDashboard({ user }: { user: CurrentUser }) {
 
   return (
     <div className="mt-4 space-y-4">
+      <Card>
+        <CardHeader title="My attendance today" sub="Whether your own staff attendance has been marked" />
+        {myAttendanceToday ? (
+          myAttendanceToday.marked ? (
+            <div className="flex items-center gap-2 text-[12.5px] text-success">
+              <CheckCircle2 className="h-4 w-4" />
+              <span>
+                Marked as <Badge variant={myAttendanceToday.status === "PRESENT" ? "success" : "warning"}>{myAttendanceToday.status}</Badge>{" "}
+                for today.
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-[12.5px] text-warning">
+              <Clock className="h-4 w-4" />
+              <span>Not marked yet today — ask whoever takes staff attendance (Principal/Headteacher/Registrar) to record it.</span>
+            </div>
+          )
+        ) : (
+          <p className="text-sm text-muted">Loading…</p>
+        )}
+      </Card>
+
       <Card>
         <CardHeader title="My classes & subjects" sub="Active assignments this term" />
         {assignments ? (
