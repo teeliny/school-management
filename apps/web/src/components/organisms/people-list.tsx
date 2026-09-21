@@ -87,12 +87,15 @@ function SubjectsCell({
             </DialogClose>
           </div>
           <ul className="max-h-[300px] space-y-1.5 overflow-y-auto">
-            {subjects.map((subject) => (
+            {subjects.map((subject, index) => (
               <li
                 key={subject.id}
                 className="flex items-center justify-between rounded-md bg-card-inset px-3 py-1.5 text-sm"
               >
-                <span>{subject.name}</span>
+                <span className="flex items-center gap-2">
+                  <span className="w-5 text-right font-mono text-[10px] text-muted">{index + 1}.</span>
+                  <span>{subject.name}</span>
+                </span>
                 <span className="font-mono text-[10px] text-muted">{subject.code}</span>
               </li>
             ))}
