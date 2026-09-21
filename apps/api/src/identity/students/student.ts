@@ -50,6 +50,22 @@ const STUDENT_LIST_INCLUDE = {
   },
 } satisfies Prisma.StudentProfileInclude;
 
+// Opt-in via `?includeSubjects=true` (findAllForUser) — a combined
+// roster+subjects view (e.g. a class teacher's own class) shouldn't cost
+// every other /students caller (Admin's full-school list, PeopleList's
+// default render) an extra join they don't render. Scoped to this term's
+// ACTIVE enrollments only, same as StudentSubjectEnrollmentService.findForStudent
+// filtered to "current" — a dropped or past-term enrollment isn't "what
+// they're enrolled for" right now.
+const STUDENT_LIST_INCLUDE_WITH_SUBJECTS = {
+  ...STUDENT_LIST_INCLUDE,
+  subjectEnrollments: {
+    where: { status: EnrollmentStatus.ACTIVE, term: { isCurrent: true } },
+    include: { subject: { select: { id: true, name: true, code: true } } },
+    orderBy: { subject: { name: "asc" } },
+  },
+} satisfies Prisma.StudentProfileInclude;
+
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 const MAX_PHOTO_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_PHOTO_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -496,6 +512,7 @@ export class StudentService {
       search?: string;
       skip?: number;
       take?: number;
+      includeSubjects?: boolean;
     } = {},
   ) {
     const scopeWhere = await this.scopeWhereForUser(user);
@@ -545,10 +562,12 @@ export class StudentService {
     const where: Prisma.StudentProfileWhereInput | undefined =
       conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { AND: conditions };
 
+    const include = filters.includeSubjects ? STUDENT_LIST_INCLUDE_WITH_SUBJECTS : STUDENT_LIST_INCLUDE;
+
     if (filters.take === undefined) {
       return this.prisma.studentProfile.findMany({
         where,
-        include: STUDENT_LIST_INCLUDE,
+        include,
         orderBy: { admissionNumber: "asc" },
       });
     }
@@ -556,7 +575,7 @@ export class StudentService {
     const [data, total] = await this.prisma.$transaction([
       this.prisma.studentProfile.findMany({
         where,
-        include: STUDENT_LIST_INCLUDE,
+        include,
         orderBy: { admissionNumber: "asc" },
         skip: filters.skip,
         take: filters.take,
@@ -655,6 +674,7 @@ export class StudentController {
     @Query("search") search?: string,
     @Query("skip") skip?: string,
     @Query("take") take?: string,
+    @Query("includeSubjects") includeSubjects?: string,
   ) {
     return this.service.findAllForUser(user, {
       classArmId,
@@ -665,6 +685,7 @@ export class StudentController {
       search,
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),
+      includeSubjects: includeSubjects === "true",
     });
   }
 

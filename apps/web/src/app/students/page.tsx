@@ -25,12 +25,18 @@ export default function StudentsPage() {
     user.roles.includes("ADMIN") ||
     user.assignmentTypes.includes("REGISTRAR");
   const canUploadPhoto = canCreate || user.assignmentTypes.includes("CLASS_TEACHER");
+  // editingStudentId can only be set via PeopleList's Edit button, which is
+  // itself gated on canEdit={canCreate} below — so canCreate alone decides
+  // whether the side panel (edit form or "enroll a student") ever renders.
+  // Without canCreate, that column would sit permanently empty, so the grid
+  // collapses to one column instead of leaving dead space on the right.
+  const showSidePanel = canCreate;
 
   return (
     <AppShell user={user} onLogout={logout}>
       <Letterhead eyebrow="People · Students" title="Students" />
 
-      <div className="grid gap-4 [&>*]:min-w-0 lg:grid-cols-[1.4fr_1fr]">
+      <div className={`grid gap-4 [&>*]:min-w-0 ${showSidePanel ? "lg:grid-cols-[1.4fr_1fr]" : ""}`}>
         <Card>
           <CardHeader title="Students" sub="Scoped to what your role can see" />
           <PeopleList

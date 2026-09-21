@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, User as UserIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, User as UserIcon, X } from "lucide-react";
 import { formatPersonName, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
+import { Dialog, DialogContent, DialogTitle, DialogClose } from "../molecules/dialog";
 import { PhotoUploadButton } from "../molecules/photo-upload-button";
 
 interface ClassLevelOption {
@@ -27,6 +28,7 @@ interface StudentListItem {
   currentClass: { name: string; classLevel: { name: string } } | null;
   user: { firstName: string; lastName: string; avatarUrl: string | null };
   guardians: { parent: { user: { phone: string | null } } }[];
+  subjectEnrollments: { subject: { id: string; name: string; code: string } }[];
 }
 
 const STATUS_VARIANT: Record<string, BadgeVariant> = {
@@ -35,6 +37,71 @@ const STATUS_VARIANT: Record<string, BadgeVariant> = {
   WITHDRAWN: "muted",
   SUSPENDED: "danger",
 };
+
+// Subjects come back already sorted ascending by name (STUDENT_LIST_INCLUDE_WITH_SUBJECTS'
+// orderBy) — only the first few render inline so a student enrolled in a
+// dozen subjects doesn't blow out the row height; the rest are one click
+// away in a dialog rather than scrolling the whole table sideways.
+const INLINE_SUBJECT_LIMIT = 3;
+
+function SubjectsCell({
+  studentName,
+  subjects,
+}: {
+  studentName: string;
+  subjects: { id: string; name: string; code: string }[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (subjects.length === 0) return <span className="text-muted">—</span>;
+
+  const visible = subjects.slice(0, INLINE_SUBJECT_LIMIT);
+  const remaining = subjects.length - visible.length;
+
+  return (
+    <>
+      <span className="flex max-w-[220px] flex-wrap items-center gap-1">
+        {visible.map((subject) => (
+          <span key={subject.id} className="rounded-full bg-card-inset px-1.5 py-0.5 text-[10px] text-muted">
+            {subject.name}
+          </span>
+        ))}
+        {remaining > 0 && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:bg-card-inset"
+          >
+            +{remaining} more
+          </button>
+        )}
+      </span>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <DialogTitle className="font-display text-lg">{studentName} — Subjects</DialogTitle>
+            <DialogClose asChild>
+              <button type="button" aria-label="Close" className="text-muted hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </DialogClose>
+          </div>
+          <ul className="max-h-[300px] space-y-1.5 overflow-y-auto">
+            {subjects.map((subject) => (
+              <li
+                key={subject.id}
+                className="flex items-center justify-between rounded-md bg-card-inset px-3 py-1.5 text-sm"
+              >
+                <span>{subject.name}</span>
+                <span className="font-mono text-[10px] text-muted">{subject.code}</span>
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
 /**
  * Renders whatever `GET /students` returns — the API already applies PRD §5's
@@ -70,8 +137,9 @@ export function PeopleList({
   const [nameSort, setNameSort] = useState<"asc" | "desc">("asc");
 
   const load = useCallback(() => {
-    const query = classLevelId ? `?classLevelId=${classLevelId}` : "";
-    apiFetch<StudentListItem[]>(`/students${query}`, { auth: true })
+    const params = new URLSearchParams({ includeSubjects: "true" });
+    if (classLevelId) params.set("classLevelId", classLevelId);
+    apiFetch<StudentListItem[]>(`/students?${params}`, { auth: true })
       .then(setStudents)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load students"));
   }, [classLevelId]);
@@ -159,6 +227,7 @@ export function PeopleList({
                 </button>
               </th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Class</th>
+              <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Subjects</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Parent phone</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
               <th className="py-2 text-[10px] font-medium uppercase tracking-wide" />
@@ -167,7 +236,7 @@ export function PeopleList({
           <tbody>
             {filteredStudents?.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-3 text-muted">
+                <td colSpan={8} className="py-3 text-muted">
                   No students match the current filters.
                 </td>
               </tr>
@@ -202,6 +271,12 @@ export function PeopleList({
                   {student.currentClass
                     ? `${student.currentClass.classLevel.name} ${student.currentClass.name}`
                     : "—"}
+                </td>
+                <td className="py-2.5 pr-4">
+                  <SubjectsCell
+                    studentName={formatPersonName(student.user)}
+                    subjects={student.subjectEnrollments.map((e) => e.subject)}
+                  />
                 </td>
                 <td className="py-2.5 pr-4 font-mono text-muted">{student.guardians[0]?.parent.user.phone ?? "—"}</td>
                 <td className="py-2.5 pr-4">
