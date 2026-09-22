@@ -10,9 +10,9 @@ const CLASS_TEACHER: RequestUser = { id: "teacher-1", roles: ["STAFF"], assignme
 const PLAIN_STAFF: RequestUser = { id: "staff-3", roles: ["STAFF"], assignmentTypes: [] };
 
 // Yesterday, not "today" — well within the default 3-day back-date window,
-// but outside the new staff-attendance 9am lock's scope (that only ever
+// but outside the new staff-attendance 8:30am lock's scope (that only ever
 // governs a STAFF session dated today; see attendance-session.spec's own
-// "9am lock" describe block for that behavior in isolation).
+// "8:30am lock" describe block for that behavior in isolation).
 const RECENT_DATE = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
 function buildStudentDailySession(overrides: Record<string, unknown> = {}) {
@@ -147,13 +147,13 @@ describe("AttendanceRecordService.update", () => {
     expect(prisma.attendanceRecord.update).not.toHaveBeenCalled();
   });
 
-  describe("staff attendance 9am lock", () => {
+  describe("staff attendance 8:30am lock", () => {
     const SUPER_ADMIN: RequestUser = { id: "super-1", roles: ["SUPER_ADMIN"], assignmentTypes: [] };
     const TODAYS_STAFF_SESSION = buildStudentDailySession({ id: "session-today", type: "STAFF", classArmId: null, kind: "DAILY", date: new Date("2026-03-10") });
 
     afterEach(() => jest.useRealTimers());
 
-    it("blocks Admin override from correcting today's STAFF record after 9am Lagos time", async () => {
+    it("blocks Admin override from correcting today's STAFF record after 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T09:30:00Z")); // 10:30am Lagos (UTC+1)
       const prisma = buildPrismaMock(TODAYS_STAFF_SESSION);
       const staffAssignments = buildStaffAssignmentsMock();
@@ -161,11 +161,11 @@ describe("AttendanceRecordService.update", () => {
       const service = new AttendanceRecordService(prisma as never, staffAssignments as never, schoolProfile as never);
       const ability = abilityFactory.createForUser(ADMIN);
 
-      await expect(service.update("record-1", { status: "ABSENT" }, ADMIN, ability)).rejects.toThrow(/locks at 9:00am/);
+      await expect(service.update("record-1", { status: "ABSENT" }, ADMIN, ability)).rejects.toThrow(/locks at 8:30am/);
       expect(prisma.attendanceRecord.update).not.toHaveBeenCalled();
     });
 
-    it("allows Super-Admin to correct today's STAFF record even after 9am Lagos time", async () => {
+    it("allows Super-Admin to correct today's STAFF record even after 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T12:00:00Z"));
       const prisma = buildPrismaMock(TODAYS_STAFF_SESSION);
       const staffAssignments = buildStaffAssignmentsMock();
@@ -178,7 +178,7 @@ describe("AttendanceRecordService.update", () => {
       expect(prisma.attendanceRecord.update).toHaveBeenCalled();
     });
 
-    it("allows a Registrar to correct today's STAFF record before 9am Lagos time", async () => {
+    it("allows a Registrar to correct today's STAFF record before 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T07:00:00Z")); // 8am Lagos
       const prisma = buildPrismaMock(TODAYS_STAFF_SESSION);
       const staffAssignments = buildStaffAssignmentsMock();

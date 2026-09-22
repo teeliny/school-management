@@ -22,7 +22,7 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { AbilityFactory, type AppAbility } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { SchoolProfileService } from "../academic-structure/school-profile";
-import { isStaffAttendanceLockedForToday, STAFF_ATTENDANCE_LOCK_HOUR } from "../common/staff-attendance-lock";
+import { isStaffAttendanceLockedForToday, STAFF_ATTENDANCE_LOCK_LABEL } from "../common/staff-attendance-lock";
 import { Audited } from "../audit/audited.decorator";
 import type { AuditRequestOverrides } from "../audit/audit.interceptor";
 import { AttendanceRecordInputDto, CreateAttendanceSessionDto } from "./dto/attendance-session.dto";
@@ -139,7 +139,7 @@ export class AttendanceSessionService {
     const profile = await this.schoolProfile.get();
     if (isStaffAttendanceLockedForToday(date, profile.timezone)) {
       throw new ForbiddenException(
-        `Staff attendance for today locks at ${STAFF_ATTENDANCE_LOCK_HOUR}:00am — only the Super-Admin can mark or correct it now`,
+        `Staff attendance for today locks at ${STAFF_ATTENDANCE_LOCK_LABEL} — only the Super-Admin can mark or correct it now`,
       );
     }
   }

@@ -132,7 +132,7 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
     expect(prisma.$transaction).toHaveBeenCalled();
   });
 
-  // Not "today" — see the dedicated "staff attendance 9am lock" describe
+  // Not "today" — see the dedicated "staff attendance 8:30am lock" describe
   // block below for that behavior; these two just test the pre-existing
   // role checks, which shouldn't be entangled with the new lock.
   const YESTERDAY = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -222,7 +222,7 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
     );
   });
 
-  describe("staff attendance 9am lock", () => {
+  describe("staff attendance 8:30am lock", () => {
     function buildTodaysStaffDto(overrides: Partial<CreateAttendanceSessionDto> = {}) {
       return buildStudentDailyDto({
         type: "STAFF",
@@ -235,23 +235,31 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
 
     afterEach(() => jest.useRealTimers());
 
-    it("blocks Admin override from creating today's STAFF session after 9am Lagos time", async () => {
+    it("blocks Admin override from creating today's STAFF session after 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T09:30:00Z")); // 10:30am Lagos (UTC+1)
       const ability = abilityFactory.createForUser(ADMIN);
 
-      await expect(service.create(buildTodaysStaffDto(), ADMIN, ability)).rejects.toThrow(/locks at 9:00am/);
+      await expect(service.create(buildTodaysStaffDto(), ADMIN, ability)).rejects.toThrow(/locks at 8:30am/);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it("blocks a Registrar from creating today's STAFF session after 9am Lagos time", async () => {
+    it("blocks a Registrar from creating today's STAFF session after 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T09:30:00Z"));
       const ability = abilityFactory.createForUser(REGISTRAR);
 
-      await expect(service.create(buildTodaysStaffDto(), REGISTRAR, ability)).rejects.toThrow(/locks at 9:00am/);
+      await expect(service.create(buildTodaysStaffDto(), REGISTRAR, ability)).rejects.toThrow(/locks at 8:30am/);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it("allows Super-Admin to create today's STAFF session even after 9am Lagos time", async () => {
+    it("blocks a Registrar from creating today's STAFF session exactly at the 8:30am cutoff", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-03-10T07:30:00Z")); // 8:30am Lagos, on the boundary
+      const ability = abilityFactory.createForUser(REGISTRAR);
+
+      await expect(service.create(buildTodaysStaffDto(), REGISTRAR, ability)).rejects.toThrow(/locks at 8:30am/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("allows Super-Admin to create today's STAFF session even after 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T12:00:00Z"));
       prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
       const ability = abilityFactory.createForUser(SUPER_ADMIN);
@@ -261,7 +269,7 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
       expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it("allows a Registrar to create today's STAFF session before 9am Lagos time", async () => {
+    it("allows a Registrar to create today's STAFF session before 8:30am Lagos time", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T07:00:00Z")); // 8am Lagos
       prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
       const ability = abilityFactory.createForUser(REGISTRAR);
@@ -271,7 +279,7 @@ describe("AttendanceSessionService.create (PRD §3.7/§6.5 FR5.1/FR5.2)", () => 
       expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it("does not lock a STAFF session dated before today, even after 9am", async () => {
+    it("does not lock a STAFF session dated before today, even after 8:30am", async () => {
       jest.useFakeTimers().setSystemTime(new Date("2026-03-10T12:00:00Z"));
       prisma.staffProfile.findMany.mockResolvedValue([{ id: "staff-9" }]);
       const ability = abilityFactory.createForUser(REGISTRAR);
