@@ -1819,19 +1819,19 @@ enum PaymentStatus {
   REJECTED
 }
 
-// Full PRD §3.9 shape built now so later slices (2b gateway, 2c manual
-// bank-transfer) extend behavior, not schema — this slice's PaymentService
-// only ever writes method=CASH/status=SUCCESSFUL, rejecting any other
-// method outright as a backstop (same shape as ScoreEntryService's
-// group-subject backstop). gatewayProvider/gatewayTransactionReference
-// (Slice 2b) and proofOfPaymentUrl/reviewedByUserId/reviewedAt/
-// rejectionReason (Slice 2c) are unused until their respective slices.
+// Full PRD §3.9 shape. CASH and BANK_TRANSFER_MANUAL both start
+// PENDING_APPROVAL and require a Super-Admin's approvePayment/rejectPayment
+// review (PaymentService) before counting toward an invoice — CASH used to
+// go straight to SUCCESSFUL, but that trust level was revoked so every
+// staff-entered method gets the same independent confirmation. GATEWAY_*
+// methods resolve via resolveGatewayOutcome instead (webhook/reconciliation
+// poll), never through approvePayment.
 model Payment {
   id                          String                  @id @default(uuid())
   invoiceId                   String
   invoice                     Invoice                 @relation(fields: [invoiceId], references: [id])
   amount                      Decimal                 @db.Decimal(12, 2)
-  // The paying parent; null for a staff-recorded entry (CASH today).
+  // The paying parent; null for a staff-recorded entry (CASH/BANK_TRANSFER_MANUAL).
   paidByUserId                String?
   paidByUser                  User?                   @relation(fields: [paidByUserId], references: [id])
   method                      PaymentMethod
@@ -1845,6 +1845,9 @@ model Payment {
   recordedByStaffId           String?
   recordedByStaff             StaffProfile?           @relation(fields: [recordedByStaffId], references: [id])
   proofOfPaymentUrl           String?
+  // Super-Admin's approve/reject review of a PENDING_APPROVAL CASH or
+  // BANK_TRANSFER_MANUAL submission (PaymentService.approvePayment/
+  // rejectPayment).
   reviewedByUserId            String?
   reviewedAt                  DateTime?
   rejectionReason             String?
@@ -1866,8 +1869,9 @@ model Payment {
 }
 
 // Generated uniformly the moment a Payment reaches SUCCESSFUL, regardless of
-// path (PRD §3.9/ARCHITECTURE §10.4) — this slice is the CASH path; gateway/
-// manual-transfer paths (later slices) create a Receipt the same way.
+// path (PRD §3.9/ARCHITECTURE §10.4) — gateway resolution, reconciliation,
+// and Super-Admin's approvePayment (CASH/BANK_TRANSFER_MANUAL) all create a
+// Receipt the same way.
 model Receipt {
   id                String           @id @default(uuid())
   paymentId         String           @unique

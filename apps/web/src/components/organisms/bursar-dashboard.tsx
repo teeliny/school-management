@@ -40,7 +40,7 @@ interface DiscountRequestItem {
  * PRD FR9.7 Bursar dashboard. Deliberately does NOT reuse
  * PendingApprovalsQueue (unlike Super-Admin's dashboard) — that component's
  * Approve/Reject buttons hit endpoints that are Super-Admin-only carve-outs
- * in the controller (PaymentController.approveManualBankTransfer/
+ * in the controller (PaymentController.approvePayment/
  * DiscountRequestController.approve, manual role checks, not just "manage
  * Payment"/"manage DiscountRequest" CASL grants a Bursar also holds), so a
  * Bursar clicking them would just get a 403 — these render read-only.

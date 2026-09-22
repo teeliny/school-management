@@ -11,10 +11,11 @@ type Method = "CASH" | "BANK_TRANSFER_MANUAL";
 const ALLOWED_PROOF_TYPES = "image/jpeg,image/png,image/webp,application/pdf";
 
 /**
- * PRD §3.9/FR7.3a: CASH takes effect immediately; a bank-transfer submission
- * starts PENDING_APPROVAL and doesn't touch the invoice until a Super-Admin
- * reviews it (PendingApprovalsQueue). Two-button method toggle rather than a
- * Tabs component — only ever two options, not worth a new Radix dependency.
+ * Both CASH and a bank-transfer submission start PENDING_APPROVAL and don't
+ * touch the invoice until a Super-Admin reviews it (PendingApprovalsQueue) —
+ * see PaymentService.recordCash's comment for why CASH no longer takes
+ * effect immediately. Two-button method toggle rather than a Tabs component
+ * — only ever two options, not worth a new Radix dependency.
  */
 export function RecordPaymentForm({
   invoiceId,
@@ -50,7 +51,7 @@ export function RecordPaymentForm({
     try {
       if (method === "CASH") {
         await apiFetch("/payments/cash", { method: "POST", auth: true, body: { invoiceId, amount: Number(amount) } });
-        setSuccess("Cash payment recorded.");
+        setSuccess("Submitted for Super-Admin approval.");
       } else {
         const formData = new FormData();
         formData.append("invoiceId", invoiceId);

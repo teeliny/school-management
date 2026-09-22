@@ -16,6 +16,7 @@ import { EmptyState } from "../molecules/empty-state";
 interface PendingPaymentItem {
   id: string;
   amount: number;
+  method: "CASH" | "BANK_TRANSFER_MANUAL";
   proofOfPaymentUrl: string | null;
   createdAt: string;
   invoice: { student: { admissionNumber: string; user: { firstName: string; lastName: string } } };
@@ -30,7 +31,7 @@ interface PendingDiscountRequestItem {
   invoice: { student: { admissionNumber: string; user: { firstName: string; lastName: string } } };
 }
 
-type QueueKind = "PAYMENT" | "DISCOUNT";
+type QueueKind = "CASH" | "BANK_TRANSFER" | "DISCOUNT";
 interface QueueRow {
   kind: QueueKind;
   id: string;
@@ -42,14 +43,14 @@ interface QueueRow {
   reason: string | null;
 }
 
-const KIND_LABEL: Record<QueueKind, string> = { PAYMENT: "Bank transfer", DISCOUNT: "Discount" };
-const KIND_VARIANT: Record<QueueKind, BadgeVariant> = { PAYMENT: "muted", DISCOUNT: "info" };
+const KIND_LABEL: Record<QueueKind, string> = { CASH: "Cash", BANK_TRANSFER: "Bank transfer", DISCOUNT: "Discount" };
+const KIND_VARIANT: Record<QueueKind, BadgeVariant> = { CASH: "muted", BANK_TRANSFER: "muted", DISCOUNT: "info" };
 
 function approvePath(row: QueueRow) {
-  return row.kind === "PAYMENT" ? `/payments/${row.id}/approve` : `/discount-requests/${row.id}/approve`;
+  return row.kind === "DISCOUNT" ? `/discount-requests/${row.id}/approve` : `/payments/${row.id}/approve`;
 }
 function rejectPath(row: QueueRow) {
-  return row.kind === "PAYMENT" ? `/payments/${row.id}/reject` : `/discount-requests/${row.id}/reject`;
+  return row.kind === "DISCOUNT" ? `/discount-requests/${row.id}/reject` : `/payments/${row.id}/reject`;
 }
 
 /**
@@ -83,7 +84,7 @@ export function PendingApprovalsQueue() {
       ]);
       const merged: QueueRow[] = [
         ...payments.map((p): QueueRow => ({
-          kind: "PAYMENT",
+          kind: p.method === "CASH" ? "CASH" : "BANK_TRANSFER",
           id: p.id,
           createdAt: p.createdAt,
           studentName: formatPersonName(p.invoice.student.user),

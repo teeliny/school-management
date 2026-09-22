@@ -16,9 +16,10 @@ import { PendingApprovalsQueue } from "../../components/organisms/pending-approv
 import { PaymentGatewayConfigList } from "../../components/organisms/payment-gateway-config-list";
 import { PaymentLedger } from "../../components/organisms/payment-ledger";
 import { OutstandingBalancesList } from "../../components/organisms/outstanding-balances-list";
+import { IncomeReport } from "../../components/organisms/income-report";
 
-type TabKey = "generate" | "structures" | "approvals" | "gateway" | "invoices" | "history" | "balances";
-const TAB_KEYS: TabKey[] = ["generate", "structures", "approvals", "gateway", "invoices", "history", "balances"];
+type TabKey = "generate" | "structures" | "approvals" | "gateway" | "invoices" | "history" | "balances" | "income";
+const TAB_KEYS: TabKey[] = ["generate", "structures", "approvals", "gateway", "invoices", "history", "balances", "income"];
 const TAB_LABEL: Record<TabKey, string> = {
   generate: "Generate Invoices",
   structures: "Fee Structures",
@@ -27,6 +28,7 @@ const TAB_LABEL: Record<TabKey, string> = {
   invoices: "Invoices",
   history: "Payment History",
   balances: "Outstanding Balances",
+  income: "Income Report",
 };
 
 // Shared between the rendered TabsList and the default-tab computation below
@@ -38,7 +40,7 @@ function visibleTabKeys(canManageFees: boolean, isSuperAdmin: boolean, isParent:
   return TAB_KEYS.filter(
     (key) =>
       (!["generate", "structures", "gateway"].includes(key) || canManageFees) &&
-      (key !== "approvals" || isSuperAdmin) &&
+      (!["approvals", "income"].includes(key) || isSuperAdmin) &&
       (!["invoices", "history"].includes(key) || canManageFees || isParent) &&
       (key !== "balances" || canViewOutstandingBalances),
   );
@@ -226,6 +228,15 @@ function FeesPageInner() {
                 sub={isPrincipalOrHeadteacher ? "Your section" : "School-wide"}
               />
               <OutstandingBalancesList canExcuse={canExcuse} canFilterBySection={canManageFees} onTotalChange={setBalanceTotal} />
+            </Card>
+          </TabsContent>
+        )}
+
+        {isSuperAdmin && (
+          <TabsContent value="income">
+            <Card>
+              <CardHeader title="Income report" sub="Sum of successful payments per day, filterable by method, gateway, and class level" />
+              <IncomeReport />
             </Card>
           </TabsContent>
         )}

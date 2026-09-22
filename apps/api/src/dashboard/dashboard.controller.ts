@@ -1,5 +1,5 @@
 import { Controller, Get, Query, UseGuards } from "@nestjs/common";
-import type { ClassLevelCategory } from "@prisma/client";
+import type { ClassLevelCategory, PaymentGatewayProvider, PaymentMethod } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
@@ -79,5 +79,17 @@ export class DashboardController {
   @Get("most-absent-staff")
   mostAbsentStaff(@CurrentUser() user: RequestUser, @Query("termId") termId: string, @Query("limit") limit?: string) {
     return this.service.mostAbsentStaff(user, termId, limit === undefined ? 5 : Number(limit));
+  }
+
+  @Get("income-report")
+  incomeReport(
+    @CurrentUser() user: RequestUser,
+    @Query("startDate") startDate: string,
+    @Query("endDate") endDate: string,
+    @Query("method") method?: PaymentMethod,
+    @Query("gatewayProvider") gatewayProvider?: PaymentGatewayProvider,
+    @Query("classLevelId") classLevelId?: string,
+  ) {
+    return this.service.incomeReport(user, { startDate, endDate, method, gatewayProvider, classLevelId });
   }
 }

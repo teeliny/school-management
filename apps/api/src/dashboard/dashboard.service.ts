@@ -1,5 +1,17 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
-import { AssessmentComponentStatus, AssignmentType, AttendancePersonType, AttendanceSessionType, ClassLevelCategory, ClassLevelCategoryGroup, StaffStatus, StudentStatus } from "@prisma/client";
+import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
+import {
+  AssessmentComponentStatus,
+  AssignmentType,
+  AttendancePersonType,
+  AttendanceSessionType,
+  ClassLevelCategory,
+  ClassLevelCategoryGroup,
+  PaymentGatewayProvider,
+  PaymentMethod,
+  PaymentStatus,
+  StaffStatus,
+  StudentStatus,
+} from "@prisma/client";
 import { computeSchoolDaysOpened, formatPersonName } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { RequestUser } from "../auth/jwt.strategy";
@@ -10,6 +22,7 @@ import {
   aggregateClassDailyTrend,
   aggregateSchoolAttendance,
   bucketInvitationsByWeek,
+  buildIncomeReport,
   buildScoreEntryCompletionRows,
   computeGenderSplit,
   countScheduleApprovalsByScope,
@@ -495,6 +508,44 @@ export class DashboardService {
     );
 
     return { termId, mostAbsentStaff: rankMostAbsentStaff(records, staffDirectory, limit) };
+  }
+
+  /**
+   * Super-Admin-only income report: sum of SUCCESSFUL payments per day over
+   * a date range, optionally narrowed by payment method, gateway provider
+   * (only meaningful alongside a GATEWAY_* method, or left unfiltered to
+   * cover every gateway payment), and/or class level (joined through
+   * invoice.student.currentClass.classLevelId, same relation
+   * groupOutstandingByClass already uses). `startDate`/`endDate` are
+   * calendar-day-inclusive against `paidAt`, the same field a payment
+   * actually settles on (not createdAt, which for CASH/BANK_TRANSFER_MANUAL
+   * is now just the PENDING_APPROVAL submission time — see
+   * PaymentService.recordCash's comment).
+   */
+  async incomeReport(
+    user: RequestUser,
+    filters: { startDate: string; endDate: string; method?: PaymentMethod; gatewayProvider?: PaymentGatewayProvider; classLevelId?: string },
+  ) {
+    this.assertSuperAdmin(user);
+
+    const start = new Date(`${filters.startDate}T00:00:00.000Z`);
+    const end = new Date(`${filters.endDate}T23:59:59.999Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      throw new BadRequestException("startDate must be a valid date on or before endDate");
+    }
+
+    const payments = await this.prisma.payment.findMany({
+      where: {
+        status: PaymentStatus.SUCCESSFUL,
+        paidAt: { gte: start, lte: end },
+        ...(filters.method ? { method: filters.method } : {}),
+        ...(filters.gatewayProvider ? { gatewayProvider: filters.gatewayProvider } : {}),
+        ...(filters.classLevelId ? { invoice: { student: { currentClass: { classLevelId: filters.classLevelId } } } } : {}),
+      },
+      select: { amount: true, paidAt: true, method: true, gatewayProvider: true },
+    });
+
+    return { startDate: filters.startDate, endDate: filters.endDate, ...buildIncomeReport(payments) };
   }
 
   private async assertCanViewStudent(user: RequestUser, studentId: string) {

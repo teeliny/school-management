@@ -130,7 +130,15 @@ export function SuperAdminDashboard({ user }: { user: CurrentUser }) {
       </Card>
 
       <Card>
-        <CardHeader title="Finance" sub="School-wide fees position" />
+        <CardHeader
+          title="Finance"
+          sub="School-wide fees position"
+          action={
+            <Button asChild variant="outline" size="sm">
+              <Link href="/fees?tab=income">Income report</Link>
+            </Button>
+          }
+        />
         {finance ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

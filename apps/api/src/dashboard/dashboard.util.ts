@@ -1,4 +1,4 @@
-import { AttendanceStatus, ClassLevelCategoryGroup, Gender, InvoiceStatus, PaymentMethod, ScheduleScope } from "@prisma/client";
+import { AttendanceStatus, ClassLevelCategoryGroup, Gender, InvoiceStatus, PaymentGatewayProvider, PaymentMethod, ScheduleScope } from "@prisma/client";
 import { categoryToGroup, computeAttendancePercentage, computeOutstandingBalance, type ClassLevelCategory } from "@school/types";
 import type { BroadsheetRow } from "../assessments/broadsheet";
 
@@ -455,4 +455,89 @@ export function rankMostAbsentStaff(
     .filter((row) => row.absent > 0)
     .sort((a, b) => b.absent - a.absent)
     .slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Income report (DashboardService.incomeReport) — net-new Super-Admin
+// widget, not one of PRD §6.9's documented FR9.x stats. Every filter
+// (date range, method, gatewayProvider, classLevelId) is applied in the
+// service's Prisma `where`, not here — this just buckets the already-
+// filtered SUCCESSFUL payments by day and tallies method/gateway subtotals,
+// same fetch/shape split as every other report in this file.
+// ---------------------------------------------------------------------------
+
+interface PaymentForIncome {
+  amount: unknown;
+  paidAt: Date | null;
+  method: PaymentMethod;
+  gatewayProvider: PaymentGatewayProvider | null;
+}
+export interface DailyIncomeRow {
+  date: string;
+  total: number;
+  count: number;
+}
+export interface IncomeByMethodRow {
+  method: PaymentMethod;
+  total: number;
+  count: number;
+}
+export interface IncomeByGatewayRow {
+  gatewayProvider: PaymentGatewayProvider;
+  total: number;
+  count: number;
+}
+export interface IncomeReport {
+  totalIncome: number;
+  totalCount: number;
+  dailyIncome: DailyIncomeRow[];
+  byMethod: IncomeByMethodRow[];
+  byGateway: IncomeByGatewayRow[];
+}
+
+export function buildIncomeReport(payments: PaymentForIncome[]): IncomeReport {
+  const byDay = new Map<string, DailyIncomeRow>();
+  const byMethod = new Map<PaymentMethod, IncomeByMethodRow>();
+  const byGateway = new Map<PaymentGatewayProvider, IncomeByGatewayRow>();
+  let totalIncome = 0;
+  let totalCount = 0;
+
+  for (const payment of payments) {
+    // Every SUCCESSFUL payment has paidAt set (recordCash/submitManualBank-
+    // Transfer only set it once approvePayment/resolveGatewayOutcome settle
+    // the payment) — skipped defensively rather than assumed, in case a
+    // future write path ever slips through without it.
+    if (!payment.paidAt) continue;
+
+    const amount = Number(payment.amount);
+    const dateKey = payment.paidAt.toISOString().slice(0, 10);
+
+    totalIncome += amount;
+    totalCount += 1;
+
+    const day = byDay.get(dateKey) ?? { date: dateKey, total: 0, count: 0 };
+    day.total += amount;
+    day.count += 1;
+    byDay.set(dateKey, day);
+
+    const methodRow = byMethod.get(payment.method) ?? { method: payment.method, total: 0, count: 0 };
+    methodRow.total += amount;
+    methodRow.count += 1;
+    byMethod.set(payment.method, methodRow);
+
+    if (payment.gatewayProvider) {
+      const gatewayRow = byGateway.get(payment.gatewayProvider) ?? { gatewayProvider: payment.gatewayProvider, total: 0, count: 0 };
+      gatewayRow.total += amount;
+      gatewayRow.count += 1;
+      byGateway.set(payment.gatewayProvider, gatewayRow);
+    }
+  }
+
+  return {
+    totalIncome,
+    totalCount,
+    dailyIncome: [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    byMethod: [...byMethod.values()].sort((a, b) => b.total - a.total),
+    byGateway: [...byGateway.values()].sort((a, b) => b.total - a.total),
+  };
 }

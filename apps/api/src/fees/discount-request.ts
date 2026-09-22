@@ -149,7 +149,7 @@ export class DiscountRequestService {
    * discount as a negative DISCOUNT InvoiceLineItem, computed against the
    * invoice's live totalAmount, then recomputes the invoice's balance/status
    * in the same transaction — same shape as
-   * PaymentController.approveManualBankTransfer, minus the Receipt/queue
+   * PaymentController.approvePayment, minus the Receipt/queue
    * steps (a discount produces no Payment).
    */
   async approve(id: string, reviewerUserId: string) {
@@ -314,7 +314,7 @@ export class DiscountRequestController {
     return this.service.bulkRaiseFeeWaiver(dto, user);
   }
 
-  /** Super-Admin-only carve-out — same manual role-check pattern as PaymentController.approveManualBankTransfer (Bursar's own "manage DiscountRequest" grant would otherwise satisfy any CASL check on this same subject). */
+  /** Super-Admin-only carve-out — same manual role-check pattern as PaymentController.approvePayment (Bursar's own "manage DiscountRequest" grant would otherwise satisfy any CASL check on this same subject). */
   @Patch(":id/approve")
   @Audited("DiscountRequest", "discountRequest")
   approve(@Param("id") id: string, @CurrentUser() user: RequestUser) {

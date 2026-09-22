@@ -126,8 +126,8 @@ export class PaymentService {
    * since terms have no explicit ordinal, and this holds across academic
    * sessions too. Checked at payment-initiation only (recordCash,
    * initiateGatewayCheckout, submitManualBankTransfer), not at
-   * resolution/approval (resolveGatewayOutcome, approveManualBankTransfer) —
-   * those finalize a payment already permitted at submission time.
+   * resolution/approval (resolveGatewayOutcome, approvePayment) — those
+   * finalize a payment already permitted at submission time.
    */
   private async assertNoEarlierUnsettledInvoice(studentId: string, termStartDate: Date): Promise<void> {
     const earlierInvoices = await this.prisma.invoice.findMany({
@@ -149,79 +149,46 @@ export class PaymentService {
   }
 
   /**
-   * PRD §3.9: "CASH is recorded by the Bursar and takes effect immediately
-   * (SUCCESSFUL) — the Bursar witnessed the payment directly." No
-   * assignment-type scoping is needed here (unlike Attendance's per-student-
-   * scoped writes) — CASL already fully gates who can reach this endpoint
-   * (Bursar/Super-Admin, domain-wide), so `recordedByStaffId` just resolves
-   * to the caller's own StaffProfile if they have one, `null` otherwise
-   * (Super-Admin override, same as ScoreEntry.enteredByStaffId).
+   * A Bursar recording CASH is only claiming money was handed to them — like
+   * a manual bank-transfer submission, that claim needs a Super-Admin's
+   * independent confirmation before it counts toward the invoice, so this
+   * starts PENDING_APPROVAL and deliberately does NOT touch the invoice's
+   * balance/status or create a Receipt until approvePayment runs (this was
+   * previously SUCCESSFUL-on-write per PRD §3.9's original text — amended
+   * alongside this change). Same shape as submitManualBankTransfer minus the
+   * file upload. No assignment-type scoping is needed here (unlike
+   * Attendance's per-student-scoped writes) — CASL already fully gates who
+   * can reach this endpoint (Bursar/Super-Admin, domain-wide), so
+   * `recordedByStaffId` just resolves to the caller's own StaffProfile if
+   * they have one, `null` otherwise (Super-Admin override, same as
+   * ScoreEntry.enteredByStaffId).
    */
   async recordCash(dto: RecordCashPaymentDto, user: RequestUser) {
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
       where: { id: dto.invoiceId },
-      include: {
-        lineItems: true,
-        payments: true,
-        term: { include: { academicSession: true } },
-        student: { include: { user: true, guardians: { include: { parent: true } } } },
-      },
+      include: { lineItems: true, payments: true, term: true },
     });
     await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
-    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
-    const paidAt = new Date();
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.create({
-        data: {
-          invoiceId: invoice.id,
-          amount: dto.amount,
-          method: PaymentMethod.CASH,
-          status: PaymentStatus.SUCCESSFUL,
-          paidAt,
-          recordedByStaffId: staffProfile?.id ?? null,
-        },
-      });
-
-      // Only DISCOUNT-type lines feed the formula — totalAmount already
-      // includes every FEE-type line at generation time (see the Invoice
-      // model comment), so summing them again here would double-count.
-      const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
-      const successfulPaymentAmounts = [
-        ...invoice.payments.filter((p) => p.status === PaymentStatus.SUCCESSFUL).map((p) => Number(p.amount)),
-        dto.amount,
-      ];
-      const outstandingBalance = computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts);
-      const paidTotal = successfulPaymentAmounts.reduce((sum, amount) => sum + amount, 0);
-      const status = computeInvoiceStatus(outstandingBalance, paidTotal, invoice.dueDate, paidAt);
-
-      await tx.invoice.update({ where: { id: invoice.id }, data: { status } });
-
-      const { sequenceNumber, serialNumber } = await this.nextReceiptSerial(tx, invoice.term.academicSessionId, invoice.term.academicSession.name);
-      const receipt = await tx.receipt.create({
-        data: {
-          paymentId: payment.id,
-          receiptNumber: `RCT-${payment.id.slice(0, 8).toUpperCase()}`,
-          academicSessionId: invoice.term.academicSessionId,
-          sequenceNumber,
-          serialNumber,
-          issuedAt: paidAt,
-        },
-      });
-
-      return { payment, receipt, invoiceStatus: status, outstandingBalance };
-    });
-
-    await this.receiptQueue.add("generate", { receiptId: result.receipt.id });
-
-    const studentName = formatPersonName(invoice.student.user);
-    const formattedAmount = dto.amount.toLocaleString("en-NG", { style: "currency", currency: "NGN" });
-    for (const guardian of invoice.student.guardians) {
-      await this.notifySafely(guardian.parent.userId, "PAYMENT_RECEIVED", { amount: formattedAmount, studentName });
+    const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
+    const successfulPaymentAmounts = invoice.payments.filter((p) => p.status === PaymentStatus.SUCCESSFUL).map((p) => Number(p.amount));
+    const outstandingBalance = computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts);
+    if (outstandingBalance <= 0) {
+      throw new BadRequestException("This invoice has no outstanding balance");
     }
 
-    return result;
+    const staffProfile = await this.prisma.staffProfile.findUnique({ where: { userId: user.id } });
+
+    return this.prisma.payment.create({
+      data: {
+        invoiceId: invoice.id,
+        amount: dto.amount,
+        method: PaymentMethod.CASH,
+        status: PaymentStatus.PENDING_APPROVAL,
+        recordedByStaffId: staffProfile?.id ?? null,
+      },
+      include: PAYMENT_DETAIL_INCLUDE,
+    });
   }
 
   private activeProvider(): PaymentGatewayProvider {
@@ -403,8 +370,8 @@ export class PaymentService {
    * bank account outside the platform and sent proof to the Bursar — there's
    * no gateway transaction to trust, so this starts PENDING_APPROVAL and
    * deliberately does NOT touch the invoice's balance/status until a
-   * Super-Admin reviews it (approveManualBankTransfer/rejectManualBankTransfer
-   * below). Same `recordedByStaffId` resolution as recordCash.
+   * Super-Admin reviews it (approvePayment/rejectPayment below). Same
+   * `recordedByStaffId` resolution as recordCash.
    */
   async submitManualBankTransfer(dto: SubmitManualBankTransferDto, file: Express.Multer.File, user: RequestUser) {
     const invoice = await this.prisma.invoice.findUniqueOrThrow({
@@ -440,22 +407,36 @@ export class PaymentService {
   }
 
   /**
-   * PRD FR7.3b: Super-Admin only (enforced in the controller, not here — see
-   * PaymentController.approveManualBankTransfer). Same $transaction shape as
-   * recordCash/resolveGatewayOutcome: update Payment, recompute the
-   * invoice's balance/status, create a Receipt, enqueue PDF generation.
+   * PRD FR7.3b (extended to also cover CASH — see recordCash's comment):
+   * Super-Admin only (enforced in the controller, not here — see
+   * PaymentController.approvePayment). Same $transaction shape as
+   * resolveGatewayOutcome: update Payment, recompute the invoice's
+   * balance/status, create a Receipt, enqueue PDF generation. Also notifies
+   * the student's guardians of the confirmed payment — CASH's own
+   * PAYMENT_RECEIVED notification used to fire at recordCash-time before
+   * approval was required; it now fires here instead, once the money is
+   * actually confirmed, and this closes the same gap for manual bank
+   * transfers (which never notified guardians at all).
    */
-  async approveManualBankTransfer(paymentId: string, reviewerUserId: string) {
+  async approvePayment(paymentId: string, reviewerUserId: string) {
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
       include: {
         invoice: {
-          include: { lineItems: true, payments: true, term: { include: { academicSession: true } }, student: { include: { user: true } } },
+          include: {
+            lineItems: true,
+            payments: true,
+            term: { include: { academicSession: true } },
+            student: { include: { user: true, guardians: { include: { parent: true } } } },
+          },
         },
       },
     });
-    if (payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL || payment.status !== PaymentStatus.PENDING_APPROVAL) {
-      throw new BadRequestException("Only a PENDING_APPROVAL manual bank-transfer payment can be approved");
+    if (
+      (payment.method !== PaymentMethod.CASH && payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL) ||
+      payment.status !== PaymentStatus.PENDING_APPROVAL
+    ) {
+      throw new BadRequestException("Only a PENDING_APPROVAL cash or manual bank-transfer payment can be approved");
     }
 
     const invoice = payment.invoice;
@@ -507,18 +488,24 @@ export class PaymentService {
     if (payment.paidByUserId) {
       await this.notifySafely(payment.paidByUserId, "MANUAL_PAYMENT_APPROVED", { amount: formattedAmount, studentName });
     }
+    for (const guardian of invoice.student.guardians) {
+      await this.notifySafely(guardian.parent.userId, "PAYMENT_RECEIVED", { amount: formattedAmount, studentName });
+    }
 
     return result;
   }
 
-  /** PRD FR7.3b: Super-Admin only (enforced in the controller). No invoice/receipt change — a rejected submission never counted toward the balance. */
-  async rejectManualBankTransfer(paymentId: string, reviewerUserId: string, rejectionReason: string) {
+  /** PRD FR7.3b (extended to also cover CASH — see recordCash's comment): Super-Admin only (enforced in the controller). No invoice/receipt change — a rejected submission never counted toward the balance. */
+  async rejectPayment(paymentId: string, reviewerUserId: string, rejectionReason: string) {
     const payment = await this.prisma.payment.findUniqueOrThrow({
       where: { id: paymentId },
       include: { invoice: { include: { student: { include: { user: true } } } } },
     });
-    if (payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL || payment.status !== PaymentStatus.PENDING_APPROVAL) {
-      throw new BadRequestException("Only a PENDING_APPROVAL manual bank-transfer payment can be rejected");
+    if (
+      (payment.method !== PaymentMethod.CASH && payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL) ||
+      payment.status !== PaymentStatus.PENDING_APPROVAL
+    ) {
+      throw new BadRequestException("Only a PENDING_APPROVAL cash or manual bank-transfer payment can be rejected");
     }
 
     const updated = await this.prisma.payment.update({
@@ -570,8 +557,8 @@ export class PaymentService {
     // is exactly what the gateway confirmed, not something the Bursar keyed
     // in, so there's nothing here for a Super-Admin to correct. Reversal is
     // scoped to the two staff-entered paths where a typo/mis-record is
-    // actually possible: CASH (recordCash) and an approved manual bank
-    // transfer (approveManualBankTransfer).
+    // actually possible: CASH and manual bank transfer, both settled via
+    // approvePayment.
     if (payment.method !== PaymentMethod.CASH && payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL) {
       throw new BadRequestException("Only a CASH or bank-transfer payment can be reversed");
     }
@@ -794,27 +781,27 @@ export class PaymentController {
     return this.service.submitManualBankTransfer(dto, file, user);
   }
 
-  /** Super-Admin-only carve-out — same manual role-check pattern as identity/ownership-transfer.ts and term-report-card.ts's remove(), not a CASL condition (Bursar's own "manage Payment" grant would otherwise satisfy any CASL check on this same subject). */
+  /** Super-Admin-only carve-out — same manual role-check pattern as identity/ownership-transfer.ts and term-report-card.ts's remove(), not a CASL condition (Bursar's own "manage Payment" grant would otherwise satisfy any CASL check on this same subject). Covers both CASH and BANK_TRANSFER_MANUAL — see PaymentService.approvePayment's comment. */
   @Patch(":id/approve")
   @Audited("Payment", "payment")
-  approveManualBankTransfer(@Param("id") id: string, @CurrentUser() user: RequestUser) {
+  approvePayment(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
-      throw new ForbiddenException("Only the Super-Admin can approve a manual bank-transfer payment");
+      throw new ForbiddenException("Only the Super-Admin can approve a cash or manual bank-transfer payment");
     }
-    return this.service.approveManualBankTransfer(id, user.id);
+    return this.service.approvePayment(id, user.id);
   }
 
-  /** Super-Admin-only carve-out — see approveManualBankTransfer's comment. */
+  /** Super-Admin-only carve-out — see approvePayment's comment. */
   @Patch(":id/reject")
   @Audited("Payment", "payment")
-  rejectManualBankTransfer(@Param("id") id: string, @Body() dto: RejectPaymentDto, @CurrentUser() user: RequestUser) {
+  rejectPayment(@Param("id") id: string, @Body() dto: RejectPaymentDto, @CurrentUser() user: RequestUser) {
     if (!user.roles.includes("SUPER_ADMIN")) {
-      throw new ForbiddenException("Only the Super-Admin can reject a manual bank-transfer payment");
+      throw new ForbiddenException("Only the Super-Admin can reject a cash or manual bank-transfer payment");
     }
-    return this.service.rejectManualBankTransfer(id, user.id, dto.rejectionReason);
+    return this.service.rejectPayment(id, user.id, dto.rejectionReason);
   }
 
-  /** Super-Admin-only carve-out — see approveManualBankTransfer's comment. */
+  /** Super-Admin-only carve-out — see approvePayment's comment. */
   @Patch(":id/reverse")
   @Audited("Payment", "payment")
   reversePayment(@Param("id") id: string, @Body() dto: ReversePaymentDto, @CurrentUser() user: RequestUser) {
