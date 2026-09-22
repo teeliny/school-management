@@ -384,9 +384,13 @@ export class SchedulingCallbackController {
    * InvigilationAssignment, a duty row has no overlap concept to check
    * per-row; the re-trigger guard in `assertValidWeeklyDutyRequest`
    * (schedule-generation-request.ts) already rejects triggering generation
-   * against a term/group that's already rostered, and the DB's
-   * `@@unique([weekStartDate, classLevelCategoryGroup, staffId])` is the
-   * final backstop against a duplicate row within one run.
+   * against a term/group that's already rostered, and the DB's partial
+   * unique index (`duty_assignments_active_unique`, WHERE approvalStatus !=
+   * 'REJECTED' — see the schema comment on `DutyAssignment`) is the final
+   * backstop against a duplicate row within one run. Scoped to non-REJECTED
+   * rows specifically *because* a duplicate row within one run is the only
+   * thing this should ever catch — a REJECTED roster's rows are expected to
+   * collide with a regenerate's rows on this exact key and must not block it.
    */
   private async persistWeeklyDutyRows(requestId: string, rows: WeeklyDutyGeneratedRow[]) {
     if (rows.length === 0) return 0;

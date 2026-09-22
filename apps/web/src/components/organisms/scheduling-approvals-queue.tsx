@@ -66,9 +66,11 @@ function groupByRequest<T extends { id: string; scheduleGenerationRequestId: str
 ): QueueGroup[] {
   const byRequest = new Map<string, T[]>();
   for (const item of items) {
-    // AI rows always carry this FK (set by the callback controller); a null
-    // here would mean a MANUAL row, which is never PENDING_REVIEW in the
-    // first place — skip defensively rather than crash on a malformed group.
+    // Every row here should carry this FK: AI rows get it from the callback
+    // controller, and a manually-generated duty roster (DutyRosterWeekService.
+    // generate) gets it from its own synchronous ScheduleGenerationRequest
+    // row — either way, a PENDING_REVIEW row with no FK would be malformed.
+    // Skip defensively rather than crash on one.
     if (!item.scheduleGenerationRequestId) continue;
     const list = byRequest.get(item.scheduleGenerationRequestId) ?? [];
     list.push(item);

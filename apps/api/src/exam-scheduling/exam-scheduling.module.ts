@@ -7,6 +7,7 @@ import { SchedulingCallbackController } from "./scheduling-callback.controller";
 import { ExamScheduleController, ExamScheduleService } from "./exam-schedule";
 import { InvigilationAssignmentController, InvigilationAssignmentService } from "./invigilation-assignment";
 import { DutyAssignmentController, DutyAssignmentService } from "./duty-assignment";
+import { DutyRosterWeekController, DutyRosterWeekService } from "./duty-roster-week";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { TimetableModule } from "../timetable/timetable.module";
 
@@ -34,6 +35,7 @@ import { TimetableModule } from "../timetable/timetable.module";
     ExamScheduleController,
     InvigilationAssignmentController,
     DutyAssignmentController,
+    DutyRosterWeekController,
   ],
   providers: [
     SchedulingConstraintService,
@@ -41,6 +43,7 @@ import { TimetableModule } from "../timetable/timetable.module";
     ExamScheduleService,
     InvigilationAssignmentService,
     DutyAssignmentService,
+    DutyRosterWeekService,
   ],
 })
 export class ExamSchedulingModule {}

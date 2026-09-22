@@ -77,10 +77,12 @@ export class DutyAssignmentService {
 
   // BUILD_PLAN.md §9 Step 6f: no assertNoConflicts-equivalent time-overlap
   // check is needed (weeks don't overlap the way exam times do) — the only
-  // real risk from reassigning a row's staffId is the @@unique(
-  // [weekStartDate, classLevelCategoryGroup, staffId]) constraint, guarded
+  // real risk from reassigning a row's staffId is the partial unique index
+  // (WHERE "approvalStatus" != 'REJECTED', see the schema comment), guarded
   // explicitly here so it 400s cleanly instead of leaking a raw Prisma
-  // P2002 to the client.
+  // P2002 to the client. Excludes REJECTED rows from the collision check
+  // too, matching that index exactly — a rejected row occupying this
+  // triple isn't a real conflict.
   private async assertNoUniqueCollision(
     weekStartDate: Date,
     classLevelCategoryGroup: ClassLevelCategoryGroup,
@@ -89,7 +91,13 @@ export class DutyAssignmentService {
     client: PrismaService | Prisma.TransactionClient = this.prisma,
   ) {
     const existing = await client.dutyAssignment.findFirst({
-      where: { weekStartDate, classLevelCategoryGroup, staffId, id: { not: excludeId } },
+      where: {
+        weekStartDate,
+        classLevelCategoryGroup,
+        staffId,
+        id: { not: excludeId },
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
     });
     if (existing) {
       throw new BadRequestException("Staff member already holds a duty slot for this week");

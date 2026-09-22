@@ -302,6 +302,14 @@ function PlannerPageInner() {
         ? "CRECHE_NURSERY_PRIMARY"
         : null;
 
+  // Mirrors DutyRosterWeekController.assertCanTrigger: plain Admin can edit
+  // an existing roster (via canManage) but can't generate a fresh one —
+  // stricter than canManage the same way triggering AI generation already is.
+  const canGenerateDutyRoster =
+    isUnscoped ||
+    (user.assignmentTypes.includes("PRINCIPAL") && dutyGroup === "JSS_SSS") ||
+    (user.assignmentTypes.includes("HEADTEACHER") && dutyGroup === "CRECHE_NURSERY_PRIMARY");
+
   function changeTab(next: TabKey) {
     setTab(next);
     router.replace(`/planner?tab=${next}`);
@@ -723,9 +731,11 @@ function PlannerPageInner() {
             <CollapsibleCard title="Weekly duty roster">
               <DutyGrid
                 classLevelCategoryGroup={dutyGroup as ClassLevelCategoryGroupValue}
+                termId={dutyTermId}
                 weekStartDateFrom={selectedDutyTerm?.startDate ?? ""}
                 weekStartDateTo={selectedDutyTerm?.endDate ?? ""}
                 canManage={canManage}
+                canGenerate={canGenerateDutyRoster}
               />
             </CollapsibleCard>
           </TabsContent>
@@ -749,8 +759,8 @@ function PlannerPageInner() {
                 title="Pending review"
                 sub={
                   isSuperAdmin
-                    ? "AI-generated rosters awaiting approval — approve or reject the whole roster in one action"
-                    : "AI-generated rosters awaiting Super-Admin approval — view only"
+                    ? "AI- or Admin-generated rosters awaiting approval — approve or reject the whole roster in one action"
+                    : "AI- or Admin-generated rosters awaiting Super-Admin approval — view only"
                 }
               />
               <SchedulingApprovalsQueue ref={approvalsQueueRef} canAct={isSuperAdmin} />

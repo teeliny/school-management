@@ -210,6 +210,7 @@ model Term {
   feeStructures              FeeStructure[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
   invoices                   Invoice[]
+  dutyRosterWeeks            DutyRosterWeek[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -964,9 +965,16 @@ model ScheduleGenerationRequest {
   completedAt       DateTime?
   errorMessage      String?
 
-  // Every row this run persisted (AI-generated only — MANUAL rows never set
-  // this FK). Lets batch approve/reject operate on the run's real row set
-  // instead of a client-side natural-key group-by.
+  // Every row this run persisted. For TimetableSlot/ExamSchedule/
+  // InvigilationAssignment this is AI-generated only — a plain MANUAL edit
+  // never sets this FK. DutyAssignment is the one exception: the manual
+  // roster builder (DutyRosterWeekService.generate) also creates a
+  // synchronous, already-COMPLETED request row here purely so its
+  // generatedBy=MANUAL rows flow through the same PENDING_REVIEW/approve/
+  // reject batch workflow as an AI WEEKLY_DUTY run, without duplicating
+  // ScheduleGenerationRequestService.approve/reject or the approvals-queue
+  // UI. Either way, lets batch approve/reject operate on the run's real row
+  // set instead of a client-side natural-key group-by.
   timetableSlots          TimetableSlot[]
   examSchedules           ExamSchedule[]
   invigilationAssignments InvigilationAssignment[]
@@ -1052,9 +1060,22 @@ model InvigilationAssignment {
 // from exam invigilation (PRD §3.8/FR6.11). No duty-type/role field and no
 // direct Term FK, matching PRD's field list exactly — term association is
 // derived by weekStartDate falling within a Term's date range, not stored
-// directly. @@unique is a plain composite index (all three columns always
-// non-null) — no hand-added partial-index SQL needed, unlike
-// SchedulingConstraint's null-group case.
+// directly.
+//
+// **Revised (2026-09-22)**: originally a plain @@unique([weekStartDate,
+// classLevelCategoryGroup, staffId]) — turned out wrong the first time a
+// real reject-then-regenerate cycle happened: rejecting a roster leaves its
+// rows in place (approvalStatus=REJECTED, not deleted, so the rejection
+// reason/audit trail survives), but a plain unique constraint doesn't know
+// REJECTED rows don't count, so any regenerate that happened to reuse the
+// same (week, group, staff) triple as a REJECTED row — routine, since both
+// the AI solver and the manual round-robin draw from the same staff pool
+// every time — 500'd on a unique-constraint violation. Same "at most one
+// *active* row per key, duplicates fine once revoked" shape as
+// StaffAssignment's WHERE "isActive" = true index (see CLAUDE.md) — no
+// @@unique/@@index declared here for this key at all, purely a hand-added
+// partial index (WHERE "approvalStatus" != 'REJECTED') in its own
+// migration, same precedent as staff_assignments_active_subject_arm_unique.
 model DutyAssignment {
   id                          String                     @id @default(uuid())
   weekStartDate               DateTime                   @db.Date
@@ -1069,13 +1090,50 @@ model DutyAssignment {
   rejectionReason             String?
   scheduleGenerationRequestId String?
   scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  // Set only for a row created via the manual roster builder
+  // (DutyRosterWeekService.generate) — null for a row produced by the
+  // OR-Tools WEEKLY_DUTY solve, which has no per-week entity of its own.
+  dutyRosterWeekId            String?
+  dutyRosterWeek              DutyRosterWeek?            @relation(fields: [dutyRosterWeekId], references: [id])
   createdAt                   DateTime                   @default(now())
   updatedAt                   DateTime                   @updatedAt
 
-  @@unique([weekStartDate, classLevelCategoryGroup, staffId])
+  @@index([weekStartDate, classLevelCategoryGroup, staffId])
   @@index([staffId])
   @@index([scheduleGenerationRequestId])
+  @@index([dutyRosterWeekId])
   @@map("duty_assignments")
+}
+
+// Manual-roster-builder counterpart to the OR-Tools WEEKLY_DUTY solve: the
+// AI path (weekly_duty.py) derives its week list from Term.startDate/
+// endDate on every run and has no row of its own per week, so it has
+// nowhere to hang a topic. This is the "week" entity the AI path never
+// needed — one row per (term, group, week), created in bulk by
+// DutyRosterWeekService.generate alongside its DutyAssignment rows
+// (linked via DutyAssignment.dutyRosterWeekId). `topic` is deliberately
+// unconstrained/nullable — generation leaves it blank for Admin to fill in
+// per week afterward (the whole point of this feature, see the "First Term
+// Teachers on Duty Roster" reference this was built from). `isBreak` marks
+// a week (e.g. mid-term break) that carries no duty assignments or topic;
+// set only at generation time via CreateDutyRosterDto.breakWeekStartDates,
+// or toggled true afterward via PATCH (which cascades and deletes that
+// week's DutyAssignment rows) — toggling back to false is not supported,
+// regenerate instead.
+model DutyRosterWeek {
+  id                      String                  @id @default(uuid())
+  termId                  String
+  term                    Term                    @relation(fields: [termId], references: [id], onDelete: Cascade)
+  classLevelCategoryGroup ClassLevelCategoryGroup
+  weekStartDate           DateTime                @db.Date
+  topic                   String?
+  isBreak                 Boolean                 @default(false)
+  dutyAssignments         DutyAssignment[]
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  @@unique([termId, classLevelCategoryGroup, weekStartDate])
+  @@map("duty_roster_weeks")
 }
 
 // ---------------------------------------------------------------------------

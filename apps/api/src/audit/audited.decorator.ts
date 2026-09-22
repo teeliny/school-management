@@ -18,6 +18,7 @@ export type AuditModelKey =
   | "examSchedule"
   | "invigilationAssignment"
   | "dutyAssignment"
+  | "dutyRosterWeek"
   | "scheduleGenerationRequest"
   | "parentProfile"
   | "staffProfile"
