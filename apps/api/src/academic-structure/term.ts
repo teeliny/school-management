@@ -6,10 +6,14 @@ import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
 import { Audited } from "../audit/audited.decorator";
 import { CreateTermDto, UpdateTermDto } from "./dto/term.dto";
+import { StudentSubjectEnrollmentService } from "../subjects/student-subject-enrollment";
 
 @Injectable()
 export class TermService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly studentSubjectEnrollments: StudentSubjectEnrollmentService,
+  ) {}
 
   /**
    * Assessment structure (CA/Mid-Term/Exam definitions) is meant to stay the
@@ -85,13 +89,18 @@ export class TermService {
    */
   async setCurrent(id: string) {
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id } });
-    return this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async (tx) => {
       await tx.term.updateMany({
         where: { academicSessionId: term.academicSessionId, isCurrent: true },
         data: { isCurrent: false },
       });
       return tx.term.update({ where: { id }, data: { isCurrent: true } });
     });
+    // Outside the transaction: sweeps every COMPULSORY ClassSubject now that
+    // this term can resolve as "current" — see syncAllCompulsoryEnrollmentsForCurrentTerm's
+    // comment for why this can't just be assumed to already be handled.
+    await this.studentSubjectEnrollments.syncAllCompulsoryEnrollmentsForCurrentTerm();
+    return updated;
   }
 }
 

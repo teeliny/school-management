@@ -7,8 +7,10 @@ import { ClassArmController, ClassArmService } from "./class-arm";
 import { DepartmentController, DepartmentService } from "./department";
 import { StudentDepartmentController, StudentDepartmentService } from "./student-department";
 import { SchoolEventController, SchoolEventService } from "./school-event";
+import { SubjectModule } from "../subjects/subject.module";
 
 @Module({
+  imports: [SubjectModule],
   controllers: [
     SchoolProfileController,
     AcademicSessionController,

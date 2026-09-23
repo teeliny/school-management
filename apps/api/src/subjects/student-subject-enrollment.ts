@@ -214,6 +214,26 @@ export class StudentSubjectEnrollmentService {
     }
   }
 
+  /**
+   * Term.setCurrent() hook: syncCompulsoryEnrollmentsOnClassAssignment
+   * silently no-ops for a student created/assigned while no term is current
+   * yet (see its comment), and that student is never revisited unless
+   * someone later happens to create/edit the specific ClassSubject they
+   * missed — syncEnrollmentsForClassSubject's per-subject backfill has no
+   * reason to re-run otherwise. Once a term IS marked current, sweep every
+   * COMPULSORY ClassSubject so anyone stranded during that gap gets caught
+   * up immediately instead of depending on an unrelated future edit.
+   */
+  async syncAllCompulsoryEnrollmentsForCurrentTerm(): Promise<void> {
+    const compulsoryClassSubjects = await this.prisma.classSubject.findMany({
+      where: { type: SubjectType.COMPULSORY },
+      select: { id: true },
+    });
+    for (const { id } of compulsoryClassSubjects) {
+      await this.syncEnrollmentsForClassSubject(id);
+    }
+  }
+
   /** Explicit GENERAL/DEPARTMENT opt-in (PRD FR2.5). */
   async enroll(dto: CreateEnrollmentDto) {
     const classArm = await this.prisma.classArm.findUniqueOrThrow({
