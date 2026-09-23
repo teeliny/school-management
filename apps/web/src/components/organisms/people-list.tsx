@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, User as UserIcon, X } from "lucide-react";
 import { formatPersonName, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
+import type { CurrentUser } from "../../lib/use-current-user";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
@@ -18,6 +19,20 @@ interface ClassLevelOption {
   name: string;
   order: number;
   category: ClassLevelCategory;
+}
+
+interface StaffAssignmentMineItem {
+  assignmentType: string;
+  isActive: boolean;
+  classArmId: string | null;
+  classArm: { id: string; name: string; classLevel: { name: string; order: number } } | null;
+}
+
+interface MyClassArm {
+  id: string;
+  name: string;
+  classLevel: { name: string; order: number };
+  isClassTeacher: boolean;
 }
 
 interface StudentListItem {
@@ -117,11 +132,13 @@ function SubjectsCell({
  * (StudentService.uploadPhoto).
  */
 export function PeopleList({
+  user,
   refreshKey,
   canUploadPhoto = false,
   canEdit = false,
   onEdit,
 }: {
+  user: CurrentUser;
   refreshKey?: unknown;
   canUploadPhoto?: boolean;
   canEdit?: boolean;
@@ -133,19 +150,94 @@ export function PeopleList({
   });
   const [classLevelId, setClassLevelId] = useState("");
 
+  // Only a plain class/subject teacher is scoped by class-arm assignment
+  // (StudentService.scopeWhereForUser) — Super-Admin/Admin see everyone,
+  // REGISTRAR/BURSAR are school-wide, and PRINCIPAL/VICE_PRINCIPAL/
+  // HEADTEACHER are scoped to a whole section (resolvePrincipalHeadteacherCategories),
+  // not to specific arms — none of those need this filter, and a user
+  // holding one of those titles alongside a CLASS_TEACHER/SUBJECT_TEACHER
+  // assignment is still unscoped by the wider title, same precedence as
+  // scopeWhereForUser itself.
+  const isSchoolOrSectionScoped =
+    user.roles.includes("SUPER_ADMIN") ||
+    user.roles.includes("ADMIN") ||
+    user.assignmentTypes.includes("REGISTRAR") ||
+    user.assignmentTypes.includes("BURSAR") ||
+    user.assignmentTypes.includes("PRINCIPAL") ||
+    user.assignmentTypes.includes("VICE_PRINCIPAL") ||
+    user.assignmentTypes.includes("HEADTEACHER");
+
+  // Class/subject teachers are already row-scoped to their own class arms
+  // server-side — this filter just lets them narrow that scope down to one
+  // arm at a time, defaulting to the arm they're CLASS_TEACHER for (or their
+  // first taught arm if they're only a SUBJECT_TEACHER), same
+  // "/staff-assignments/mine, filter by isActive" pattern as
+  // class-teacher-additions.tsx.
+  const { data: myAssignments } = useQuery({
+    queryKey: ["staff-assignments", "mine"],
+    queryFn: () => apiFetch<StaffAssignmentMineItem[]>("/staff-assignments/mine", { auth: true }),
+    enabled: Boolean(user.staffProfileId) && !isSchoolOrSectionScoped,
+  });
+
+  const myClassArms = useMemo(() => {
+    const byId = new Map<string, MyClassArm>();
+    for (const a of myAssignments ?? []) {
+      if (!a.isActive || !a.classArmId || !a.classArm) continue;
+      if (a.assignmentType !== "CLASS_TEACHER" && a.assignmentType !== "SUBJECT_TEACHER") continue;
+      const isClassTeacher = a.assignmentType === "CLASS_TEACHER";
+      const existing = byId.get(a.classArmId);
+      if (existing) {
+        existing.isClassTeacher = existing.isClassTeacher || isClassTeacher;
+      } else {
+        byId.set(a.classArmId, {
+          id: a.classArmId,
+          name: a.classArm.name,
+          classLevel: { name: a.classArm.classLevel.name, order: a.classArm.classLevel.order },
+          isClassTeacher,
+        });
+      }
+    }
+    return [...byId.values()].sort(
+      (x, y) => x.classLevel.order - y.classLevel.order || x.name.localeCompare(y.name),
+    );
+  }, [myAssignments]);
+
+  const [classArmId, setClassArmId] = useState("");
+  const defaultArmApplied = useRef(false);
+
+  useEffect(() => {
+    const [firstArm] = myClassArms;
+    if (defaultArmApplied.current || !firstArm) return;
+    defaultArmApplied.current = true;
+    const classTeacherArm = myClassArms.find((arm) => arm.isClassTeacher);
+    setClassArmId((classTeacherArm ?? firstArm).id);
+  }, [myClassArms]);
+
   const [students, setStudents] = useState<StudentListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [nameSort, setNameSort] = useState<"asc" | "desc">("asc");
 
+  // Sequence-guarded: the class-arm default (above) fires a second, filtered
+  // fetch shortly after the unfiltered one this effect kicks off on mount —
+  // without this guard, a slower unfiltered response can land after the
+  // filtered one and silently overwrite it with the wrong roster.
+  const loadSeq = useRef(0);
+
   const load = useCallback(() => {
+    const seq = ++loadSeq.current;
     const params = new URLSearchParams({ includeSubjects: "true" });
     if (classLevelId) params.set("classLevelId", classLevelId);
+    if (classArmId) params.set("classArmId", classArmId);
     apiFetch<StudentListItem[]>(`/students?${params}`, { auth: true })
-      .then(setStudents)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load students"));
-  }, [classLevelId]);
+      .then((data) => {
+        if (seq === loadSeq.current) setStudents(data);
+      })
+      .catch((err) => {
+        if (seq === loadSeq.current) setError(err instanceof ApiError ? err.message : "Failed to load students");
+      });
+  }, [classLevelId, classArmId]);
 
   useEffect(() => {
     load();
@@ -182,6 +274,21 @@ export function PeopleList({
           aria-label="Search students"
           className="sm:flex-1"
         />
+        {myClassArms.length > 0 && (
+          <Select value={classArmId || "ALL"} onValueChange={(v) => setClassArmId(v === "ALL" ? "" : v)}>
+            <SelectTrigger className="sm:w-48" aria-label="Filter by class arm">
+              <SelectValue placeholder="My classes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All my classes</SelectItem>
+              {myClassArms.map((arm) => (
+                <SelectItem key={arm.id} value={arm.id}>
+                  {arm.classLevel.name} {arm.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Select value={classLevelId || "ALL"} onValueChange={(v) => setClassLevelId(v === "ALL" ? "" : v)}>
           <SelectTrigger className="sm:w-56" aria-label="Filter by class level">
             <SelectValue placeholder="All class levels" />

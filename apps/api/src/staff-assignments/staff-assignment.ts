@@ -189,7 +189,9 @@ export class StaffAssignmentService {
       where: { staffId: staffProfile.id },
       include: {
         subject: { select: { id: true, name: true } },
-        classArm: { select: { id: true, name: true, classLevel: { select: { name: true, category: true } } } },
+        classArm: {
+          select: { id: true, name: true, classLevel: { select: { name: true, category: true, order: true } } },
+        },
       },
       orderBy: { createdAt: "desc" },
     });

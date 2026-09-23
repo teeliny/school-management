@@ -40,6 +40,7 @@ export default function StudentsPage() {
         <Card>
           <CardHeader title="Students" sub="Scoped to what your role can see" />
           <PeopleList
+            user={user}
             refreshKey={refreshKey}
             canUploadPhoto={canUploadPhoto}
             canEdit={canCreate}
