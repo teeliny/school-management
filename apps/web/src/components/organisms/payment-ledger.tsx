@@ -21,6 +21,7 @@ interface LedgerPaymentItem {
   method: PaymentMethod;
   status: PaymentStatus;
   createdAt: string;
+  receipt: { printedAt: string | null; printCount: number } | null;
   invoice: { student: { admissionNumber: string; user: { firstName: string; lastName: string } } };
 }
 
@@ -60,6 +61,16 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
   // receipts from several pages before printing them together — the
   // selection is only ever cleared explicitly.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Bumped when the Bursar comes back from the print tab, so the Receipt
+  // column picks up the printedAt/printCount the print just set.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!canManageFees) return;
+    const onFocus = () => setReloadKey((k) => k + 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [canManageFees]);
 
   useEffect(() => {
     const params = new URLSearchParams({ skip: String(page * PAGE_SIZE), take: String(PAGE_SIZE) });
@@ -70,7 +81,7 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
         setTotal(result.total);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load payment history"));
-  }, [canManageFees, status, page]);
+  }, [canManageFees, status, page, reloadKey]);
 
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!payments) return <SkeletonTable rows={5} columns={5} />;
@@ -155,13 +166,14 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Method</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Amount</th>
               <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Status</th>
+              {canManageFees && <th className="py-2 pr-4 text-[10px] font-medium uppercase tracking-wide">Receipt</th>}
               <th className="py-2 text-[10px] font-medium uppercase tracking-wide">Date</th>
             </tr>
           </thead>
           <tbody>
             {payments.length === 0 && (
               <tr>
-                <td colSpan={canManageFees ? 6 : 4}>
+                <td colSpan={canManageFees ? 7 : 4}>
                   <EmptyState icon={Wallet} title="No payments to show" />
                 </td>
               </tr>
@@ -190,6 +202,20 @@ export function PaymentLedger({ canManageFees }: { canManageFees: boolean }) {
                 <td className="py-2.5 pr-4">
                   <Badge variant={STATUS_VARIANT[payment.status]}>{payment.status}</Badge>
                 </td>
+                {canManageFees && (
+                  <td className="py-2.5 pr-4">
+                    {payment.receipt &&
+                      (payment.receipt.printCount > 0 ? (
+                        <span title={payment.receipt.printedAt ? `First printed ${payment.receipt.printedAt.slice(0, 10)}` : undefined}>
+                          <Badge variant="info">
+                            {payment.receipt.printCount === 1 ? "Printed" : `Printed ×${payment.receipt.printCount}`}
+                          </Badge>
+                        </span>
+                      ) : (
+                        <Badge variant="muted">Not printed</Badge>
+                      ))}
+                  </td>
+                )}
                 <td className="py-2.5 font-mono text-muted">{payment.createdAt.slice(0, 10)}</td>
               </tr>
             ))}

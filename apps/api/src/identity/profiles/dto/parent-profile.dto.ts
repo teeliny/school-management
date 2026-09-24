@@ -1,5 +1,5 @@
 import { GuardianRelationship } from "@prisma/client";
-import { IsEmail, IsEnum, IsOptional, IsString } from "class-validator";
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class UpdateParentProfileDto {
   @IsOptional()
@@ -18,6 +18,22 @@ export class UpdateParentProfileDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  // Also on User. Admin/Super-Admin only — ParentProfileController.update
+  // strips these from a self-service edit.
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  middleName?: string;
 }
 
 export class UpdateParentEmailDto {

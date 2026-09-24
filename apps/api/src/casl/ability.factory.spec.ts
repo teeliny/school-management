@@ -95,6 +95,20 @@ describe("AbilityFactory", () => {
     expect(ability.can("manage", "StaffProfile")).toBe(false);
   });
 
+  it("REGISTRAR and BURSAR can read ParentProfile (the /parents directory) but not manage it", () => {
+    for (const assignment of ["REGISTRAR", "BURSAR"]) {
+      const ability = factory.createForUser(userWith(["STAFF"], [assignment]));
+      expect(ability.can("read", "ParentProfile")).toBe(true);
+      expect(ability.can("manage", "ParentProfile")).toBe(false);
+    }
+  });
+
+  it("a bare STAFF user, a PARENT, and a PRINCIPAL cannot read ParentProfile", () => {
+    expect(factory.createForUser(userWith(["STAFF"])).can("read", "ParentProfile")).toBe(false);
+    expect(factory.createForUser(userWith(["PARENT"])).can("read", "ParentProfile")).toBe(false);
+    expect(factory.createForUser(userWith(["STAFF"], ["PRINCIPAL"])).can("read", "ParentProfile")).toBe(false);
+  });
+
   it("a bare STAFF user (no REGISTRAR assignment) cannot read StaffProfile", () => {
     const ability = factory.createForUser(userWith(["STAFF"]));
     expect(ability.can("read", "StaffProfile")).toBe(false);

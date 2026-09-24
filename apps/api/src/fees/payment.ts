@@ -618,7 +618,9 @@ export class PaymentService {
       include: {
         receipt: true,
         recordedByStaff: { include: { user: true } },
-        invoice: { include: { lineItems: true, payments: true, term: true, student: { include: { user: true } } } },
+        invoice: {
+          include: { lineItems: true, payments: true, term: { include: { academicSession: true } }, student: { include: { user: true } } },
+        },
       },
     });
     const byId = new Map(payments.map((payment) => [payment.id, payment]));
@@ -645,6 +647,7 @@ export class PaymentService {
         studentName: formatPersonName(invoice.student.user),
         admissionNumber: invoice.student.admissionNumber,
         termName: invoice.term.name,
+        academicSessionName: invoice.term.academicSession.name,
         amount: Number(payment.amount),
         method: payment.method,
         paidAt: payment.paidAt,

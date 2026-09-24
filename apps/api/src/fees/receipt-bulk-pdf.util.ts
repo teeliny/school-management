@@ -7,6 +7,7 @@ const NAVY = "#001B3A";
 const MUTED = "#6b7280";
 const BORDER = "#d8dce3";
 const DUPLICATE_RED = "#b91c1c";
+const ORIGINAL_GREEN = "#15803d";
 
 export interface SchoolContactInfo {
   name: string;
@@ -22,6 +23,7 @@ export interface BulkReceiptPdfEntry {
   studentName: string;
   admissionNumber: string;
   termName: string;
+  academicSessionName: string;
   amount: number;
   method: string;
   paidAt: Date | null;
@@ -86,8 +88,8 @@ function drawSlotWatermark(doc: PDFKit.PDFDocument, schoolName: string, x: numbe
 }
 
 function labelValue(doc: PDFKit.PDFDocument, x: number, y: number, width: number, label: string, value: string): number {
-  doc.font("Helvetica-Bold").fontSize(7.5).fillColor(MUTED).text(`${label}: `, x, y, { continued: true, width });
-  doc.font("Helvetica").fontSize(7.5).fillColor("black").text(value);
+  doc.font("Helvetica-Bold").fontSize(10).fillColor(MUTED).text(`${label}: `, x, y, { continued: true, width });
+  doc.font("Helvetica").fontSize(10).fillColor("black").text(value);
   return doc.y;
 }
 
@@ -147,24 +149,24 @@ export function renderBulkReceiptsPdf(entries: BulkReceiptPdfEntry[], school: Sc
       let y = slotY + pad;
 
       // Header: school identity on the left, receipt identifiers on the right.
-      const headerRightWidth = 170;
+      const headerRightWidth = 200;
       const headerLeftWidth = innerWidth - headerRightWidth - 10;
-      doc.font("Helvetica-Bold").fontSize(11).fillColor(NAVY).text(school.name.toUpperCase(), innerX, y, { width: headerLeftWidth });
+      doc.font("Helvetica-Bold").fontSize(14).fillColor(NAVY).text(school.name.toUpperCase(), innerX, y, { width: headerLeftWidth });
       let leftY = doc.y;
       if (school.address) {
-        doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(school.address, innerX, leftY + 1, { width: headerLeftWidth });
+        doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(school.address, innerX, leftY + 1, { width: headerLeftWidth });
         leftY = doc.y;
       }
       const contactLine = [school.contactEmail, school.contactPhone].filter(Boolean).join("   ·   ");
       if (contactLine) {
-        doc.font("Helvetica").fontSize(7).fillColor(MUTED).text(contactLine, innerX, leftY + 1, { width: headerLeftWidth });
+        doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(contactLine, innerX, leftY + 1, { width: headerLeftWidth });
       }
 
       const rightX = innerX + headerLeftWidth + 10;
-      doc.font("Helvetica-Bold").fontSize(9).fillColor(NAVY).text("PAYMENT RECEIPT", rightX, y, { width: headerRightWidth, align: "right" });
+      doc.font("Helvetica-Bold").fontSize(12).fillColor(NAVY).text("PAYMENT RECEIPT", rightX, y, { width: headerRightWidth, align: "right" });
       doc
         .font("Helvetica")
-        .fontSize(7)
+        .fontSize(9)
         .fillColor(MUTED)
         .text(`No: ${entry.receiptNumber}`, rightX, doc.y + 1, { width: headerRightWidth, align: "right" });
       if (entry.serialNumber) {
@@ -181,6 +183,7 @@ export function renderBulkReceiptsPdf(entries: BulkReceiptPdfEntry[], school: Sc
       const col2X = innerX + colWidth + 12;
       const bodyTop = y;
       let colY = labelValue(doc, innerX, y, colWidth, "Student", `${entry.studentName} (${entry.admissionNumber})`);
+      colY = labelValue(doc, innerX, colY + 2, colWidth, "Session", entry.academicSessionName);
       colY = labelValue(doc, innerX, colY + 2, colWidth, "Term", entry.termName);
       colY = labelValue(doc, innerX, colY + 2, colWidth, "Method", entry.method);
 
@@ -194,16 +197,27 @@ export function renderBulkReceiptsPdf(entries: BulkReceiptPdfEntry[], school: Sc
       // parent most needs off a physical slip.
       doc
         .font("Helvetica-Bold")
-        .fontSize(8.5)
+        .fontSize(11.5)
         .fillColor(NAVY)
         .text(`Balance Remaining: ${formatNaira(entry.outstandingBalanceAfter)}`, innerX, y, { width: innerWidth });
       y = doc.y + 8;
 
+      const signatureY = slotY + slotHeight - pad - 16;
+
+      // Comment area — blank ruled lines filling the space between the
+      // balance line and the signature line, for the Bursar to handwrite a
+      // note on the printed slip. Deliberately not stored anywhere.
+      const commentBottom = signatureY - 14;
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(MUTED).text("Comment:", innerX, y, { width: innerWidth });
+      const commentTop = doc.y + 2;
+      for (let lineY = commentTop + 14; lineY <= commentBottom; lineY += 16) {
+        doc.moveTo(innerX, lineY).lineTo(innerX + innerWidth, lineY).strokeColor(BORDER).lineWidth(0.5).stroke();
+      }
+
       // Signature line — pinned to the bottom of the slip rather than
       // flowing immediately after the balance line, so it lands in the same
       // place on every slip regardless of how much body text there was.
-      const signatureY = slotY + slotHeight - pad - 14;
-      const signatureLineY = Math.max(y, signatureY);
+      const signatureLineY = signatureY;
       const sigWidth = innerWidth * 0.55;
       doc
         .moveTo(innerX, signatureLineY)
@@ -211,10 +225,10 @@ export function renderBulkReceiptsPdf(entries: BulkReceiptPdfEntry[], school: Sc
         .strokeColor(BORDER)
         .lineWidth(0.5)
         .stroke();
-      doc.font("Helvetica").fontSize(6.5).fillColor(MUTED).text("Bursar's Signature", innerX, signatureLineY + 2, { width: sigWidth });
+      doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text("Bursar's Signature", innerX, signatureLineY + 2, { width: sigWidth });
       doc
         .font("Helvetica")
-        .fontSize(6.5)
+        .fontSize(8.5)
         .fillColor(MUTED)
         .text("Date", innerX + sigWidth + 10, signatureLineY + 2, { width: innerWidth - sigWidth - 10 });
       doc
@@ -237,18 +251,26 @@ export function renderBulkReceiptsPdf(entries: BulkReceiptPdfEntry[], school: Sc
         doc.rotate(-14, { origin: [slotX + contentWidth * 0.5, stampCenterY] });
         doc
           .font("Helvetica-Bold")
-          .fontSize(19)
+          .fontSize(24)
           .fillColor(DUPLICATE_RED)
           .opacity(0.7)
           .text("DUPLICATE COPY", slotX + contentWidth * 0.15, stampCenterY - 12, { width: contentWidth * 0.7, align: "center" });
         doc.opacity(1);
         doc.restore();
-        doc
-          .font("Helvetica")
-          .fontSize(6)
-          .fillColor(DUPLICATE_RED)
-          .text(`Reprint #${entry.printCount}`, slotX + contentWidth - 90, slotY + pad, { width: 80, align: "right" });
       }
+
+      // Print-status tag in the slip's bottom-right corner (below the Date
+      // line) so every physically printed slip says which it is — ORIGINAL on
+      // the first print, "DUPLICATE · print #N" on every one after.
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8.5)
+        .fillColor(entry.isReprint ? DUPLICATE_RED : ORIGINAL_GREEN)
+        .text(entry.isReprint ? `DUPLICATE · PRINT #${entry.printCount}` : "ORIGINAL", innerX, slotY + slotHeight - pad - 2, {
+          width: innerWidth,
+          align: "right",
+          lineBreak: false,
+        });
     });
 
     if (entries.length === 0) {

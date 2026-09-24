@@ -12,6 +12,7 @@ export interface ReceiptPdfData {
   studentName: string;
   admissionNumber: string;
   termName: string;
+  academicSessionName: string;
   amount: number;
   method: string;
   paidAt: Date | null;
@@ -108,6 +109,7 @@ export function renderReceiptPdf(data: ReceiptPdfData): Promise<Buffer> {
     labelValueRow(doc, "Receipt Number", data.receiptNumber);
     if (data.serialNumber) labelValueRow(doc, "Serial No.", data.serialNumber);
     labelValueRow(doc, "Student", `${data.studentName} (${data.admissionNumber})`);
+    labelValueRow(doc, "Session", data.academicSessionName);
     labelValueRow(doc, "Term", data.termName);
     labelValueRow(doc, "Payment Method", data.method);
     if (data.paidAt) labelValueRow(doc, "Paid On", data.paidAt.toDateString());

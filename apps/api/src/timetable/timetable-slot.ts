@@ -535,6 +535,32 @@ export class TimetableSlotService {
   }
 
   /**
+   * One break pseudo-slot per gap between consecutive periods (long break,
+   * weekday short break) — the gap is measured as "this period's end to the
+   * next period's start", so a long and short break configured at the same
+   * point stack into one column, exactly as computePeriodTime stacks them.
+   * Same column rule as apps/web's buildPeriodColumns (no break column after
+   * a day's last period). Weekday breaks are tagged MONDAY only, Friday's
+   * FRIDAY — renderTimetablePdf draws a break column's "BREAK" cell on every
+   * row sharing that column set, same reasoning as buildFullGridFillerSlots.
+   */
+  private buildBreakSlots(structure: PeriodStructure): TimetablePdfSlot[] {
+    const breaks: TimetablePdfSlot[] = [];
+    const days = [
+      { day: DayOfWeek.MONDAY, periods: structure.periodsPerDay },
+      { day: DayOfWeek.FRIDAY, periods: structure.fridayPeriodsPerDay },
+    ];
+    for (const { day, periods } of days) {
+      for (let period = 1; period < periods; period++) {
+        const startTime = computePeriodTime(structure, day, period).endTime;
+        const endTime = computePeriodTime(structure, day, period + 1).startTime;
+        if (startTime < endTime) breaks.push({ dayOfWeek: day, startTime, endTime, lines: [], isBreak: true });
+      }
+    }
+    return breaks;
+  }
+
+  /**
    * A4-landscape PDF of the same rows `findAll` would show on screen —
    * reuses that method verbatim (including its parent/category-group
    * scoping) so a download never exposes anything the requester couldn't
@@ -625,7 +651,7 @@ export class TimetableSlotService {
       const structure = await this.resolvePeriodStructure([...groups][0]!);
       if (structure) {
         const existingKeys = new Set(slots.map((s) => `${s.dayOfWeek}|${s.startTime}|${s.endTime}`));
-        for (const filler of this.buildFullGridFillerSlots(structure)) {
+        for (const filler of [...this.buildFullGridFillerSlots(structure), ...this.buildBreakSlots(structure)]) {
           const key = `${filler.dayOfWeek}|${filler.startTime}|${filler.endTime}`;
           if (existingKeys.has(key)) continue;
           existingKeys.add(key);

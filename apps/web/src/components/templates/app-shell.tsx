@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   GraduationCap,
   Users,
+  UsersRound,
   Mail,
   BookOpen,
   CalendarClock,
@@ -97,6 +98,15 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
+      },
+      {
+        href: "/parents",
+        label: "Parents",
+        icon: UsersRound,
+        // Admin edits; Registrar/Bursar get a view-only list (mirrors the
+        // "read ParentProfile" grant in ability.factory.ts).
+        visible: ({ isAdmin, user }) =>
+          isAdmin || ["REGISTRAR", "BURSAR"].some((t) => user.assignmentTypes.includes(t)),
       },
       {
         href: "/invitations",

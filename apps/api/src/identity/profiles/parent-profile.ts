@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { Role } from "@prisma/client";
+import { Prisma, Role } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../../casl/policies.guard";
@@ -23,6 +23,25 @@ import { AuthService } from "../../auth/auth.service";
 import { UserService } from "../users/user.service";
 import { UpdateParentProfileDto, UpdateParentEmailDto } from "./dto/parent-profile.dto";
 
+// Wards are included so the Admin-facing /parents page can show each
+// parent's children and their current class without an N+1 fetch.
+const PARENT_WITH_WARDS_INCLUDE = {
+  user: true,
+  wards: {
+    include: {
+      student: {
+        select: {
+          id: true,
+          admissionNumber: true,
+          status: true,
+          user: { select: { firstName: true, lastName: true, middleName: true } },
+          currentClass: { select: { id: true, name: true, classLevel: { select: { name: true, order: true } } } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.ParentProfileInclude;
+
 @Injectable()
 export class ParentProfileService {
   constructor(
@@ -34,27 +53,30 @@ export class ParentProfileService {
   findAll(filters: { emailBounced?: boolean } = {}) {
     return this.prisma.parentProfile.findMany({
       where: { emailBounced: filters.emailBounced },
-      include: { user: true },
+      include: PARENT_WITH_WARDS_INCLUDE,
+      orderBy: [{ user: { lastName: "asc" } }, { user: { firstName: "asc" } }],
     });
   }
 
   findOne(id: string) {
-    return this.prisma.parentProfile.findUniqueOrThrow({ where: { id }, include: { user: true } });
+    return this.prisma.parentProfile.findUniqueOrThrow({ where: { id }, include: PARENT_WITH_WARDS_INCLUDE });
   }
 
   findByUserId(userId: string) {
     return this.prisma.parentProfile.findUnique({ where: { userId } });
   }
 
-  // `phone` lives on User, not ParentProfile — written in the same
-  // transaction as the ParentProfile fields so a self-service edit (parent
-  // updating their own contact info) or an Admin edit stays atomic.
+  // `phone` and the name fields live on User, not ParentProfile — written
+  // in the same transaction as the ParentProfile fields so a self-service
+  // edit (parent updating their own contact info) or an Admin edit stays
+  // atomic.
   async update(id: string, dto: UpdateParentProfileDto) {
-    const { phone, ...profileFields } = dto;
+    const { phone, firstName, lastName, middleName, ...profileFields } = dto;
+    const userFields = { phone, firstName, lastName, middleName };
     return this.prisma.$transaction(async (tx) => {
       const profile = await tx.parentProfile.update({ where: { id }, data: profileFields });
-      if (phone !== undefined) {
-        await tx.user.update({ where: { id: profile.userId }, data: { phone } });
+      if (Object.values(userFields).some((v) => v !== undefined)) {
+        await tx.user.update({ where: { id: profile.userId }, data: userFields });
       }
       return tx.parentProfile.findUniqueOrThrow({ where: { id }, include: { user: true } });
     });
@@ -146,8 +168,10 @@ export class ParentProfileController {
     private readonly abilityFactory: AbilityFactory,
   ) {}
 
+  // "read" rather than "manage" so Registrar/Bursar get the view-only
+  // /parents directory; Admin/Super-Admin satisfy it via "manage".
   @Get()
-  @CheckPolicies((ability) => ability.can("manage", "ParentProfile"))
+  @CheckPolicies((ability) => ability.can("read", "ParentProfile"))
   findAll(@Query("emailBounced") emailBounced?: string) {
     return this.service.findAll({ emailBounced: emailBounced === undefined ? undefined : emailBounced === "true" });
   }
@@ -156,13 +180,14 @@ export class ParentProfileController {
   async findOne(@Param("id") id: string, @CurrentUser() user: RequestUser) {
     const profile = await this.service.findOne(id);
     const ability = this.abilityFactory.createForUser(user);
-    if (!ability.can("manage", "ParentProfile") && profile.userId !== user.id) {
+    if (!ability.can("read", "ParentProfile") && profile.userId !== user.id) {
       throw new ForbiddenException("Insufficient permissions");
     }
     return profile;
   }
 
   @Patch(":id")
+  @Audited("ParentProfile", "parentProfile")
   async update(
     @Param("id") id: string,
     @Body() dto: UpdateParentProfileDto,
@@ -170,10 +195,24 @@ export class ParentProfileController {
   ) {
     const profile = await this.service.findOne(id);
     const ability = this.abilityFactory.createForUser(user);
-    if (!ability.can("manage", "ParentProfile") && profile.userId !== user.id) {
+    const canManage = ability.can("manage", "ParentProfile");
+    if (!canManage && profile.userId !== user.id) {
       throw new ForbiddenException("Insufficient permissions");
     }
-    return this.service.update(id, dto);
+    // A self-service edit may only change contact info — the name fields
+    // are Admin/Super-Admin data (same narrowing as StaffProfileController.
+    // update), even though the ownership check above lets the request through.
+    return this.service.update(
+      id,
+      canManage
+        ? dto
+        : {
+            phone: dto.phone,
+            address: dto.address,
+            occupation: dto.occupation,
+            relationshipToStudentDefault: dto.relationshipToStudentDefault,
+          },
+    );
   }
 
   // Deliberately its own route/ability rather than folded into the general

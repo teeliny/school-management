@@ -36,7 +36,7 @@ export class ReceiptProcessor extends WorkerHost {
             invoice: {
               include: {
                 student: { include: { user: true } },
-                term: true,
+                term: { include: { academicSession: true } },
                 lineItems: true,
                 payments: true,
               },
@@ -69,6 +69,7 @@ export class ReceiptProcessor extends WorkerHost {
       studentName: formatPersonName(invoice.student.user),
       admissionNumber: invoice.student.admissionNumber,
       termName: invoice.term.name,
+      academicSessionName: invoice.term.academicSession.name,
       amount: Number(payment.amount),
       method: payment.method,
       paidAt: payment.paidAt,

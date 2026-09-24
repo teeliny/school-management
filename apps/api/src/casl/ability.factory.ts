@@ -172,6 +172,9 @@ export class AbilityFactory {
       // once from the student details page (ParentProfileController's
       // PATCH .../email), nothing else about ParentProfile.
       can("updateEmail", "ParentProfile");
+      // View-only access to the /parents directory (GET /parent-profiles)
+      // — editing parent details stays Admin/Super-Admin ("manage").
+      can("read", "ParentProfile");
       can("manage", "TimetableSlot");
       // Needed to pick a staff member for a TimetableSlot and to build the
       // roster for a STAFF-type attendance register below — StaffProfile
@@ -225,6 +228,11 @@ export class AbilityFactory {
       // PRD FR7.7, Phase 5 Slice 2b: gateway credentials configuration is
       // part of the same Bursar/Super-Admin-only fee/finance domain.
       can("manage", "PaymentGatewayConfig");
+
+      // View-only access to the /parents directory (GET /parent-profiles),
+      // e.g. to find who to contact about a ward's fees — same grant as
+      // Registrar above; editing stays Admin/Super-Admin ("manage").
+      can("read", "ParentProfile");
     }
 
     // PRD FR7.4: a parent may read (never write) invoices/payments/receipts

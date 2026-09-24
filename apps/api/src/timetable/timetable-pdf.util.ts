@@ -35,11 +35,26 @@ export interface TimetablePdfSlot {
   // whole point is blocking the AI solver from scheduling a real subject
   // there). Styled distinctly below so it's never mistaken for one.
   isActivity?: boolean;
+  // The gap between two periods (long break / short break) — derived from
+  // the group's PeriodStructure (TimetableSlotService.buildBreakSlots), never
+  // a real TimetableSlot. Only needs to exist once per column (tagged MONDAY
+  // for weekdays, FRIDAY for Friday's own), since a break column renders
+  // "BREAK" in every day's cell regardless of which day's slot created it.
+  isBreak?: boolean;
 }
 
 interface Column {
   startTime: string;
   endTime: string;
+  isBreak: boolean;
+}
+
+// A break column is drawn at this fraction of a period column's width, same
+// idea as the on-screen grid's narrower Break column.
+const BREAK_COLUMN_WEIGHT = 0.45;
+
+function columnWeight(col: Column): number {
+  return col.isBreak ? BREAK_COLUMN_WEIGHT : 1;
 }
 
 function toMinutes(time: string): number {
@@ -52,7 +67,9 @@ function buildColumns(rows: TimetablePdfSlot[]): Column[] {
   const seen = new Map<string, Column>();
   for (const row of rows) {
     const key = `${row.startTime}-${row.endTime}`;
-    if (!seen.has(key)) seen.set(key, { startTime: row.startTime, endTime: row.endTime });
+    const existing = seen.get(key);
+    if (!existing) seen.set(key, { startTime: row.startTime, endTime: row.endTime, isBreak: row.isBreak === true });
+    else if (row.isBreak) existing.isBreak = true;
   }
   return [...seen.values()].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
 }
@@ -149,14 +166,29 @@ export function renderTimetablePdf(
     // a school running the same period times every day shouldn't get a
     // redundant duplicate header.
     const fridayNeedsOwnRow = fridayColumns.length > 0 && !sameColumns(fridayColumns, columns.slice(0, fridayColumns.length));
-    const columnCount = Math.max(columns.length, fridayColumns.length, 1);
 
     const dayLabelWidth = 76;
     const contentLeft = doc.page.margins.left;
     const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const gridLeft = contentLeft + dayLabelWidth;
     const gridWidth = contentWidth - dayLabelWidth;
-    const columnWidth = gridWidth / columnCount;
+    // Columns are laid out left-to-right by weight (break columns narrower
+    // than period columns) against one shared unit width, so a Friday row
+    // with fewer columns stops short rather than stretching its cells wider
+    // than every other day's.
+    const totalWeight = (cols: Column[]): number => cols.reduce((sum, col) => sum + columnWeight(col), 0);
+    const unitWidth = gridWidth / Math.max(totalWeight(columns), totalWeight(fridayColumns), 1);
+    function layoutColumns(cols: Column[]): { x: number; width: number }[] {
+      let x = gridLeft;
+      return cols.map((col) => {
+        const width = columnWeight(col) * unitWidth;
+        const cell = { x, width };
+        x += width;
+        return cell;
+      });
+    }
+    const columnLayout = layoutColumns(columns);
+    const fridayColumnLayout = layoutColumns(fridayColumns);
 
     const headerRowHeight = 18;
     const headerRowCount = 1 + (fridayNeedsOwnRow ? 1 : 0);
@@ -171,7 +203,7 @@ export function renderTimetablePdf(
     const gridBottom = gridTop + availableHeight * GRID_HEIGHT_FRACTION;
     const dayRowHeight = (gridBottom - gridTop - headerRowHeight * headerRowCount) / days.length;
 
-    function drawColumnHeaderRow(y: number, cols: Column[], label: string | null): void {
+    function drawColumnHeaderRow(y: number, cols: Column[], layout: { x: number; width: number }[], label: string | null): void {
       // No solid background fill here — an opaque rect over the header
       // strip would blot out the watermark underneath it, same reasoning
       // as the per-slot cells below.
@@ -184,24 +216,35 @@ export function renderTimetablePdf(
           .text(label.toUpperCase(), contentLeft, y + headerRowHeight / 2 - 4, { width: dayLabelWidth - 8 });
       }
       for (const [i, col] of cols.entries()) {
-        const x = gridLeft + i * columnWidth;
+        const { x, width } = layout[i]!;
+        // A break column is too narrow for "10:40–11:10" on one line, so its
+        // start/end are stacked in a smaller font instead of letting pdfkit
+        // wrap it wherever it likes (which spilled onto the header border).
+        if (col.isBreak) {
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(5.5)
+            .fillColor(MUTED)
+            .text(`${col.startTime}\n${col.endTime}`, x + 1, y + headerRowHeight / 2 - 6, { width: width - 2, align: "center", lineGap: 0 });
+          continue;
+        }
         doc
           .font("Helvetica-Bold")
           .fontSize(7.5)
           .fillColor(MUTED)
-          .text(`${col.startTime}–${col.endTime}`, x + 2, y + headerRowHeight / 2 - 4, { width: columnWidth - 4, align: "center" });
+          .text(`${col.startTime}–${col.endTime}`, x + 2, y + headerRowHeight / 2 - 4, { width: width - 4, align: "center" });
       }
     }
 
     // Shared Mon-Thu (or every day, if Friday matches) period-range header.
-    drawColumnHeaderRow(gridTop, columns, null);
+    drawColumnHeaderRow(gridTop, columns, columnLayout, null);
     let y = gridTop + headerRowHeight;
 
     doc.rect(gridLeft, y, gridWidth, gridBottom - y).strokeColor(BORDER).lineWidth(0.75).stroke();
 
     for (const day of days) {
       if (day === "FRIDAY" && fridayNeedsOwnRow) {
-        drawColumnHeaderRow(y, fridayColumns, "Fri times");
+        drawColumnHeaderRow(y, fridayColumns, fridayColumnLayout, "Fri times");
         y += headerRowHeight;
       }
 
@@ -225,15 +268,40 @@ export function renderTimetablePdf(
       // zero Friday periods would otherwise get 0 fridayColumns and render
       // that whole row with no cells at all, rather than the empty-but-
       // bordered periods every other day gets.
-      const dayColumns = day === "FRIDAY" && fridayColumns.length > 0 ? fridayColumns : columns;
+      const useFridayColumns = day === "FRIDAY" && fridayColumns.length > 0;
+      const dayColumns = useFridayColumns ? fridayColumns : columns;
+      const dayLayout = useFridayColumns ? fridayColumnLayout : columnLayout;
       const daySlots = slots.filter((s) => s.dayOfWeek === day);
 
       // Every period column gets its own bordered cell, occupied or not —
       // previously only columns with an actual slot were drawn, so a free
       // period looked like a gap in the grid rather than an empty period.
       for (const [columnIndex, col] of dayColumns.entries()) {
-        const x = gridLeft + columnIndex * columnWidth;
+        const { x, width: columnWidth } = dayLayout[columnIndex]!;
         const cellPad = 2;
+
+        // Break columns: a dotted cell with "BREAK" written vertically (the
+        // column is too narrow for it horizontally), on every day's row.
+        if (col.isBreak) {
+          doc.dash(1, { space: 1.5 });
+          doc
+            .rect(x + cellPad, y + cellPad, columnWidth - cellPad * 2, dayRowHeight - cellPad * 2)
+            .strokeColor(BORDER)
+            .lineWidth(0.5)
+            .stroke();
+          doc.undash();
+          const centerX = x + columnWidth / 2;
+          const centerY = y + dayRowHeight / 2;
+          doc.save();
+          doc.rotate(-90, { origin: [centerX, centerY] });
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(7.5)
+            .fillColor(MUTED)
+            .text("BREAK", centerX - 30, centerY - 3.5, { width: 60, align: "center", characterSpacing: 1.5, lineBreak: false });
+          doc.restore();
+          continue;
+        }
 
         // No solid background fill — an opaque rect here would blot out
         // the watermark underneath it, and a filled cell for nearly every

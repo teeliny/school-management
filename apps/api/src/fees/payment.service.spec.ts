@@ -837,7 +837,7 @@ function buildBulkPayment(overrides: Record<string, unknown> = {}) {
       totalAmount: 5000,
       lineItems: [],
       payments: [{ status: "SUCCESSFUL", amount: 3000 }],
-      term: { name: "First Term" },
+      term: { name: "First Term", academicSession: { name: "2025/2026" } },
       student: { admissionNumber: "ADM001", user: { firstName: "Ada", lastName: "Lovelace" } },
     },
     ...overrides,
