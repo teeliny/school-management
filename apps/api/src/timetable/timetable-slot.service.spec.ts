@@ -58,6 +58,13 @@ describe("TimetableSlotService — double-booking conflicts", () => {
     expect(prisma.timetableSlot.create).not.toHaveBeenCalled();
   });
 
+  it("rejects a slot for a group subject — only its child subjects are timetabled", async () => {
+    prisma.subject.findUnique.mockResolvedValueOnce({ isGroup: true });
+
+    await expect(service.create(buildDto(), "user-1")).rejects.toThrow(/group subject/);
+    expect(prisma.timetableSlot.create).not.toHaveBeenCalled();
+  });
+
   it("allows back-to-back (touching) times for the same teacher — not an overlap", async () => {
     prisma.timetableSlot.findMany.mockResolvedValueOnce([
       { id: "existing-1", startTime: "08:00", endTime: "08:40" },

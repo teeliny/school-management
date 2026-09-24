@@ -29,6 +29,8 @@ interface SubjectOption {
   id: string;
   name: string;
   code: string;
+  isGroup: boolean;
+  childSubjects?: { id: string; name: string; code: string }[];
 }
 interface StaffOption {
   id: string;
@@ -162,6 +164,16 @@ export function TimetableSlotForm({
 
   const disabled = classArmIds.length === 0 || !academicSessionId || !termId;
 
+
+  // A group subject (isGroup) is never itself timetabled — only its
+  // childSubjects are (CLAUDE.md; same flatMap as gradebook/page.tsx and
+  // staff-assignment-form.tsx). GET /subjects nests children under the group
+  // rather than listing them flat, so they're expanded here.
+  const selectableSubjects = subjects.flatMap((subject) =>
+    subject.isGroup && subject.childSubjects && subject.childSubjects.length > 0
+      ? subject.childSubjects.map((child) => ({ id: child.id, label: `${child.name} (${subject.name})` }))
+      : [{ id: subject.id, label: `${subject.name} (${subject.code})` }],
+  );
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
       {error && <p className="text-sm text-danger">{error}</p>}
@@ -193,9 +205,9 @@ export function TimetableSlotForm({
             <SelectValue placeholder="Select subject" />
           </SelectTrigger>
           <SelectContent>
-            {subjects.map((s) => (
+            {selectableSubjects.map((s) => (
               <SelectItem key={s.id} value={s.id}>
-                {s.name} ({s.code})
+                {s.label}
               </SelectItem>
             ))}
           </SelectContent>

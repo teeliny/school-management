@@ -229,7 +229,20 @@ export class TimetableSlotService {
     }
   }
 
+  /**
+   * Backstop for the web picker's group-subject flattening — a group subject
+   * (isGroup) is never itself timetabled, only its childSubjects are (same
+   * rule and same backstop as ScoreEntryService.enter).
+   */
+  private async assertNotGroupSubject(subjectId: string) {
+    const subject = await this.prisma.subject.findUnique({ where: { id: subjectId }, select: { isGroup: true } });
+    if (subject?.isGroup) {
+      throw new BadRequestException("Cannot timetable a group subject — add a slot for one of its child subjects instead");
+    }
+  }
+
   async create(dto: CreateTimetableSlotDto, userId: string) {
+    await this.assertNotGroupSubject(dto.subjectId);
     await this.assertNoConflicts(dto);
     return this.prisma.timetableSlot.create({
       data: {
@@ -244,6 +257,7 @@ export class TimetableSlotService {
 
   async update(id: string, dto: UpdateTimetableSlotDto) {
     const existing = await this.prisma.timetableSlot.findUniqueOrThrow({ where: { id } });
+    if (dto.subjectId && dto.subjectId !== existing.subjectId) await this.assertNotGroupSubject(dto.subjectId);
     await this.assertNoConflicts({ ...existing, ...dto }, id);
     return this.prisma.timetableSlot.update({ where: { id }, data: dto });
   }
