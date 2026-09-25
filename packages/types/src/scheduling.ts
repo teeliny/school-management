@@ -445,13 +445,13 @@ export interface SubjectDayPeriodRequirement {
  * day, range) count as an equality, so the subject can't also appear there
  * any additional times. e.g.
  *   "MONDAY:2-4:LITERACY"                          — one Literacy in the Monday morning.
- *   "THURSDAY:2-4:LITERACY:Textbook"                — ...and on Thursday, labelled "Literacy Textbook".
+ *   "THURSDAY:2-4:LITERACY:Textbook"                — ...and on Thursday, labelled "LITERACY(Textbook)".
  *   "FRIDAY:1-5:CIRCLE TIME"                        — Circle Time on Friday.
  * A subject named in any entry ignores SUBJECT_ALLOWED_DAYS for these arms
  * (its requirements already pin where it goes, and SUBJECT_ALLOWED_DAYS is
  * shared with PRIMARY by name — e.g. Creative Writing is Friday-only for
  * Basic but Thursday for Nursery). `labelSuffix` is display-only: the grid
- * and PDF append it to the subject name for any slot of that subject that
+ * and PDF append it in brackets to the subject name for any slot of that subject that
  * falls in the entry's day/range (see findSubjectLabelSuffix) — nothing is
  * persisted on TimetableSlot, so a manually-moved slot relabels itself.
  */

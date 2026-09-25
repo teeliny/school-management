@@ -70,6 +70,10 @@ interface ConflictCheckInput {
 }
 
 
+function withLabelSuffix(subjectName: string, suffix: string | undefined): string {
+  return suffix ? `${subjectName}(${suffix})` : subjectName;
+}
+
 function isEarlyYearsCategory(category: ClassLevelCategory): boolean {
   return category === ClassLevelCategory.NURSERY || category === ClassLevelCategory.RECEPTION;
 }
@@ -541,7 +545,7 @@ export class TimetableSlotService {
 
   /**
    * EARLY_YEARS_SUBJECT_DAY_PERIODS' display suffix (e.g. Thursday's
-   * "Literacy Textbook") for a NURSERY/RECEPTION slot — derived from the
+   * "LITERACY(Textbook)") for a NURSERY/RECEPTION slot — derived from the
    * slot's current day/period rather than stored, same as the on-screen grid
    * (see parseSubjectDayPeriodRequirements).
    */
@@ -704,7 +708,7 @@ export class TimetableSlotService {
       // vocabulary. Shown in full, wrapping onto as many lines as needed
       // (renderTimetablePdf never truncates).
       lines: [
-        [row.subject.name.trim(), labelSuffixFor(row)].filter(Boolean).join(" "),
+        withLabelSuffix(row.subject.name.trim(), labelSuffixFor(row)),
         filters.classArmId ? formatPersonName(row.staff.user) : row.classArm.displayName,
       ],
     }));

@@ -406,7 +406,7 @@ function SlotCard({
 }: {
   slot: TimetableSlotItem;
   // Subject code/name plus any EARLY_YEARS_SUBJECT_DAY_PERIODS suffix
-  // (e.g. "Literacy Textbook") — see slotSubjectLabel.
+  // (e.g. "LITERACY(Textbook)") — see slotSubjectLabel.
   label: string;
   canManage: boolean;
   expanded: boolean;

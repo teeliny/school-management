@@ -171,7 +171,7 @@ export function specialPeriodsForArm(
   );
 }
 
-/** A slot's display name, with its EARLY_YEARS_SUBJECT_DAY_PERIODS suffix (e.g. "Literacy Textbook") appended where one applies. */
+/** A slot's display name, with its EARLY_YEARS_SUBJECT_DAY_PERIODS suffix appended in brackets where one applies, e.g. "LITERACY(Textbook)". */
 export function slotSubjectLabel(
   subjectLabel: string,
   subjectName: string,
@@ -182,5 +182,5 @@ export function slotSubjectLabel(
 ): string {
   if (!isEarlyYears(classLevel)) return subjectLabel;
   const suffix = findSubjectLabelSuffix(requirements, subjectName, day, periodIndex);
-  return suffix ? `${subjectLabel} ${suffix}` : subjectLabel;
+  return suffix ? `${subjectLabel}(${suffix})` : subjectLabel;
 }
