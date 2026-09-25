@@ -19,15 +19,19 @@ import {
   DAYS_OF_WEEK,
   normalizeSubjectName,
   parseSpecialPeriods,
+  parseSubjectDayPeriodRequirements,
   parseSubjectDayRestrictions,
   parseSubjectPeriodBlockCounts,
   parseSyncAllSubjectsPoolEntries,
   QUEUE_NAMES,
+  specialPeriodAppliesTo,
   timeRangesOverlap,
   type ClassLevelCategoryGroup,
   type DayOfWeek,
   type PeriodStructure,
   type SchedulingSolveDispatchJob,
+  type SpecialPeriod,
+  type SubjectDayPeriodRequirement,
 } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -106,6 +110,18 @@ interface ResolvedSubject {
   // with the same teacher at the same (day, period) — see
   // class_timetable.py's staff_subject_keys constraint for the enforcement.
   maxConcurrentArms: number;
+  // EARLY_YEARS_SUBJECT_DAY_PERIODS (NURSERY/RECEPTION arms only) — each
+  // entry requires EXACTLY `count` of this subject's occurrences within
+  // that day's [startPeriod, endPeriod] range (see
+  // parseSubjectDayPeriodRequirements). Empty for every other arm/subject.
+  dayPeriodRequirements: DayPeriodRequirementPayload[];
+}
+
+interface DayPeriodRequirementPayload {
+  day: DayOfWeek;
+  startPeriod: number;
+  endPeriod: number;
+  count: number;
 }
 
 /** Parsed once per group by resolveSubjectDayPreferences — see its own comment. */
@@ -143,6 +159,13 @@ interface SubjectDayPreferences {
   // resolveSubjectsForClassArm, matching ResolvedSubject.maxConcurrentArms'
   // own default.
   maxConcurrentArmsBySubject: Map<string, number>;
+  // EARLY_YEARS_SUBJECT_DAY_PERIODS — see parseSubjectDayPeriodRequirements.
+  // Consulted only for NURSERY/RECEPTION arms, same pool split as
+  // earlyYearsPeriodBlockRequiredCountBySubject above.
+  earlyYearsDayPeriodRequirements: SubjectDayPeriodRequirement[];
+  // EARLY_YEARS_LAST_PERIOD_BLOCK_ALTERNATE_ORDER — see
+  // ClassArmPayload.alternatePeriodBlockOrder.
+  earlyYearsAlternatePeriodBlockOrder: boolean;
 }
 
 interface ClassArmPayload {
@@ -167,6 +190,11 @@ interface ClassArmPayload {
   // disables the block entirely for this arm (today's behavior, no block
   // reserved).
   lastPeriodBlockDays: DayOfWeek[];
+  // When true, no block subject may occupy the SAME block period on two
+  // consecutive block days — for Nursery/Reception's 1 Literacy + 1
+  // Numeracy per day in periods 8-9 this alternates which comes first
+  // (Lit-Num, Num-Lit, ...) instead of the same order every day.
+  alternatePeriodBlockOrder: boolean;
 }
 
 interface GroupPayload extends PeriodStructure {
@@ -373,11 +401,13 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       // School-wide fixed blocks (e.g. Wednesday Sports/Extra-Curricular) —
       // same for every class arm in the group, unlike the per-arm/per-staff
       // TimetableSlot-based blocks below, so resolved once per group.
-      const specialPeriodBlocks = await this.resolveSpecialPeriodBlocks(group);
-      // NURSERY/RECEPTION-only counterpart (e.g. Thursday's Textbooks block)
-      // — merged in only for early-years arms below, never for CRECHE/PRIMARY
-      // arms sharing this same group's solve.
-      const earlyYearsSpecialPeriodBlocks = await this.resolveEarlyYearsSpecialPeriodBlocks(group);
+      // Entries may be scoped to specific ClassLevels ("...@RECEPTION 1,
+      // RECEPTION 2" — see SpecialPeriod.classLevelNames), so they're parsed
+      // once here and folded into blocks per arm below.
+      const specialPeriods = await this.resolveSpecialPeriods(group, "SPECIAL_PERIODS");
+      // NURSERY/RECEPTION-only counterpart — merged in only for early-years
+      // arms below, never for CRECHE/PRIMARY arms sharing this same group's solve.
+      const earlyYearsSpecialPeriods = await this.resolveSpecialPeriods(group, "EARLY_YEARS_SPECIAL_PERIODS");
       const subjectDayPreferences = await this.resolveSubjectDayPreferences(group);
       const syncedElectiveClassLevelIds = syncSssElectiveBlocksAcrossArms
         ? await this.resolveSyncedElectiveClassLevelIds(arms, term.academicSessionId, syncSssElectiveBlocksMaxArmCount)
@@ -409,10 +439,14 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           classLevelId: arm.classLevelId,
           subjects,
           blockedPeriods: this.mergeBlockedPeriods(
-            this.mergeBlockedPeriods(this.computeBlockedPeriods(structure, armSlots), specialPeriodBlocks),
-            isEarlyYearsCategory ? earlyYearsSpecialPeriodBlocks : {},
+            this.computeBlockedPeriods(structure, armSlots),
+            this.specialPeriodsToBlocks(
+              [...specialPeriods, ...(isEarlyYearsCategory ? earlyYearsSpecialPeriods : [])],
+              arm.classLevel.name,
+            ),
           ),
           lastPeriodBlockDays,
+          alternatePeriodBlockOrder: isEarlyYearsCategory && subjectDayPreferences.earlyYearsAlternatePeriodBlockOrder,
         });
 
         for (const subject of subjects) {
@@ -1243,6 +1277,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           : isEarlyYears
             ? (subjectDayPreferences.earlyYearsPeriodBlockRequiredCountBySubject.get(nameKey) ?? 0)
             : 0;
+      const dayPeriodRequirements = isEarlyYears
+        ? this.aggregateDayPeriodRequirements(subjectDayPreferences.earlyYearsDayPeriodRequirements, nameKey)
+        : [];
       resolved.push({
         subjectId: subject.id,
         subjectName: subject.name,
@@ -1250,11 +1287,16 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         periodsPerWeek: subject.periodsPerWeek,
         requiresCalculation: subject.requiresCalculation,
         concurrencyGroupId: subject.concurrencyGroupId,
-        allowedDays: subjectDayPreferences.allowedDaysBySubject.get(nameKey),
+        // A subject pinned by EARLY_YEARS_SUBJECT_DAY_PERIODS ignores the
+        // group-wide (PRIMARY-shared, name-keyed) SUBJECT_ALLOWED_DAYS — e.g.
+        // Creative Writing stays Friday-only for Basic but moves to Thursday
+        // for Nursery. See parseSubjectDayPeriodRequirements.
+        allowedDays: dayPeriodRequirements.length > 0 ? undefined : subjectDayPreferences.allowedDaysBySubject.get(nameKey),
         preferMorning: subjectDayPreferences.preferMorningSubjects.has(nameKey),
         preferAfternoon: subjectDayPreferences.preferAfternoonSubjects.has(nameKey),
         periodBlockRequiredCount: Math.min(rawPeriodBlockCount, subject.periodsPerWeek),
         maxConcurrentArms: subjectDayPreferences.maxConcurrentArmsBySubject.get(nameKey) ?? 1,
+        dayPeriodRequirements,
       });
     }
     return resolved;
@@ -1287,33 +1329,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
-   * School-wide fixed non-subject blocks (SPECIAL_PERIODS, e.g. Wednesday
-   * Sports/Extra-Curricular) — parsed once per group and applied to every
-   * class arm identically, unlike the per-arm TimetableSlot-based blocks
-   * computeBlockedPeriods produces.
+   * Fixed non-subject blocks — SPECIAL_PERIODS (every arm in the group, e.g.
+   * Wednesday Sports) or EARLY_YEARS_SPECIAL_PERIODS (the NURSERY/RECEPTION-
+   * only counterpart; the caller decides which arms get it). Same
+   * "day:startPeriod-endPeriod:label[@ClassLevel,...]" format for both;
+   * folded into each arm's blockedPeriods by specialPeriodsToBlocks, unlike
+   * the per-arm TimetableSlot-based blocks computeBlockedPeriods produces.
    */
-  private async resolveSpecialPeriodBlocks(group: ClassLevelCategoryGroup): Promise<Record<string, number[]>> {
-    return this.resolveSpecialPeriodBlocksByKey(group, "SPECIAL_PERIODS");
-  }
-
-  /**
-   * EARLY_YEARS_SPECIAL_PERIODS — the NURSERY/RECEPTION-only counterpart to
-   * SPECIAL_PERIODS above (e.g. Thursday's "Textbooks" block, periods 2-7).
-   * Same "day:startPeriod-endPeriod:label" format, but merged into
-   * blockedPeriods only for NURSERY/RECEPTION class arms (see the
-   * classArmPayloads loop), never for CRECHE/PRIMARY arms sharing this same
-   * CRECHE_NURSERY_PRIMARY group solve.
-   */
-  private async resolveEarlyYearsSpecialPeriodBlocks(group: ClassLevelCategoryGroup): Promise<Record<string, number[]>> {
-    return this.resolveSpecialPeriodBlocksByKey(group, "EARLY_YEARS_SPECIAL_PERIODS");
-  }
-
-  private async resolveSpecialPeriodBlocksByKey(group: ClassLevelCategoryGroup, key: string): Promise<Record<string, number[]>> {
+  private async resolveSpecialPeriods(group: ClassLevelCategoryGroup, key: string): Promise<SpecialPeriod[]> {
     const row = await this.prisma.schedulingConstraint.findFirst({
       where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, key, isActive: true },
     });
+    return parseSpecialPeriods(row?.value);
+  }
+
+  private specialPeriodsToBlocks(specialPeriods: SpecialPeriod[], classLevelName: string): Record<string, number[]> {
     const blocked = new Map<DayOfWeek, Set<number>>(DAYS_OF_WEEK.map((day) => [day, new Set<number>()]));
-    for (const special of parseSpecialPeriods(row?.value)) {
+    for (const special of specialPeriods) {
+      if (!specialPeriodAppliesTo(special, classLevelName)) continue;
       const daySet = blocked.get(special.day);
       if (!daySet) continue;
       for (let period = special.startPeriod; period <= special.endPeriod; period++) daySet.add(period);
@@ -1322,12 +1355,32 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
+   * Collapses one subject's EARLY_YEARS_SUBJECT_DAY_PERIODS entries into
+   * per-(day, range) counts — N identical entries mean "exactly N there"
+   * (see parseSubjectDayPeriodRequirements).
+   */
+  private aggregateDayPeriodRequirements(
+    requirements: SubjectDayPeriodRequirement[],
+    subjectNameKey: string,
+  ): DayPeriodRequirementPayload[] {
+    const byKey = new Map<string, DayPeriodRequirementPayload>();
+    for (const r of requirements) {
+      if (normalizeSubjectName(r.subjectName) !== subjectNameKey) continue;
+      const key = `${r.day}:${r.startPeriod}-${r.endPeriod}`;
+      const existing = byKey.get(key);
+      if (existing) existing.count++;
+      else byKey.set(key, { day: r.day, startPeriod: r.startPeriod, endPeriod: r.endPeriod, count: 1 });
+    }
+    return [...byKey.values()];
+  }
+
+  /**
    * SUBJECT_ALLOWED_DAYS (hard) / SUBJECT_PREFER_MORNING / SUBJECT_PREFER_AFTERNOON
    * (both soft, mutually exclusive per subject), CLASS_TIMETABLE only — all
    * keyed by Subject.name (normalizeSubjectName), not subjectId, since the
    * generic SchedulingConstraint editor has no subject picker (see
    * parseSubjectDayRestrictions' comment in @school/types). Parsed once per
-   * group, same as resolveSpecialPeriodBlocks, then looked up per resolved
+   * group, same as resolveSpecialPeriods, then looked up per resolved
    * subject in resolveSubjectsForClassArm. The Python solver enforces
    * allowedDays as a hard per-day filter, preferMorning as an
    * objective-function preference for periods at/before breakAfterPeriod,
@@ -1350,6 +1403,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
             "EARLY_YEARS_LAST_PERIOD_BLOCK_SUBJECT_COUNTS",
             "EARLY_YEARS_LAST_PERIOD_BLOCK_DAYS",
             "SUBJECT_MAX_CONCURRENT_ARMS",
+            "EARLY_YEARS_SUBJECT_DAY_PERIODS",
+            "EARLY_YEARS_LAST_PERIOD_BLOCK_ALTERNATE_ORDER",
           ],
         },
         isActive: true,
@@ -1400,6 +1455,12 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       maxConcurrentArmsBySubject.set(normalizeSubjectName(subjectName), count);
     }
 
+    const earlyYearsDayPeriodRequirements = parseSubjectDayPeriodRequirements(
+      rows.find((r) => r.key === "EARLY_YEARS_SUBJECT_DAY_PERIODS")?.value,
+    );
+    const earlyYearsAlternatePeriodBlockOrder =
+      rows.find((r) => r.key === "EARLY_YEARS_LAST_PERIOD_BLOCK_ALTERNATE_ORDER")?.value === true;
+
     return {
       allowedDaysBySubject,
       preferMorningSubjects,
@@ -1410,6 +1471,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       earlyYearsPeriodBlockDays,
       periodBlockPeriods,
       maxConcurrentArmsBySubject,
+      earlyYearsDayPeriodRequirements,
+      earlyYearsAlternatePeriodBlockOrder,
     };
   }
 

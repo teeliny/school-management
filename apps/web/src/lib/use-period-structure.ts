@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { parseSpecialPeriods, type ClassLevelCategoryGroup, type PeriodStructure, type SpecialPeriod } from "@school/types";
+import {
+  findSubjectLabelSuffix,
+  parseSpecialPeriods,
+  parseSubjectDayPeriodRequirements,
+  specialPeriodAppliesTo,
+  type ClassLevelCategoryGroup,
+  type DayOfWeek,
+  type PeriodStructure,
+  type SpecialPeriod,
+  type SubjectDayPeriodRequirement,
+} from "@school/types";
 import { apiFetch } from "./api";
 
 interface ConstraintRow {
@@ -97,16 +107,19 @@ export interface FridayTrailingActivity {
 export function useSpecialPeriods(group: ClassLevelCategoryGroup | null): {
   specialPeriods: SpecialPeriod[];
   earlyYearsSpecialPeriods: SpecialPeriod[];
+  earlyYearsSubjectDayPeriods: SubjectDayPeriodRequirement[];
   fridayTrailingActivity: FridayTrailingActivity | null;
 } {
   const [specialPeriods, setSpecialPeriods] = useState<SpecialPeriod[]>([]);
   const [earlyYearsSpecialPeriods, setEarlyYearsSpecialPeriods] = useState<SpecialPeriod[]>([]);
+  const [earlyYearsSubjectDayPeriods, setEarlyYearsSubjectDayPeriods] = useState<SubjectDayPeriodRequirement[]>([]);
   const [fridayTrailingActivity, setFridayTrailingActivity] = useState<FridayTrailingActivity | null>(null);
 
   useEffect(() => {
     if (!group) {
       setSpecialPeriods([]);
       setEarlyYearsSpecialPeriods([]);
+      setEarlyYearsSubjectDayPeriods([]);
       setFridayTrailingActivity(null);
       return;
     }
@@ -116,6 +129,7 @@ export function useSpecialPeriods(group: ClassLevelCategoryGroup | null): {
         const get = (key: string) => forGroup.find((r) => r.key === key)?.value;
         setSpecialPeriods(parseSpecialPeriods(get("SPECIAL_PERIODS")));
         setEarlyYearsSpecialPeriods(parseSpecialPeriods(get("EARLY_YEARS_SPECIAL_PERIODS")));
+        setEarlyYearsSubjectDayPeriods(parseSubjectDayPeriodRequirements(get("EARLY_YEARS_SUBJECT_DAY_PERIODS")));
         const label = get("FRIDAY_TRAILING_ACTIVITY_LABEL");
         const endTime = get("FRIDAY_TRAILING_ACTIVITY_END_TIME");
         setFridayTrailingActivity(
@@ -125,9 +139,48 @@ export function useSpecialPeriods(group: ClassLevelCategoryGroup | null): {
       .catch(() => {
         setSpecialPeriods([]);
         setEarlyYearsSpecialPeriods([]);
+        setEarlyYearsSubjectDayPeriods([]);
         setFridayTrailingActivity(null);
       });
   }, [group]);
 
-  return { specialPeriods, earlyYearsSpecialPeriods, fridayTrailingActivity };
+  return { specialPeriods, earlyYearsSpecialPeriods, earlyYearsSubjectDayPeriods, fridayTrailingActivity };
+}
+
+interface ArmClassLevel {
+  name: string;
+  category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS";
+}
+
+function isEarlyYears(classLevel: ArmClassLevel): boolean {
+  return classLevel.category === "NURSERY" || classLevel.category === "RECEPTION";
+}
+
+/**
+ * The special periods that actually apply to one arm — EARLY_YEARS_SPECIAL_PERIODS
+ * only for NURSERY/RECEPTION, and "@ClassLevel,..."-scoped entries only for
+ * the ClassLevels they name. Same rule as apps/worker's per-arm blockedPeriods.
+ */
+export function specialPeriodsForArm(
+  specialPeriods: SpecialPeriod[],
+  earlyYearsSpecialPeriods: SpecialPeriod[],
+  classLevel: ArmClassLevel,
+): SpecialPeriod[] {
+  return [...specialPeriods, ...(isEarlyYears(classLevel) ? earlyYearsSpecialPeriods : [])].filter((s) =>
+    specialPeriodAppliesTo(s, classLevel.name),
+  );
+}
+
+/** A slot's display name, with its EARLY_YEARS_SUBJECT_DAY_PERIODS suffix (e.g. "Literacy Textbook") appended where one applies. */
+export function slotSubjectLabel(
+  subjectLabel: string,
+  subjectName: string,
+  requirements: SubjectDayPeriodRequirement[],
+  classLevel: ArmClassLevel,
+  day: DayOfWeek,
+  periodIndex: number,
+): string {
+  if (!isEarlyYears(classLevel)) return subjectLabel;
+  const suffix = findSubjectLabelSuffix(requirements, subjectName, day, periodIndex);
+  return suffix ? `${subjectLabel} ${suffix}` : subjectLabel;
 }

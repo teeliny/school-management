@@ -28,9 +28,12 @@ import {
   categoryToGroup,
   computePeriodTime,
   formatPersonName,
+  findSubjectLabelSuffix,
   normalizeSubjectName,
   parseSpecialPeriods,
+  parseSubjectDayPeriodRequirements,
   parseSubjectPeriodBlockCounts,
+  specialPeriodAppliesTo,
   timeRangesOverlap,
   type PeriodStructure,
 } from "@school/types";
@@ -64,6 +67,11 @@ interface ConflictCheckInput {
   termId: string;
   startTime: string;
   endTime: string;
+}
+
+
+function isEarlyYearsCategory(category: ClassLevelCategory): boolean {
+  return category === ClassLevelCategory.NURSERY || category === ClassLevelCategory.RECEPTION;
 }
 
 @Injectable()
@@ -356,7 +364,7 @@ export class TimetableSlotService {
         approvalStatus: filters.approvalStatus ?? TimetableApprovalStatus.APPROVED,
       },
       include: {
-        classArm: { include: { classLevel: { select: { name: true } } } },
+        classArm: { include: { classLevel: { select: { name: true, category: true } } } },
         subject: true,
         staff: { include: { user: true } },
       },
@@ -459,11 +467,18 @@ export class TimetableSlotService {
    * TimetablePdfSlot rows (isActivity: true) rather than pulled from
    * TimetableSlot, since no real row is ever created for these: the whole
    * point of SPECIAL_PERIODS is blocking the AI solver from scheduling a
-   * real subject there (apps/worker's resolveSpecialPeriodBlocks). Only
+   * real subject there (apps/worker's resolveSpecialPeriods). Only
    * used for the PDF download — the on-screen grid already renders these
-   * itself, client-side (apps/web's useSpecialPeriods).
+   * itself, client-side (apps/web's useSpecialPeriods). `classLevels` are
+   * the ClassLevels actually on this PDF (one for a class timetable, possibly
+   * several for a teacher's) — an EARLY_YEARS_SPECIAL_PERIODS entry is shown
+   * only if one of them is NURSERY/RECEPTION, and an "@ClassLevel,..."-
+   * scoped entry only if one of them is named.
    */
-  private async resolveActivitySlots(group: ClassLevelCategoryGroup): Promise<TimetablePdfSlot[]> {
+  private async resolveActivitySlots(
+    group: ClassLevelCategoryGroup,
+    classLevels: { name: string; category: ClassLevelCategory }[],
+  ): Promise<TimetablePdfSlot[]> {
     const structure = await this.resolvePeriodStructure(group);
     if (!structure) return [];
 
@@ -472,13 +487,23 @@ export class TimetableSlotService {
         scope: ScheduleScope.CLASS_TIMETABLE,
         classLevelCategoryGroup: group,
         isActive: true,
-        key: { in: ["SPECIAL_PERIODS", "FRIDAY_TRAILING_ACTIVITY_LABEL", "FRIDAY_TRAILING_ACTIVITY_END_TIME"] },
+        key: {
+          in: ["SPECIAL_PERIODS", "EARLY_YEARS_SPECIAL_PERIODS", "FRIDAY_TRAILING_ACTIVITY_LABEL", "FRIDAY_TRAILING_ACTIVITY_END_TIME"],
+        },
       },
     });
     const get = (key: string): unknown => rows.find((r) => r.key === key)?.value;
 
+    const earlyYearsLevels = classLevels.filter((l) => isEarlyYearsCategory(l.category));
+    const specialPeriods = [
+      ...parseSpecialPeriods(get("SPECIAL_PERIODS")).filter((s) => classLevels.some((l) => specialPeriodAppliesTo(s, l.name))),
+      ...parseSpecialPeriods(get("EARLY_YEARS_SPECIAL_PERIODS")).filter((s) =>
+        earlyYearsLevels.some((l) => specialPeriodAppliesTo(s, l.name)),
+      ),
+    ];
+
     const activitySlots: TimetablePdfSlot[] = [];
-    for (const special of parseSpecialPeriods(get("SPECIAL_PERIODS"))) {
+    for (const special of specialPeriods) {
       // One pseudo-slot PER period in the range, not one merged block
       // spanning start-to-end — a 2-period block (e.g. "WEDNESDAY:1-2:Sports")
       // must land in the SAME two period columns every other subject on that
@@ -512,6 +537,43 @@ export class TimetableSlotService {
     }
 
     return activitySlots;
+  }
+
+  /**
+   * EARLY_YEARS_SUBJECT_DAY_PERIODS' display suffix (e.g. Thursday's
+   * "Literacy Textbook") for a NURSERY/RECEPTION slot — derived from the
+   * slot's current day/period rather than stored, same as the on-screen grid
+   * (see parseSubjectDayPeriodRequirements).
+   */
+  private async buildSubjectLabelSuffixResolver(
+    groups: Set<ClassLevelCategoryGroup>,
+  ): Promise<
+    (row: { dayOfWeek: DayOfWeek; startTime: string; subject: { name: string }; classArm: { classLevel: { category: ClassLevelCategory } } }) =>
+      | string
+      | undefined
+  > {
+    const byGroup = new Map<ClassLevelCategoryGroup, { structure: PeriodStructure; requirements: ReturnType<typeof parseSubjectDayPeriodRequirements> }>();
+    for (const group of groups) {
+      const structure = await this.resolvePeriodStructure(group);
+      if (!structure) continue;
+      const row = await this.prisma.schedulingConstraint.findFirst({
+        where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, key: "EARLY_YEARS_SUBJECT_DAY_PERIODS", isActive: true },
+      });
+      const requirements = parseSubjectDayPeriodRequirements(row?.value);
+      if (requirements.length > 0) byGroup.set(group, { structure, requirements });
+    }
+    return (row) => {
+      if (!isEarlyYearsCategory(row.classArm.classLevel.category)) return undefined;
+      const entry = byGroup.get(categoryToGroup(row.classArm.classLevel.category));
+      if (!entry) return undefined;
+      const maxPeriod = row.dayOfWeek === DayOfWeek.FRIDAY ? entry.structure.fridayPeriodsPerDay : entry.structure.periodsPerDay;
+      for (let period = 1; period <= maxPeriod; period++) {
+        if (computePeriodTime(entry.structure, row.dayOfWeek, period).startTime === row.startTime) {
+          return findSubjectLabelSuffix(entry.requirements, row.subject.name, row.dayOfWeek, period);
+        }
+      }
+      return undefined;
+    };
   }
 
   /**
@@ -603,6 +665,7 @@ export class TimetableSlotService {
     // personal timetable could in principle span more than one (nothing
     // stops one teacher covering both JSS/SSS and Creche/Nursery/Primary).
     const groups = new Set<ClassLevelCategoryGroup>();
+    const classLevels: { name: string; category: ClassLevelCategory }[] = [];
     if (filters.classArmId) {
       const arm = await this.prisma.classArm.findUnique({
         where: { id: filters.classArmId },
@@ -611,6 +674,7 @@ export class TimetableSlotService {
       if (arm) {
         title = withDisplayName(arm).displayName;
         groups.add(categoryToGroup(arm.classLevel.category));
+        classLevels.push(arm.classLevel);
       }
     } else if (filters.staffId) {
       const staff = await this.prisma.staffProfile.findUnique({ where: { id: filters.staffId }, include: { user: true } });
@@ -619,13 +683,17 @@ export class TimetableSlotService {
       if (classArmIds.length > 0) {
         const arms = await this.prisma.classArm.findMany({
           where: { id: { in: classArmIds } },
-          select: { classLevel: { select: { category: true } } },
+          select: { classLevel: { select: { name: true, category: true } } },
         });
-        for (const arm of arms) groups.add(categoryToGroup(arm.classLevel.category));
+        for (const arm of arms) {
+          groups.add(categoryToGroup(arm.classLevel.category));
+          classLevels.push(arm.classLevel);
+        }
       }
     }
 
     const subtitle = `${term.name}, ${term.academicSession.name}`;
+    const labelSuffixFor = await this.buildSubjectLabelSuffixResolver(groups);
     const slots: TimetablePdfSlot[] = rows.map((row) => ({
       dayOfWeek: row.dayOfWeek,
       startTime: row.startTime,
@@ -635,9 +703,10 @@ export class TimetableSlotService {
       // tooling (students, parents), who have no reason to know the code
       // vocabulary. Shown in full, wrapping onto as many lines as needed
       // (renderTimetablePdf never truncates).
-      lines: filters.classArmId
-        ? [row.subject.name.trim(), formatPersonName(row.staff.user)]
-        : [row.subject.name.trim(), row.classArm.displayName],
+      lines: [
+        [row.subject.name.trim(), labelSuffixFor(row)].filter(Boolean).join(" "),
+        filters.classArmId ? formatPersonName(row.staff.user) : row.classArm.displayName,
+      ],
     }));
 
     // Merged in after the real slots — deduped by day/time/label since a
@@ -646,7 +715,8 @@ export class TimetableSlotService {
     // SPECIAL_PERIODS entry.
     const seenActivityKeys = new Set<string>();
     for (const group of groups) {
-      for (const activitySlot of await this.resolveActivitySlots(group)) {
+      const groupClassLevels = classLevels.filter((l) => categoryToGroup(l.category) === group);
+      for (const activitySlot of await this.resolveActivitySlots(group, groupClassLevels)) {
         const key = `${activitySlot.dayOfWeek}|${activitySlot.startTime}|${activitySlot.endTime}|${activitySlot.lines[0]}`;
         if (seenActivityKeys.has(key)) continue;
         seenActivityKeys.add(key);

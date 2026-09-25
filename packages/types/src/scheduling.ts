@@ -369,11 +369,25 @@ export interface SpecialPeriod {
   startPeriod: number;
   endPeriod: number;
   label: string;
+  // Optional "@ClassLevelName,ClassLevelName" suffix on the entry — when
+  // set, this block only applies to arms of those ClassLevels (matched via
+  // normalizeSubjectName, same trim+uppercase rule every other name-keyed
+  // constraint uses), e.g. "FRIDAY:4-5:WEEKLY-ASSESSMENT@BASIC 1,BASIC 2" or
+  // "THURSDAY:5-5:SCRIBBLING@RECEPTION 1,RECEPTION 2". undefined = every arm
+  // the key applies to (the original, unscoped behavior).
+  classLevelNames?: string[];
+}
+
+/** Whether a (possibly ClassLevel-scoped) SpecialPeriod applies to an arm of `classLevelName`. */
+export function specialPeriodAppliesTo(special: SpecialPeriod, classLevelName: string): boolean {
+  if (!special.classLevelNames) return true;
+  return special.classLevelNames.includes(normalizeSubjectName(classLevelName));
 }
 
 /**
- * Parses SPECIAL_PERIODS's `"DAY:startPeriod-endPeriod:Label"` string-list
- * format — admin-editable free text via the generic SchedulingConstraint
+ * Parses SPECIAL_PERIODS's `"DAY:startPeriod-endPeriod:Label[@ClassLevel,...]"`
+ * string-list format (see SpecialPeriod.classLevelNames for the optional
+ * scope suffix) — admin-editable free text via the generic SchedulingConstraint
  * CRUD (no per-key schema anywhere in that system), so malformed entries are
  * skipped rather than thrown, same defensive-parsing posture as the rest of
  * this loosely-typed constraint system. Shared by the worker (folds into
@@ -390,14 +404,103 @@ export function parseSpecialPeriods(raw: unknown): SpecialPeriod[] {
     if (!match) continue;
     // Non-null: the regex has no optional groups, so a successful match
     // guarantees all four captures are present.
-    const [, day, startStr, endStr, label] = match as unknown as [string, string, string, string, string];
+    const [, day, startStr, endStr, rest] = match as unknown as [string, string, string, string, string];
     if (!DAYS_OF_WEEK.includes(day as DayOfWeek)) continue;
     const startPeriod = Number(startStr);
     const endPeriod = Number(endStr);
     if (!Number.isInteger(startPeriod) || !Number.isInteger(endPeriod) || startPeriod < 1 || endPeriod < startPeriod) continue;
-    result.push({ day: day as DayOfWeek, startPeriod, endPeriod, label });
+    const scopeIndex = rest.indexOf("@");
+    const label = (scopeIndex === -1 ? rest : rest.slice(0, scopeIndex)).trim();
+    const classLevelNames =
+      scopeIndex === -1
+        ? undefined
+        : rest
+            .slice(scopeIndex + 1)
+            .split(",")
+            .map(normalizeSubjectName)
+            .filter((name) => name.length > 0);
+    result.push({ day: day as DayOfWeek, startPeriod, endPeriod, label, ...(classLevelNames ? { classLevelNames } : {}) });
   }
   return result;
+}
+
+/**
+ * One "this subject must land here" requirement — see
+ * parseSubjectDayPeriodRequirements below.
+ */
+export interface SubjectDayPeriodRequirement {
+  day: DayOfWeek;
+  startPeriod: number;
+  endPeriod: number;
+  subjectName: string;
+  labelSuffix?: string;
+}
+
+/**
+ * Parses EARLY_YEARS_SUBJECT_DAY_PERIODS's
+ * `"DAY:startPeriod-endPeriod:SubjectName[:LabelSuffix]"` string-list format
+ * (CLASS_TIMETABLE, NURSERY/RECEPTION arms only). Each entry requires ONE
+ * occurrence of that subject within that day's period range, so N identical
+ * entries require exactly N there — the solver enforces the per-(subject,
+ * day, range) count as an equality, so the subject can't also appear there
+ * any additional times. e.g.
+ *   "MONDAY:2-4:LITERACY"                          — one Literacy in the Monday morning.
+ *   "THURSDAY:2-4:LITERACY:Textbook"                — ...and on Thursday, labelled "Literacy Textbook".
+ *   "FRIDAY:1-5:CIRCLE TIME"                        — Circle Time on Friday.
+ * A subject named in any entry ignores SUBJECT_ALLOWED_DAYS for these arms
+ * (its requirements already pin where it goes, and SUBJECT_ALLOWED_DAYS is
+ * shared with PRIMARY by name — e.g. Creative Writing is Friday-only for
+ * Basic but Thursday for Nursery). `labelSuffix` is display-only: the grid
+ * and PDF append it to the subject name for any slot of that subject that
+ * falls in the entry's day/range (see findSubjectLabelSuffix) — nothing is
+ * persisted on TimetableSlot, so a manually-moved slot relabels itself.
+ */
+export function parseSubjectDayPeriodRequirements(raw: unknown): SubjectDayPeriodRequirement[] {
+  if (!Array.isArray(raw)) return [];
+  const result: SubjectDayPeriodRequirement[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const match = /^([A-Z]+):(\d+)-(\d+):([^:]+)(?::(.+))?$/.exec(entry.trim());
+    if (!match) continue;
+    const [, day, startStr, endStr, subjectName, labelSuffix] = match as unknown as [
+      string,
+      string,
+      string,
+      string,
+      string,
+      string | undefined,
+    ];
+    if (!DAYS_OF_WEEK.includes(day as DayOfWeek)) continue;
+    const startPeriod = Number(startStr);
+    const endPeriod = Number(endStr);
+    if (startPeriod < 1 || endPeriod < startPeriod) continue;
+    result.push({
+      day: day as DayOfWeek,
+      startPeriod,
+      endPeriod,
+      subjectName: subjectName.trim(),
+      ...(labelSuffix?.trim() ? { labelSuffix: labelSuffix.trim() } : {}),
+    });
+  }
+  return result;
+}
+
+/** The display suffix (e.g. "Textbook") for a slot of `subjectName` at (day, period), if any EARLY_YEARS_SUBJECT_DAY_PERIODS entry labels it. */
+export function findSubjectLabelSuffix(
+  requirements: SubjectDayPeriodRequirement[],
+  subjectName: string,
+  day: DayOfWeek,
+  period: number,
+): string | undefined {
+  const key = normalizeSubjectName(subjectName);
+  return requirements.find(
+    (r) =>
+      r.labelSuffix &&
+      r.day === day &&
+      period >= r.startPeriod &&
+      period <= r.endPeriod &&
+      normalizeSubjectName(r.subjectName) === key,
+  )?.labelSuffix;
 }
 
 /** One allowed weekday for a subject — see SUBJECT_ALLOWED_DAYS below. */

@@ -12,7 +12,7 @@ import {
 } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
-import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
+import { slotSubjectLabel, specialPeriodsForArm, usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
 import { CollapsibleCard } from "../molecules/collapsible-card";
 import { ReadOnlyScheduleTable } from "../molecules/read-only-schedule-table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
@@ -45,7 +45,7 @@ interface TimetableSlotItem {
   id: string;
   classArmId: string;
   subject: { name: string };
-  classArm: { displayName: string };
+  classArm: { displayName: string; classLevel: { name: string; category: ClassLevelCategory } };
   dayOfWeek: DayOfWeek;
   startTime: string;
   endTime: string;
@@ -424,7 +424,15 @@ function ExamScheduleList({ classArmId, subjectId }: { classArmId: string; subje
  */
 function PeriodWeekGrid({ slots, group }: { slots: TimetableSlotItem[]; group: ClassLevelCategoryGroup }) {
   const structure = usePeriodStructure(group);
-  const { specialPeriods, fridayTrailingActivity } = useSpecialPeriods(group);
+  const { specialPeriods, earlyYearsSpecialPeriods, earlyYearsSubjectDayPeriods, fridayTrailingActivity } =
+    useSpecialPeriods(group);
+  // Only the special periods that apply to at least one class this teacher
+  // actually has slots in — early-years-only and "@ClassLevel"-scoped
+  // entries (e.g. Reception's Scribbling) otherwise show up for everyone.
+  const effectiveSpecialPeriods = useMemo(() => {
+    const levels = new Map(slots.map((s) => [s.classArm.classLevel.name, s.classArm.classLevel]));
+    return [...new Set([...levels.values()].flatMap((l) => specialPeriodsForArm(specialPeriods, earlyYearsSpecialPeriods, l)))];
+  }, [slots, specialPeriods, earlyYearsSpecialPeriods]);
   const columns = useMemo(() => (structure ? buildPeriodColumns(structure) : []), [structure]);
   const fridayCutoff = useMemo(() => (structure ? fridayCutoffColumnIndex(structure, columns) : -1), [structure, columns]);
 
@@ -484,7 +492,7 @@ function PeriodWeekGrid({ slots, group }: { slots: TimetableSlotItem[]; group: C
                 <div className="pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{DAY_LABEL[day]}</div>
                 {columns.slice(0, lastIndex + 1).map((col, i) => {
                   if (col.kind === "break") return <div key={i} className="min-h-[52px] rounded-lg bg-muted/10" />;
-                  const special = findSpecialPeriod(specialPeriods, day, col.index);
+                  const special = findSpecialPeriod(effectiveSpecialPeriods, day, col.index);
                   if (special) {
                     return (
                       <div
@@ -500,7 +508,16 @@ function PeriodWeekGrid({ slots, group }: { slots: TimetableSlotItem[]; group: C
                     <div key={i} className="min-h-[52px] p-0.5">
                       {slot && (
                         <div className="rounded-lg border border-border bg-card-inset p-1.5 text-[11.5px]">
-                          <div className="truncate font-medium">{slot.subject.name}</div>
+                          <div className="truncate font-medium">
+                            {slotSubjectLabel(
+                              slot.subject.name,
+                              slot.subject.name,
+                              earlyYearsSubjectDayPeriods,
+                              slot.classArm.classLevel,
+                              day,
+                              col.index,
+                            )}
+                          </div>
                           <div className="truncate text-muted">{slot.classArm.displayName}</div>
                         </div>
                       )}

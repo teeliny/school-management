@@ -27,6 +27,7 @@ import {
   categoryToGroup,
   DAYS_OF_WEEK,
   parseSpecialPeriods,
+  specialPeriodAppliesTo,
   QUEUE_NAMES,
   type SchedulingSolveDispatchJob,
 } from "@school/types";
@@ -320,7 +321,10 @@ export class ScheduleGenerationRequestService {
    * resolveFlattenedRequiredSubjects above. `null` when PERIODS_PER_DAY
    * isn't configured yet (nothing to check against).
    */
-  private async resolveWeeklyCapacity(group: ClassLevelCategoryGroup): Promise<number | null> {
+  private async resolveWeeklyCapacity(
+    group: ClassLevelCategoryGroup,
+    classLevel: { name: string; category: ClassLevelCategory },
+  ): Promise<number | null> {
     const rows = await this.prisma.schedulingConstraint.findMany({
       where: { scope: ScheduleScope.CLASS_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
     });
@@ -331,7 +335,14 @@ export class ScheduleGenerationRequestService {
     const periodsPerDay = Number(periodsPerDayRaw);
     const fridayPeriodsPerDayRaw = get("FRIDAY_PERIODS_PER_DAY");
     const fridayPeriodsPerDay = fridayPeriodsPerDayRaw === undefined ? periodsPerDay : Number(fridayPeriodsPerDayRaw);
-    const specialPeriods = parseSpecialPeriods(get("SPECIAL_PERIODS"));
+    // Same per-arm resolution as apps/worker: EARLY_YEARS_SPECIAL_PERIODS
+    // only for NURSERY/RECEPTION, and "@ClassLevel,..."-scoped entries only
+    // for the ClassLevels they name.
+    const isEarlyYears = classLevel.category === ClassLevelCategory.NURSERY || classLevel.category === ClassLevelCategory.RECEPTION;
+    const specialPeriods = [
+      ...parseSpecialPeriods(get("SPECIAL_PERIODS")),
+      ...(isEarlyYears ? parseSpecialPeriods(get("EARLY_YEARS_SPECIAL_PERIODS")) : []),
+    ].filter((s) => specialPeriodAppliesTo(s, classLevel.name));
 
     let capacity = 0;
     for (const day of DAYS_OF_WEEK) {
@@ -364,16 +375,16 @@ export class ScheduleGenerationRequestService {
       include: { classLevel: true },
     });
 
-    const capacityByGroup = new Map<ClassLevelCategoryGroup, number | null>();
+    const capacityByClassLevel = new Map<string, number | null>();
     const requiredByCategory = new Map<ClassLevelCategory, number>();
     const overshoots: string[] = [];
 
     for (const arm of classArms) {
       const group = categoryToGroup(arm.classLevel.category);
-      if (!capacityByGroup.has(group)) {
-        capacityByGroup.set(group, await this.resolveWeeklyCapacity(group));
+      if (!capacityByClassLevel.has(arm.classLevelId)) {
+        capacityByClassLevel.set(arm.classLevelId, await this.resolveWeeklyCapacity(group, arm.classLevel));
       }
-      const capacity = capacityByGroup.get(group) ?? null;
+      const capacity = capacityByClassLevel.get(arm.classLevelId) ?? null;
       if (capacity === null) continue; // period structure not configured yet — nothing to check against
 
       if (!requiredByCategory.has(arm.classLevel.category)) {

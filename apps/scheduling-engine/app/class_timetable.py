@@ -16,6 +16,13 @@ from ortools.sat.python import cp_model
 from pydantic import BaseModel
 
 
+class DayPeriodRequirement(BaseModel):
+    day: str
+    startPeriod: int
+    endPeriod: int
+    count: int
+
+
 class SubjectPayload(BaseModel):
     subjectId: str
     # Display-only (error messages) — never used for matching/solving, that's
@@ -85,6 +92,12 @@ class SubjectPayload(BaseModel):
     # with that same teacher at the same (day, period) instead of each
     # requiring its own separate slot.
     maxConcurrentArms: int = 1
+    # EARLY_YEARS_SUBJECT_DAY_PERIODS (apps/worker resolves this per
+    # Subject.name, NURSERY/RECEPTION arms only) — for each entry, EXACTLY
+    # `count` of this subject's occurrences must fall on `day` within
+    # [startPeriod, endPeriod] (e.g. one Literacy in Monday's periods 2-4,
+    # one Circle Time on Friday). Empty (the default) restricts nothing.
+    dayPeriodRequirements: list[DayPeriodRequirement] = []
 
 
 class ClassArmPayload(BaseModel):
@@ -108,6 +121,11 @@ class ClassArmPayload(BaseModel):
     # is_open() and the periodBlockRequiredCount constraint loop below.
     # Empty disables the block entirely for this arm (today's behavior).
     lastPeriodBlockDays: list[str] = []
+    # EARLY_YEARS_LAST_PERIOD_BLOCK_ALTERNATE_ORDER — when true, no block
+    # subject may occupy the same block period on two consecutive block days,
+    # so e.g. Literacy/Numeracy's order in periods 8-9 flips day to day
+    # instead of repeating. False (the default) leaves the order free.
+    alternatePeriodBlockOrder: bool = False
 
 
 class GroupPayload(BaseModel):
@@ -533,6 +551,40 @@ def _solve_group(
                     ]
                     if day_block_vars:
                         model.add(sum(day_block_vars) <= block_max_per_day)
+
+                # EARLY_YEARS_LAST_PERIOD_BLOCK_ALTERNATE_ORDER — see
+                # ClassArmPayload.alternatePeriodBlockOrder. Consecutive in
+                # the order the block's own days run through the week (the
+                # group's `days` order), not calendar adjacency.
+                if arm.alternatePeriodBlockOrder:
+                    ordered_block_days = [d for d in group.days if d in arm_block_days]
+                    for day_a, day_b in zip(ordered_block_days, ordered_block_days[1:]):
+                        for period in group.lastPeriodBlockPeriods:
+                            var_a = variables.get((arm.classArmId, subject.subjectId, day_a, period))
+                            var_b = variables.get((arm.classArmId, subject.subjectId, day_b, period))
+                            if var_a is not None and var_b is not None:
+                                model.add(var_a + var_b <= 1)
+
+            # EARLY_YEARS_SUBJECT_DAY_PERIODS — see
+            # SubjectPayload.dayPeriodRequirements.
+            for requirement in subject.dayPeriodRequirements:
+                window_vars = [
+                    v
+                    for (arm_id, subject_id, d, p), v in variables.items()
+                    if arm_id == arm.classArmId
+                    and subject_id == subject.subjectId
+                    and d == requirement.day
+                    and requirement.startPeriod <= p <= requirement.endPeriod
+                ]
+                if len(window_vars) < requirement.count:
+                    return None, (
+                        f'"{subject.subjectName}" in {arm.classArmDisplayName} must have '
+                        f"{requirement.count} period(s) on {requirement.day} "
+                        f"(periods {requirement.startPeriod}-{requirement.endPeriod}) but only "
+                        f"{len(window_vars)} slot(s) are open there — check EARLY_YEARS_SUBJECT_DAY_PERIODS, "
+                        f"special/blocked periods, or teacher availability."
+                    )
+                model.add(sum(window_vars) == requirement.count)
 
     # No teacher double-booked across class arms within this solve, except up
     # to a subject's own maxConcurrentArms (SUBJECT_MAX_CONCURRENT_ARMS — see

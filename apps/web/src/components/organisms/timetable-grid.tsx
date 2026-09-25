@@ -13,7 +13,7 @@ import {
 } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
-import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
+import { usePeriodStructure, useSpecialPeriods, slotSubjectLabel, specialPeriodsForArm } from "../../lib/use-period-structure";
 import { summarizePeriodsBySubject } from "../../lib/subject-period-summary";
 import { Badge } from "../atoms/badge";
 import { ClickReveal } from "../molecules/click-reveal";
@@ -48,7 +48,7 @@ interface StaffOption {
 }
 interface ClassArmDetail {
   id: string;
-  classLevel: { category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
+  classLevel: { name: string; category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
 }
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
@@ -111,12 +111,11 @@ export function TimetableGrid({
 
   const group: ClassLevelCategoryGroup | null = classArm ? categoryToGroup(classArm.classLevel.category) : null;
   const structure = usePeriodStructure(group);
-  const { specialPeriods, earlyYearsSpecialPeriods, fridayTrailingActivity } = useSpecialPeriods(group);
-  // EARLY_YEARS_SPECIAL_PERIODS (e.g. Thursday's Textbooks block) only
-  // applies to NURSERY/RECEPTION arms — see useSpecialPeriods' own comment.
-  const isEarlyYearsArm =
-    classArm?.classLevel.category === "NURSERY" || classArm?.classLevel.category === "RECEPTION";
-  const effectiveSpecialPeriods = isEarlyYearsArm ? [...specialPeriods, ...earlyYearsSpecialPeriods] : specialPeriods;
+  const { specialPeriods, earlyYearsSpecialPeriods, earlyYearsSubjectDayPeriods, fridayTrailingActivity } =
+    useSpecialPeriods(group);
+  const effectiveSpecialPeriods = classArm
+    ? specialPeriodsForArm(specialPeriods, earlyYearsSpecialPeriods, classArm.classLevel)
+    : specialPeriods;
   const columns = useMemo(() => (structure ? buildPeriodColumns(structure) : []), [structure]);
   const fridayCutoff = useMemo(
     () => (structure ? fridayCutoffColumnIndex(structure, columns) : -1),
@@ -341,6 +340,18 @@ export function TimetableGrid({
                           {slot && (
                             <SlotCard
                               slot={slot}
+                              label={
+                                classArm
+                                  ? slotSubjectLabel(
+                                      slot.subject.code || slot.subject.name,
+                                      slot.subject.name,
+                                      earlyYearsSubjectDayPeriods,
+                                      classArm.classLevel,
+                                      day,
+                                      col.index,
+                                    )
+                                  : slot.subject.code || slot.subject.name
+                              }
                               canManage={canManage}
                               expanded={expandedSlotId === slot.id}
                               onToggleExpand={() => setExpandedSlotId((cur) => (cur === slot.id ? null : slot.id))}
@@ -384,6 +395,7 @@ export function TimetableGrid({
 
 function SlotCard({
   slot,
+  label,
   canManage,
   expanded,
   onToggleExpand,
@@ -393,6 +405,9 @@ function SlotCard({
   onFieldChange,
 }: {
   slot: TimetableSlotItem;
+  // Subject code/name plus any EARLY_YEARS_SUBJECT_DAY_PERIODS suffix
+  // (e.g. "Literacy Textbook") — see slotSubjectLabel.
+  label: string;
   canManage: boolean;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -455,7 +470,7 @@ function SlotCard({
       {canManage ? (
         <div className="relative" ref={editorRef}>
           <button type="button" onClick={onToggleExpand} className="block w-full truncate text-left font-medium">
-            {slot.subject.code || slot.subject.name}
+            {label}
           </button>
           {expanded && (
             // Floats above the grid at a fixed, comfortable width rather
@@ -499,7 +514,7 @@ function SlotCard({
           )}
         </div>
       ) : (
-        <ClickReveal trigger={<span className="truncate font-medium">{slot.subject.code || slot.subject.name}</span>}>
+        <ClickReveal trigger={<span className="truncate font-medium">{label}</span>}>
           <div className="font-medium">{slot.subject.name}</div>
           <div className="text-muted">
             {formatPersonName(slot.staff.user)}

@@ -11,7 +11,7 @@ import {
 } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
-import { usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
+import { usePeriodStructure, useSpecialPeriods, slotSubjectLabel, specialPeriodsForArm } from "../../lib/use-period-structure";
 import { summarizePeriodsBySubject } from "../../lib/subject-period-summary";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -32,7 +32,7 @@ interface TimetableSlotItem {
 interface ClassArmOption {
   id: string;
   displayName: string;
-  classLevel: { category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
+  classLevel: { name: string; category: "CRECHE" | "RECEPTION" | "NURSERY" | "PRIMARY" | "JSS" | "SSS" };
 }
 
 const DAY_LABELS: Record<DayOfWeek, string> = {
@@ -87,7 +87,8 @@ export function AllClassesTimetableView({
   const [error, setError] = useState<string | null>(null);
   const [group, setGroup] = useState<ClassLevelCategoryGroup>(lockedGroup ?? "JSS_SSS");
   const structure = usePeriodStructure(group);
-  const { specialPeriods, earlyYearsSpecialPeriods, fridayTrailingActivity } = useSpecialPeriods(group);
+  const { specialPeriods, earlyYearsSpecialPeriods, earlyYearsSubjectDayPeriods, fridayTrailingActivity } =
+    useSpecialPeriods(group);
 
   const load = useCallback(() => {
     if (!academicSessionId || !termId) {
@@ -244,17 +245,11 @@ export function AllClassesTimetableView({
                     )}
 
                     {classArmsForGroup.map((arm) => {
-                      // EARLY_YEARS_SPECIAL_PERIODS (e.g. Thursday's
-                      // Textbooks block) only applies to NURSERY/RECEPTION
-                      // arms — see useSpecialPeriods' own comment. This grid
-                      // mixes every arm in the group into one shared column
-                      // set, so the effective list has to be resolved per
-                      // arm rather than once for the whole view.
-                      const isEarlyYearsArm =
-                        arm.classLevel.category === "NURSERY" || arm.classLevel.category === "RECEPTION";
-                      const armSpecialPeriods = isEarlyYearsArm
-                        ? [...specialPeriods, ...earlyYearsSpecialPeriods]
-                        : specialPeriods;
+                      // Special periods can be early-years-only or scoped to
+                      // specific ClassLevels, and this grid mixes every arm
+                      // in the group into one shared column set, so the
+                      // effective list is resolved per arm.
+                      const armSpecialPeriods = specialPeriodsForArm(specialPeriods, earlyYearsSpecialPeriods, arm.classLevel);
                       return (
                         <div key={arm.id} className="contents">
                           <div className="flex items-center justify-between gap-1.5 border-b border-border px-2 py-2 text-[12px]">
@@ -293,7 +288,16 @@ export function AllClassesTimetableView({
                                         : undefined
                                     }
                                     trigger={
-                                      <span className="truncate text-[11px] font-medium">{slot.subject.code || slot.subject.name}</span>
+                                      <span className="truncate text-[11px] font-medium">
+                                        {slotSubjectLabel(
+                                          slot.subject.code || slot.subject.name,
+                                          slot.subject.name,
+                                          earlyYearsSubjectDayPeriods,
+                                          arm.classLevel,
+                                          day,
+                                          col.index,
+                                        )}
+                                      </span>
                                     }
                                   >
                                     <div className="font-medium">{slot.subject.name}</div>
