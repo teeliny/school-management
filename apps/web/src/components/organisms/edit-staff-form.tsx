@@ -19,7 +19,7 @@ interface StaffDetail {
   employmentDate: string | null;
   qualification: string | null;
   status: StaffStatus;
-  user: { firstName: string; lastName: string; email: string; phone: string | null };
+  user: { firstName: string; lastName: string; middleName: string | null; email: string; phone: string | null };
 }
 
 /**
@@ -27,7 +27,7 @@ interface StaffDetail {
  * page for a staff member selected via StaffList's "Edit" button.
  * StaffProfileController.update restricts non-"manage" callers to
  * `phone` only; this form is only rendered for canManage callers, so all
- * fields are sent.
+ * fields (including the name, which lives on User) are sent.
  */
 export function EditStaffForm({
   staffId,
@@ -40,6 +40,7 @@ export function EditStaffForm({
 }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [middleName, setMiddleName] = useState("");
   const [employeeId, setEmployeeId] = useState("");
   const [staffCategory, setStaffCategory] = useState<StaffCategory | "">("");
   const [department, setDepartment] = useState("");
@@ -58,6 +59,7 @@ export function EditStaffForm({
       .then((staff) => {
         setFirstName(staff.user.firstName);
         setLastName(staff.user.lastName);
+        setMiddleName(staff.user.middleName ?? "");
         setEmployeeId(staff.employeeId ?? "");
         setStaffCategory(staff.staffCategory ?? "");
         setDepartment(staff.department ?? "");
@@ -83,6 +85,9 @@ export function EditStaffForm({
         method: "PATCH",
         auth: true,
         body: {
+          firstName,
+          middleName,
+          lastName,
           employeeId,
           staffCategory: staffCategory || undefined,
           department,
@@ -111,6 +116,9 @@ export function EditStaffForm({
       </p>
 
       <div className="grid grid-cols-2 gap-4">
+        <FormField label="First name" id="edit-staff-first-name" required value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+        <FormField label="Last name" id="edit-staff-last-name" required value={lastName} onChange={(e) => setLastName(e.target.value)} />
+        <FormField label="Middle name" id="edit-staff-middle-name" value={middleName} onChange={(e) => setMiddleName(e.target.value)} />
         <FormField label="Employee ID" id="edit-staff-employee-id" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} />
         <FormField label="Phone" id="edit-staff-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
         <div>

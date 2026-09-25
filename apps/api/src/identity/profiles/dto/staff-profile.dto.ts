@@ -1,6 +1,6 @@
 import { StaffCategory, StaffStatus } from "@prisma/client";
 import { Type } from "class-transformer";
-import { IsDate, IsEnum, IsOptional, IsString } from "class-validator";
+import { IsDate, IsEnum, IsNotEmpty, IsOptional, IsString } from "class-validator";
 
 export class UpdateStaffProfileDto {
   @IsOptional()
@@ -35,4 +35,21 @@ export class UpdateStaffProfileDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  // Also on User. Admin/Super-Admin only — StaffProfileController.update
+  // strips these from a self-service edit, same as ParentProfile's name
+  // fields.
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  middleName?: string;
 }

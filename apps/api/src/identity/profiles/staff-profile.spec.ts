@@ -26,6 +26,26 @@ describe("StaffProfileService.update (phone lives on User, not StaffProfile)", (
     expect(tx.user.update).toHaveBeenCalledWith({ where: { id: "user-1" }, data: { phone: "080" } });
   });
 
+  it("writes name fields to User, not StaffProfile", async () => {
+    const tx = {
+      staffProfile: {
+        update: jest.fn().mockResolvedValue({ id: "staff-1", userId: "user-1" }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "staff-1", userId: "user-1", user: {} }),
+      },
+      user: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = { $transaction: jest.fn((fn: (tx: typeof tx) => unknown) => fn(tx)) };
+    const service = new StaffProfileService(prisma as never);
+
+    await service.update("staff-1", { firstName: "Ada", lastName: "Obi", middleName: "N" });
+
+    expect(tx.staffProfile.update).toHaveBeenCalledWith({ where: { id: "staff-1" }, data: {} });
+    expect(tx.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { firstName: "Ada", lastName: "Obi", middleName: "N" },
+    });
+  });
+
   it("leaves User untouched when phone isn't part of the update", async () => {
     const tx = {
       staffProfile: {
@@ -56,7 +76,11 @@ describe("StaffProfileController.update — self-service edits are contact-info-
   it("narrows a self-edit (no 'manage' grant) down to phone only, dropping HR fields", async () => {
     const { controller, service } = buildController({ id: "staff-1", userId: "user-1" });
 
-    await controller.update("staff-1", { phone: "080", department: "Science", status: "ACTIVE" as never }, STAFF_OWNER);
+    await controller.update(
+      "staff-1",
+      { phone: "080", department: "Science", status: "ACTIVE" as never, firstName: "Renamed" },
+      STAFF_OWNER,
+    );
 
     expect(service.update).toHaveBeenCalledWith("staff-1", { phone: "080" });
   });

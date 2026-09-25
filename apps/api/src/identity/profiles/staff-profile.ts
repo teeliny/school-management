@@ -65,14 +65,15 @@ export class StaffProfileService {
     return this.prisma.staffProfile.findUnique({ where: { userId } });
   }
 
-  // `phone` lives on User, not StaffProfile — same split-write pattern as
-  // ParentProfileService.update.
+  // `phone` and the name fields live on User, not StaffProfile — same
+  // split-write pattern as ParentProfileService.update.
   async update(id: string, dto: UpdateStaffProfileDto) {
-    const { phone, ...profileFields } = dto;
+    const { phone, firstName, lastName, middleName, ...profileFields } = dto;
+    const userFields = { phone, firstName, lastName, middleName };
     return this.prisma.$transaction(async (tx) => {
       const profile = await tx.staffProfile.update({ where: { id }, data: profileFields });
-      if (phone !== undefined) {
-        await tx.user.update({ where: { id: profile.userId }, data: { phone } });
+      if (Object.values(userFields).some((v) => v !== undefined)) {
+        await tx.user.update({ where: { id: profile.userId }, data: userFields });
       }
       return tx.staffProfile.findUniqueOrThrow({ where: { id }, include: { user: true } });
     });
