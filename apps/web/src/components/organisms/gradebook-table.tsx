@@ -10,6 +10,8 @@ import { PaginatedStudentList } from "./paginated-student-list";
 interface ScoreEntryItem {
   studentId: string;
   score: number;
+  // Set when the score was transferred from a CA-linked homework (PRD §3.6a).
+  sourceHomework: { id: string; title: string } | null;
 }
 
 interface ScoreSummary {
@@ -49,6 +51,7 @@ export function GradebookTable({
     termId,
   });
   const [scores, setScores] = useState<Record<string, number>>({});
+  const [sources, setSources] = useState<Record<string, string>>({});
   const [draftScores, setDraftScores] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, "saving" | "saved" | "error" | "invalid">>({});
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +73,7 @@ export function GradebookTable({
     // new subject/component never briefly shows the previous selection's
     // committed value while the fetch for the new one is still in flight.
     setScores({});
+    setSources({});
     setDraftScores({});
     setSaving({});
     apiFetch<ScoreEntryItem[]>(
@@ -79,8 +83,13 @@ export function GradebookTable({
       .then((entries) => {
         if (thisRequest !== loadRequestId.current) return;
         const byStudent: Record<string, number> = {};
-        for (const entry of entries) byStudent[entry.studentId] = Number(entry.score);
+        const sourceByStudent: Record<string, string> = {};
+        for (const entry of entries) {
+          byStudent[entry.studentId] = Number(entry.score);
+          if (entry.sourceHomework) sourceByStudent[entry.studentId] = entry.sourceHomework.title;
+        }
         setScores(byStudent);
+        setSources(sourceByStudent);
       })
       .catch((err) => {
         if (thisRequest !== loadRequestId.current) return;
@@ -136,6 +145,13 @@ export function GradebookTable({
           setSummary((prev) => (prev ? { ...prev, enteredCount: prev.enteredCount + 1 } : prev));
         }
         return { ...s, [studentId]: score };
+      });
+      // A manual save replaces a transferred homework score (the API clears
+      // ScoreEntry.sourceHomeworkId on every manual write).
+      setSources((s) => {
+        const next = { ...s };
+        delete next[studentId];
+        return next;
       });
       setDraftScores((d) => {
         const next = { ...d };
@@ -215,6 +231,9 @@ export function GradebookTable({
                   {saving[student.id] === "error" && <span className="ml-2 text-[11px] text-danger">Failed</span>}
                   {saving[student.id] === "invalid" && (
                     <span className="ml-2 text-[11px] text-danger">Must be 0–{maxScore}</span>
+                  )}
+                  {sources[student.id] && !(student.id in draftScores) && (
+                    <div className="mt-0.5 text-[10.5px] text-muted">from: {sources[student.id]}</div>
                   )}
                 </td>
               </tr>

@@ -27,6 +27,9 @@ const FILTERABLE_TYPES: { value: NotificationType; label: string }[] = [
   { value: "MANUAL_PAYMENT_REJECTED", label: "Bank transfer rejected" },
   { value: "ADMISSION_INQUIRY_RECEIVED", label: "Admission inquiry" },
   { value: "CAREER_CONTACT_INQUIRY_RECEIVED", label: "Careers/contact inquiry" },
+  { value: "HOMEWORK_ASSIGNED", label: "New assignment" },
+  { value: "HOMEWORK_SUBMITTED", label: "Assignment submitted" },
+  { value: "HOMEWORK_MARKED", label: "Assignment marked" },
 ];
 
 /**

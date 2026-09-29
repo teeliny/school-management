@@ -59,6 +59,10 @@ export type Subject =
   | "ScheduleGenerationRequest"
   | "AdmissionInquiry"
   | "CareerContactInquiry"
+  // PRD §3.6a. "manage" = Admin/Super-Admin override on any homework; a
+  // subject teacher's own write access and every parent/student/class-
+  // teacher read is row-level, checked in HomeworkService, not here.
+  | "Homework"
   // No branch below grants this explicitly — only reachable via
   // SUPER_ADMIN's "manage all" above, same as SchoolProfile. Backs the
   // AuditLogController read endpoint (audit/audit-log.ts).
@@ -109,6 +113,13 @@ export class AbilityFactory {
       // (override), which the manual check in ScoreEntryService falls back
       // to when this flat capability is present.
       can("manage", ["AssessmentComponent", "ScoreEntry", "TermReportCard"]);
+
+      // PRD §3.6a: same override shape for homework — Admin/Super-Admin can
+      // create/mark/transfer any subject's homework. Deliberately NOT
+      // mirrored into the Principal/Headteacher/Vice Principal branches:
+      // they read their section's homework (service-scoped) but don't
+      // manage it.
+      can("manage", "Homework");
 
       // PRD §3.6/§5: Admin/Super-Admin configures the skills list and report
       // windows, and can rate skills / write any comment as override outside

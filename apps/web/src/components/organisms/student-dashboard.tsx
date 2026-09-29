@@ -6,6 +6,7 @@ import { apiFetch } from "../../lib/api";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
+import { WardHomeworkList } from "./ward-homework-list";
 import { Gauge } from "../molecules/progress-bar";
 import { BarChart } from "../molecules/chart";
 import { Badge } from "../atoms/badge";
@@ -181,6 +182,13 @@ export function StudentDashboard({ user }: { user: CurrentUser }) {
           <p className="text-sm text-muted">Loading…</p>
         )}
       </Card>
+
+      {user.studentProfileId && (
+        <Card>
+          <CardHeader title="Assignments" sub="This term" />
+          <WardHomeworkList studentId={user.studentProfileId} termId={termId || undefined} limit={5} />
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Card>

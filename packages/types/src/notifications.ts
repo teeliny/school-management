@@ -19,7 +19,10 @@ export type NotificationType =
   | "SCHEDULE_GENERATION_TIMED_OUT"
   | "SCHEDULE_GENERATION_FAILED"
   | "ADMISSION_INQUIRY_RECEIVED"
-  | "CAREER_CONTACT_INQUIRY_RECEIVED";
+  | "CAREER_CONTACT_INQUIRY_RECEIVED"
+  | "HOMEWORK_ASSIGNED"
+  | "HOMEWORK_SUBMITTED"
+  | "HOMEWORK_MARKED";
 
 export type NotificationChannel = "IN_APP" | "EMAIL" | "BOTH";
 
@@ -156,6 +159,30 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: DefaultNotificationTemplate[] = [
     channel: "BOTH",
     subject: "New careers/contact inquiry",
     bodyTemplate: 'New {{type}} inquiry from {{fullName}} ({{email}}): "{{message}}"',
+    isCritical: false,
+  },
+  // Homework (PRD §3.6a). Also seeded by migration
+  // 20260929120100_seed_homework_notification_templates for deployments set
+  // up before these types existed — keep that SQL's copy in sync.
+  {
+    key: "HOMEWORK_ASSIGNED",
+    channel: "IN_APP",
+    subject: "New assignment: {{subjectName}}",
+    bodyTemplate: '{{studentName}} has a new {{subjectName}} assignment, "{{homeworkTitle}}", due {{dueDate}}.',
+    isCritical: false,
+  },
+  {
+    key: "HOMEWORK_SUBMITTED",
+    channel: "IN_APP",
+    subject: "Assignment submitted",
+    bodyTemplate: '{{studentName}} submitted "{{homeworkTitle}}" ({{subjectName}}, {{classArmName}}).',
+    isCritical: false,
+  },
+  {
+    key: "HOMEWORK_MARKED",
+    channel: "IN_APP",
+    subject: "Assignment marked: {{subjectName}}",
+    bodyTemplate: '{{studentName}}\'s {{subjectName}} assignment "{{homeworkTitle}}" has been marked{{scoreText}}.',
     isCritical: false,
   },
 ];

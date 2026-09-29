@@ -278,6 +278,21 @@ Both **position** (per-subject and overall) and **sorting** (by any subject colu
 
 **Workflow:** Admin defines each class level's `AssessmentComponent`s for the term (validated to sum to 100) → components open on schedule (or Admin override) → subject teachers enter `ScoreEntry` while open → components close and later publish on schedule → aggregation job computes `SubjectTermResult` on close → in parallel, the term's `ReportWindow` opens for each class level → class teachers rate `SkillAssessmentItem`s and write their `CLASS_TEACHER` comment while it's open → window closes → subject teachers add `SUBJECT` comments, principal/headteacher adds their comment → Admin (or an automated job once all required pieces are present) triggers `TermReportCard` generation → Admin publishes → parents/students see it (published-only), scoped to what's been published per-component where partial visibility matters.
 
+### 3.6a Homework / Assignments (added 2026-09-29)
+
+Subject teachers set homework ("Assignments" in the UI) for one subject + class arm + term, optionally with file attachments, and later mark it per student with a score and/or a written correction (plus an optional correction file, e.g. a marked script). Visible to the subject teacher, Admin/Super-Admin, the class's class teacher and Principal/Headteacher/Vice Principal (read-only, own section), and — once published — to each enrolled student and their guardians, who see only their own child's mark.
+
+- **`Homework`** — id, subjectId, classArmId, termId, createdByUserId, title, instructions, dueDate, maxScore (nullable — null = "marked with feedback only, no number"), allowOnlineSubmission (default **false**, set per homework by the teacher), status (`DRAFT` → `PUBLISHED` → `CLOSED`, reopenable), publishedAt, caComponentId (nullable, see below), caTransferredAt.
+- **`HomeworkAttachment`** — teacher-provided files (storage key, name, type, size). PDF/Word/JPEG/PNG/WebP, ≤ 10 MB, ≤ 5 per homework.
+- **`HomeworkSubmission`** / **`HomeworkSubmissionFile`** — one per homework+student, only when `allowOnlineSubmission` is on and the homework is `PUBLISHED`. Made by the student or a guardian; flagged `isLate` after the due date; replaceable until marked, then locked.
+- **`HomeworkMark`** — one per homework+student: score (≤ maxScore, required iff maxScore is set), correction text, optional correction file, markedByUserId. Editable after release (every save is audited and re-notifies).
+
+**Roster** = students with an ACTIVE `StudentSubjectEnrollment` for that subject + class arm + term, so elective-subject homework only reaches students who took the subject. Homework obeys the same subject rules as score entry: never against an `isGroup` subject, and blocked if the subject is disabled for that term (`ClassSubjectTermStatus`) or class level (`ClassSubjectLevelStatus`).
+
+**Isolation from term grading (hard rule):** homework marks never feed `SubjectTermResult`, `TermReportCard`, or the broadsheet, and are never graded through `GradeScale`. The **only** bridge is opt-in per homework: the teacher may link it to one existing `CA`-type `AssessmentComponent` of the same term + class group (at most one homework per CA per subject + class arm), then explicitly **Transfer to gradebook**, which scales each marked score to the CA's maxScore (`score / homework.maxScore × CA.maxScore`, 2 dp) and writes ordinary `ScoreEntry` rows through the normal score-entry path — so the CA must be `OPEN` (Admin/Super-Admin override as usual), unmarked students are skipped (not zeroed), and the component structure is never changed. `ScoreEntry.sourceHomeworkId` records provenance for the gradebook's "from: <homework>" hint and is cleared by any later manual entry. Mark edits after a transfer flag the homework "gradebook out of date" until transferred again.
+
+**Notifications (in-app by default, customizable like any template):** `HOMEWORK_ASSIGNED` (first publish → each enrolled student + guardians), `HOMEWORK_SUBMITTED` (first submission → the subject teacher(s)), `HOMEWORK_MARKED` (each mark save → student + guardians).
+
 ### 3.7 Attendance
 
 - **`AttendanceSession`** — id, classArmId, date, period (nullable — null = daily attendance; set = per-period), takenByStaffId, type (STUDENT | STAFF).
@@ -368,6 +383,8 @@ User 1—* Notification
 | View own wards | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ (self only) |
 | Open/close assessment components | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Enter scores | ✅ (override) | ✅ (override) | ❌ (unless also subject teacher) | ✅ (own subject/class only) | ❌ | ❌ | ❌ |
+| Set & mark homework (§3.6a) | ✅ (override) | ✅ (override) | ❌ (view own class only, unless also subject teacher) | ✅ (own subject/class only) | ❌ | ❌ (view own wards' published homework + marks; submit online when enabled) | ❌ (view own; submit online when enabled) |
+| Transfer homework marks into a CA (§3.6a) | ✅ (override) | ✅ (override) | ❌ | ✅ (own subject/class, CA must be OPEN) | ❌ | ❌ | ❌ |
 | Enter subject/class comments | ✅ (override) | ✅ (override) | ✅ (class comment, own class) | ✅ (subject comment, own subject/class) | ❌ | ❌ | ❌ |
 | Publish report cards | ✅ | ✅ | ❌ (unless also Principal, Headteacher, or Vice Principal⁵ ⁸) | ❌ (unless also Principal, Headteacher, or Vice Principal⁵ ⁸) | ❌ | ❌ | ❌ |
 | View report cards | ✅ (all) | ✅ (all) | ✅ (own class) | ✅ (own subject entries) | ❌ | ✅ (own wards, published only) | ✅ (self, published only) |
@@ -455,6 +472,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR4.9: Published report cards trigger notification (in-app + email) to student and all linked guardians.
 - FR4.10: All `AssessmentComponent`/`ReportWindow` dates are surfaced on the Academic Calendar (§3.11) as soon as Admin sets them, regardless of current status.
 - FR4.11 (added post-Phase-4): Super-Admin or a staff member holding an active `PRINCIPAL`/`HEADTEACHER`/`VICE_PRINCIPAL` assignment (not plain Admin, §5) can view a **broadsheet** — every student in scope × every subject the scoped `ClassLevel` is offered (respecting `ClassSubjectLevelStatus` — a subject disabled for this specific `ClassLevel` doesn't get a column, even if the rest of its class group has it), one grid. Scoped to a `ClassLevel` by default (every arm combined) or a single `ClassArm`; and to one `Term` or a whole `AcademicSession` ("Overall," each cell averaged across whichever terms actually have a result, missing terms excluded rather than treated as zero — same rule as the annual-average report card grading in §3.6). Sortable by any subject, overall average, or overall position, and paginated — both computed server-side, with position always ranked over the full scope before any page is sliced out of it.
+- FR4.12 (added 2026-09-29, §3.6a): Subject teachers set homework for their own subject + class arm (Admin/Super-Admin as override) with optional attachments and optional online submission (off by default), and mark it with a score and/or correction; students and guardians see published homework and their own marks only. Homework never affects term results unless the teacher links it to a CA component and explicitly transfers the marks into the gradebook.
 
 ### 6.5 Attendance
 

@@ -80,6 +80,9 @@ model User {
   approvedInvigilationAssignments    InvigilationAssignment[]
   approvedDutyAssignments            DutyAssignment[]
   debtExcusalsGranted                StudentProfile[]            @relation("StudentDebtExcusedBy")
+  createdHomework                    Homework[]
+  homeworkMarksGiven                 HomeworkMark[]
+  homeworkSubmissionsMade            HomeworkSubmission[]
 
   @@map("users")
 }
@@ -211,6 +214,7 @@ model Term {
   scheduleGenerationRequests ScheduleGenerationRequest[]
   invoices                   Invoice[]
   dutyRosterWeeks            DutyRosterWeek[]
+  homework                   Homework[]
 
   @@unique([academicSessionId, name])
   @@map("terms")
@@ -259,6 +263,7 @@ model ClassArm {
   attendanceSessions         AttendanceSession[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
   examSchedules              ExamSchedule[]
+  homework                   Homework[]
 
   @@unique([classLevelId, academicSessionId, name])
   @@map("class_arms")
@@ -451,6 +456,8 @@ model StudentProfile {
   termReportCards         TermReportCard[]
   invoices                Invoice[]
   feeStructureAssignments FeeStructureStudentAssignment[]
+  homeworkMarks           HomeworkMark[]
+  homeworkSubmissions     HomeworkSubmission[]
 
   @@map("student_profiles")
 }
@@ -586,6 +593,7 @@ model Subject {
   attendanceSessions       AttendanceSession[]
   examSchedules            ExamSchedule[]
   childPeriodOverrides     ClassSubjectChildPeriods[]
+  homework                 Homework[]
 
   @@map("subjects")
 }
@@ -1185,6 +1193,7 @@ model AssessmentComponent {
   scoreEntries               ScoreEntry[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
   examSchedules              ExamSchedule[]
+  linkedHomework             Homework[]
 
   @@unique([termId, classLevelCategory, type, sequence])
   @@map("assessment_components")
@@ -1214,6 +1223,13 @@ model ScoreEntry {
   enteredByStaff        StaffProfile?       @relation(fields: [enteredByStaffId], references: [id])
   enteredAt             DateTime            @default(now())
   updatedAt             DateTime            @updatedAt
+  // Provenance only — set when this score was written by HomeworkService.
+  // transferToGradebook (a CA-linked Homework), cleared back to null by any
+  // later manual gradebook write. Nothing in term-result/report-card
+  // computation reads it; it only drives the gradebook's "from: <homework>"
+  // hint.
+  sourceHomeworkId      String?
+  sourceHomework        Homework?           @relation(fields: [sourceHomeworkId], references: [id], onDelete: SetNull)
 
   @@unique([studentId, subjectId, assessmentComponentId])
   @@map("score_entries")
@@ -1516,6 +1532,144 @@ model ReportComment {
 
   @@unique([studentId, termId, commentType, subjectId])
   @@map("report_comments")
+}
+
+// ---------------------------------------------------------------------------
+// 3.6a Homework (added 2026-09-29) — subject-teacher assignments with optional
+// file attachments, optional online submission, and per-student marks +
+// corrections visible to parents/students.
+//
+// DELIBERATELY ISOLATED FROM TERM GRADING: nothing in SubjectTermResult/
+// TermReportCard/Broadsheet computation (api or worker) reads these tables,
+// and a HomeworkMark is a plain score out of Homework.maxScore — never run
+// through GradeScale. The ONE bridge is opt-in per homework: a teacher may
+// link it to an existing CA-type AssessmentComponent (caComponentId) and
+// explicitly "transfer to gradebook", which writes ordinary ScoreEntry rows
+// through ScoreEntryService.enter (so every gradebook rule — OPEN status,
+// assignment check, enrollment, bounds — still applies). The term's
+// component structure itself is never changed. Keep it that way: if a
+// feature ever needs homework to affect term results, route it through
+// ScoreEntry, never by reading these tables from the worker.
+// ---------------------------------------------------------------------------
+
+enum HomeworkStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+}
+
+// @@unique([caComponentId, subjectId, classArmId]) is the "at most one
+// homework per CA per subject+class arm" rule — a plain @@unique is enough
+// here (no hand-added partial index) since Postgres treats the NULL
+// caComponentId of every unlinked homework as distinct.
+model Homework {
+  id                    String               @id @default(uuid())
+  subjectId             String
+  subject               Subject              @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  classArmId            String
+  classArm              ClassArm             @relation(fields: [classArmId], references: [id], onDelete: Cascade)
+  termId                String
+  term                  Term                 @relation(fields: [termId], references: [id], onDelete: Cascade)
+  // A User rather than StaffProfile — an Admin/Super-Admin override may not
+  // hold a StaffProfile at all (same reasoning as ScoreEntry.enteredByStaffId).
+  createdByUserId       String
+  createdByUser         User                 @relation(fields: [createdByUserId], references: [id])
+  title                 String
+  instructions          String
+  dueDate               DateTime             @db.Date
+  // Null = "marked" only (correction, no number). Required when
+  // caComponentId is set, since transfer scales score/maxScore.
+  maxScore              Decimal?             @db.Decimal(5, 2)
+  allowOnlineSubmission Boolean              @default(false)
+  status                HomeworkStatus       @default(DRAFT)
+  publishedAt           DateTime?
+  caComponentId         String?
+  caComponent           AssessmentComponent? @relation(fields: [caComponentId], references: [id], onDelete: SetNull)
+  // Last successful transferToGradebook — a HomeworkMark.updatedAt later
+  // than this means the gradebook is out of date for that student.
+  caTransferredAt       DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  attachments  HomeworkAttachment[]
+  submissions  HomeworkSubmission[]
+  marks        HomeworkMark[]
+  scoreEntries ScoreEntry[]
+
+  @@unique([caComponentId, subjectId, classArmId])
+  @@index([classArmId, subjectId, termId])
+  @@map("homework")
+}
+
+// Storage object key, not a signed URL — signed on every read, so a link
+// never goes stale the way a stored 7-day URL would.
+model HomeworkAttachment {
+  id         String   @id @default(uuid())
+  homeworkId String
+  homework   Homework @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  storageKey String
+  fileName   String
+  mimeType   String
+  sizeBytes  Int
+  uploadedAt DateTime @default(now())
+
+  @@map("homework_attachments")
+}
+
+// Only accepted while Homework.allowOnlineSubmission and status=PUBLISHED.
+// Replaceable until the student's HomeworkMark exists, then locked.
+model HomeworkSubmission {
+  id                String         @id @default(uuid())
+  homeworkId        String
+  homework          Homework       @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  studentId         String
+  student           StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  // The student themself or one of their guardians.
+  submittedByUserId String
+  submittedByUser   User           @relation(fields: [submittedByUserId], references: [id])
+  text              String?
+  isLate            Boolean        @default(false)
+  submittedAt       DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  files HomeworkSubmissionFile[]
+
+  @@unique([homeworkId, studentId])
+  @@map("homework_submissions")
+}
+
+model HomeworkSubmissionFile {
+  id           String             @id @default(uuid())
+  submissionId String
+  submission   HomeworkSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  storageKey   String
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  uploadedAt   DateTime           @default(now())
+
+  @@map("homework_submission_files")
+}
+
+model HomeworkMark {
+  id                   String         @id @default(uuid())
+  homeworkId           String
+  homework             Homework       @relation(fields: [homeworkId], references: [id], onDelete: Cascade)
+  studentId            String
+  student              StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  // Null only when Homework.maxScore is null (marked, no number).
+  score                Decimal?       @db.Decimal(5, 2)
+  correction           String?
+  correctionStorageKey String?
+  correctionFileName   String?
+  correctionMimeType   String?
+  markedByUserId       String
+  markedByUser         User           @relation(fields: [markedByUserId], references: [id])
+  markedAt             DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  @@unique([homeworkId, studentId])
+  @@map("homework_marks")
 }
 
 // PRD §3.7/§6.5, Phase 5: daily/per-period attendance. STAFF-type sessions
@@ -2030,6 +2184,9 @@ enum NotificationType {
   SCHEDULE_GENERATION_FAILED
   ADMISSION_INQUIRY_RECEIVED
   CAREER_CONTACT_INQUIRY_RECEIVED
+  HOMEWORK_ASSIGNED
+  HOMEWORK_SUBMITTED
+  HOMEWORK_MARKED
 }
 
 enum NotificationChannel {

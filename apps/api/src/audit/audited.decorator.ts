@@ -9,6 +9,7 @@ import { SetMetadata } from "@nestjs/common";
  */
 export type AuditModelKey =
   | "scoreEntry"
+  | "homework"
   | "feeStructure"
   | "payment"
   | "discountRequest"

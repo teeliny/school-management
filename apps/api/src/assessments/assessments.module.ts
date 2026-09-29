@@ -56,6 +56,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
   // it fresh per request rather than duplicating ~200 lines of subject-
   // weighting/positioning logic the way cross-process boundaries force
   // elsewhere (see BroadsheetService's own comment).
-  exports: [BroadsheetService],
+  // ScoreEntryService: HomeworkModule's opt-in CA transfer writes through
+  // it so every gradebook rule applies (PRD §3.6a).
+  exports: [BroadsheetService, ScoreEntryService],
 })
 export class AssessmentsModule {}

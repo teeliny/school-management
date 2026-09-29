@@ -29,7 +29,10 @@ export class ScoreEntryService {
    * Super-Admin, any time, as override. `enteredByStaffId` is left null for
    * an override entered by someone with no StaffProfile.
    */
-  async enter(dto: CreateScoreEntryDto, user: RequestUser, isOverride: boolean) {
+  // `sourceHomeworkId` is set only by HomeworkService.transferToGradebook
+  // (PRD §3.6a); every manual gradebook write leaves it null, which also
+  // clears a prior homework provenance on correction.
+  async enter(dto: CreateScoreEntryDto, user: RequestUser, isOverride: boolean, sourceHomeworkId: string | null = null) {
     let enteredByStaffId: string | null = null;
 
     const classArm = await this.prisma.classArm.findUniqueOrThrow({
@@ -143,8 +146,8 @@ export class ScoreEntryService {
 
     const scoreEntry = await this.prisma.scoreEntry.upsert({
       where,
-      create: { ...dto, enteredByStaffId },
-      update: { score: dto.score, classArmId: dto.classArmId, enteredByStaffId },
+      create: { ...dto, enteredByStaffId, sourceHomeworkId },
+      update: { score: dto.score, classArmId: dto.classArmId, enteredByStaffId, sourceHomeworkId },
     });
 
     return { scoreEntry, before };
@@ -160,6 +163,8 @@ export class ScoreEntryService {
         ...filters,
         ...(categories ? { classArm: { classLevel: { category: { in: categories } } } } : {}),
       },
+      // Powers the gradebook's "from: <homework>" hint (PRD §3.6a).
+      include: { sourceHomework: { select: { id: true, title: true } } },
       orderBy: { enteredAt: "desc" },
     });
   }

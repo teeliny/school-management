@@ -9,6 +9,7 @@ import type { CurrentUser } from "../../lib/use-current-user";
 import type { ParentChild } from "../../lib/use-parent-children";
 import { useCurrentTerm } from "../../lib/use-current-term";
 import { Card, CardHeader } from "../molecules/card";
+import { WardHomeworkList } from "./ward-homework-list";
 import { Gauge } from "../molecules/progress-bar";
 import { Tabs, TabsList, TabsTrigger } from "../molecules/tabs";
 import { StatCard } from "../atoms/stat-card";
@@ -107,6 +108,11 @@ export function ParentDashboard({
         </Tabs>
       )}
       <WardSection child={selectedChild} academicSessionId={academicSessionId} termId={termId} />
+
+      <Card>
+        <CardHeader title="Assignments" sub={`${formatPersonName(selectedChild.user)} · this term`} />
+        <WardHomeworkList studentId={selectedChild.id} termId={termId || undefined} limit={5} />
+      </Card>
 
       <Card>
         <CardHeader title="Notifications" />

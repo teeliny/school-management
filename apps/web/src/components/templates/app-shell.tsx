@@ -18,6 +18,7 @@ import {
   LogOut,
   ClipboardList,
   NotebookPen,
+  BookOpenCheck,
   MessageSquare,
   FileText,
   Calendar,
@@ -214,6 +215,20 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           isAdmin ||
           user.assignmentTypes.includes("SUBJECT_TEACHER") ||
           ["PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
+            user.assignmentTypes.includes(t),
+          ),
+      },
+      {
+        // PRD §3.6a — teachers set/mark, class teachers and section leads
+        // view, parents/students see their own published homework.
+        href: "/assignments",
+        label: "Assignments",
+        icon: BookOpenCheck,
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          user.roles.includes("PARENT") ||
+          user.roles.includes("STUDENT") ||
+          ["SUBJECT_TEACHER", "CLASS_TEACHER", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
             user.assignmentTypes.includes(t),
           ),
       },
