@@ -507,10 +507,16 @@ export function findSubjectLabelSuffix(
 export interface SubjectDayRestriction {
   subjectName: string;
   day: DayOfWeek;
+  // Optional "@ClassLevelName,ClassLevelName" suffix, same convention as
+  // SpecialPeriod.classLevelNames — e.g. "CHEMISTRY:MONDAY@SSS 1,SSS 2,SSS 3"
+  // restricts Chemistry for SSS arms only, leaving a same-named subject in
+  // another ClassLevel of the same group (JSS's CRS vs SSS's CRS) untouched.
+  // undefined = every arm the key applies to (the original, unscoped behavior).
+  classLevelNames?: string[];
 }
 
 /**
- * Parses SUBJECT_ALLOWED_DAYS's `"SubjectName:DAY"` string-list format — one
+ * Parses SUBJECT_ALLOWED_DAYS's `"SubjectName:DAY[@ClassLevel,...]"` string-list format — one
  * entry per allowed day, so a subject needing more than one day (e.g. French
  * on Tuesday and Thursday) gets two entries. `subjectName` matches
  * `Subject.name` case-insensitively (via {@link normalizeSubjectName}) since
@@ -528,13 +534,42 @@ export function parseSubjectDayRestrictions(raw: unknown): SubjectDayRestriction
   const result: SubjectDayRestriction[] = [];
   for (const entry of raw) {
     if (typeof entry !== "string") continue;
-    const match = /^(.+):([A-Z]+)$/.exec(entry.trim());
+    const scopeIndex = entry.indexOf("@");
+    const body = scopeIndex === -1 ? entry : entry.slice(0, scopeIndex);
+    const match = /^(.+):([A-Z]+)$/.exec(body.trim());
     if (!match) continue;
     const [, subjectName, day] = match as unknown as [string, string, string];
     if (!DAYS_OF_WEEK.includes(day as DayOfWeek)) continue;
-    result.push({ subjectName: subjectName.trim(), day: day as DayOfWeek });
+    const classLevelNames =
+      scopeIndex === -1
+        ? undefined
+        : entry
+            .slice(scopeIndex + 1)
+            .split(",")
+            .map(normalizeSubjectName)
+            .filter((name) => name.length > 0);
+    result.push({ subjectName: subjectName.trim(), day: day as DayOfWeek, ...(classLevelNames ? { classLevelNames } : {}) });
   }
   return result;
+}
+
+/**
+ * The allowed days for one subject in one arm of `classLevelName` — the union
+ * of every restriction that's unscoped or scoped to that ClassLevel. undefined
+ * (no restriction at all) when none apply, so a scoped entry never narrows a
+ * same-named subject in a ClassLevel it doesn't name.
+ */
+export function allowedDaysForClassLevel(
+  restrictions: SubjectDayRestriction[],
+  classLevelName: string,
+): DayOfWeek[] | undefined {
+  const levelKey = normalizeSubjectName(classLevelName);
+  const days: DayOfWeek[] = [];
+  for (const r of restrictions) {
+    if (r.classLevelNames && !r.classLevelNames.includes(levelKey)) continue;
+    if (!days.includes(r.day)) days.push(r.day);
+  }
+  return days.length > 0 ? days : undefined;
 }
 
 /** Case/whitespace-insensitive key for matching a SchedulingConstraint subject-name entry against `Subject.name`. */

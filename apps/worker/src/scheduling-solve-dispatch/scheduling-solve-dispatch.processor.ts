@@ -13,6 +13,7 @@ import {
   TimetableApprovalStatus,
 } from "@prisma/client";
 import {
+  allowedDaysForClassLevel,
   CLASS_LEVEL_CATEGORIES,
   categoryToGroup,
   computePeriodTime,
@@ -31,6 +32,7 @@ import {
   type PeriodStructure,
   type SchedulingSolveDispatchJob,
   type SpecialPeriod,
+  type SubjectDayRestriction,
   type SubjectDayPeriodRequirement,
 } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -126,7 +128,9 @@ interface DayPeriodRequirementPayload {
 
 /** Parsed once per group by resolveSubjectDayPreferences — see its own comment. */
 interface SubjectDayPreferences {
-  allowedDaysBySubject: Map<string, DayOfWeek[]>;
+  // Per subject name, every SUBJECT_ALLOWED_DAYS entry (possibly
+  // ClassLevel-scoped) — resolved per arm via allowedDaysForClassLevel.
+  allowedDaysBySubject: Map<string, SubjectDayRestriction[]>;
   preferMorningSubjects: Set<string>;
   preferAfternoonSubjects: Set<string>;
   // LAST_PERIOD_BLOCK_SUBJECT_COUNTS/_DAYS (PRIMARY/Basic's Common Entrance
@@ -420,6 +424,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           arm.classLevel.category,
           arm.id,
           arm.classLevelId,
+          arm.classLevel.name,
           term.academicSessionId,
           term.id,
           subjectDayPreferences,
@@ -1233,6 +1238,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     category: ClassLevelCategory,
     classArmId: string,
     classLevelId: string,
+    classLevelName: string,
     academicSessionId: string,
     termId: string,
     subjectDayPreferences: SubjectDayPreferences,
@@ -1291,7 +1297,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         // group-wide (PRIMARY-shared, name-keyed) SUBJECT_ALLOWED_DAYS — e.g.
         // Creative Writing stays Friday-only for Basic but moves to Thursday
         // for Nursery. See parseSubjectDayPeriodRequirements.
-        allowedDays: dayPeriodRequirements.length > 0 ? undefined : subjectDayPreferences.allowedDaysBySubject.get(nameKey),
+        allowedDays:
+          dayPeriodRequirements.length > 0
+            ? undefined
+            : allowedDaysForClassLevel(subjectDayPreferences.allowedDaysBySubject.get(nameKey) ?? [], classLevelName),
         preferMorning: subjectDayPreferences.preferMorningSubjects.has(nameKey),
         preferAfternoon: subjectDayPreferences.preferAfternoonSubjects.has(nameKey),
         periodBlockRequiredCount: Math.min(rawPeriodBlockCount, subject.periodsPerWeek),
@@ -1411,13 +1420,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       },
     });
 
-    const allowedDaysBySubject = new Map<string, DayOfWeek[]>();
+    const allowedDaysBySubject = new Map<string, SubjectDayRestriction[]>();
     const allowedDaysRow = rows.find((r) => r.key === "SUBJECT_ALLOWED_DAYS");
-    for (const { subjectName, day } of parseSubjectDayRestrictions(allowedDaysRow?.value)) {
-      const key = normalizeSubjectName(subjectName);
-      const days = allowedDaysBySubject.get(key) ?? [];
-      if (!days.includes(day)) days.push(day);
-      allowedDaysBySubject.set(key, days);
+    for (const restriction of parseSubjectDayRestrictions(allowedDaysRow?.value)) {
+      const key = normalizeSubjectName(restriction.subjectName);
+      allowedDaysBySubject.set(key, [...(allowedDaysBySubject.get(key) ?? []), restriction]);
     }
 
     const parseNameSet = (key: string): Set<string> => {
