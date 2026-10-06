@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { categoryToGroup, type ClassLevelCategory } from "@school/types";
+import { categoryToGroup, examArrangementFor, type ClassLevelCategory, type ExamArrangement } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -26,8 +26,23 @@ interface AssessmentComponentOption {
   name: string;
   type: "CA" | "MID_TERM" | "EXAM";
   termId: string;
-  classLevelCategory: string;
+  classLevelCategory: ClassLevelCategory;
   sequence: number;
+}
+
+/** Plain-language summary of a component's exam sitting (examArrangementFor), shown under the picker. */
+function describeArrangement(arrangement: ExamArrangement, scope: Scope): string {
+  const sitting = arrangement.sittingCategories.join(" + ");
+  const timetable = arrangement.unified
+    ? `One combined timetable for ${sitting} — every class sits its papers in the same fixed slots.`
+    : `One run for ${sitting}, laid out per class arm — papers per day follow the configured slots/duration.`;
+  const invigilation =
+    arrangement.invigilation === "CLASS_TEACHER"
+      ? "Invigilated by each class's own class teacher(s)."
+      : arrangement.invigilation === "ONE_PER_ARM_PER_DAY"
+        ? "One teacher per class arm per day."
+        : `A fixed number of hall invigilators per day${arrangement.poolClassTeachersOnly ? ", drawn from the class teachers only" : ""}.`;
+  return scope === "EXAM_TIMETABLE" ? timetable : invigilation;
 }
 
 type Scope = "CLASS_TIMETABLE" | "EXAM_TIMETABLE" | "INVIGILATION" | "WEEKLY_DUTY";
@@ -64,6 +79,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
   const [examEndDate, setExamEndDate] = useState("");
   const [includeNonTeachingStaff, setIncludeNonTeachingStaff] = useState(false);
   const [teachersPerWeek, setTeachersPerWeek] = useState("");
+  const [invigilatorsPerDay, setInvigilatorsPerDay] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +107,33 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
   const componentsForTerm = (termId ? components.filter((c) => c.termId === termId) : components).filter(
     (c) => c.classLevelCategory !== "CRECHE",
   );
+
+  // Components that generate together as ONE sitting (examArrangementFor —
+  // e.g. JSS + SSS) collapse into a single option, since picking either one
+  // starts the identical combined run. Ordered by section, mid-term first.
+  const CATEGORY_ORDER: ClassLevelCategory[] = ["RECEPTION", "NURSERY", "PRIMARY", "JSS", "SSS"];
+  const componentOptions = (() => {
+    const bySitting = new Map<string, { id: string; label: string; type: string; firstCategory: number }>();
+    for (const c of componentsForTerm) {
+      const type = c.type === "MID_TERM" ? "MID_TERM" : "EXAM";
+      const sitting = examArrangementFor(c.classLevelCategory, type).sittingCategories;
+      const key = `${c.termId}|${type}|${c.sequence}|${sitting.join(",")}`;
+      if (bySitting.has(key)) continue;
+      const present = sitting.filter((cat) => componentsForTerm.some((o) => o.termId === c.termId && o.type === c.type && o.sequence === c.sequence && o.classLevelCategory === cat));
+      bySitting.set(key, {
+        id: c.id,
+        label: `${present.join(" + ")} · ${c.name}`,
+        type,
+        firstCategory: CATEGORY_ORDER.indexOf(present[0] ?? c.classLevelCategory),
+      });
+    }
+    return [...bySitting.values()].sort((a, b) => a.type.localeCompare(b.type) * -1 || a.firstCategory - b.firstCategory);
+  })();
+
+  const selectedComponent = components.find((c) => c.id === assessmentComponentId);
+  const arrangement = selectedComponent
+    ? examArrangementFor(selectedComponent.classLevelCategory, selectedComponent.type === "MID_TERM" ? "MID_TERM" : "EXAM")
+    : null;
 
   // Once a class level group is picked for CLASS_TIMETABLE, the class arm
   // list below it narrows to that group's arms only — picking a group and
@@ -122,6 +165,9 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
       }
       if (scope === "INVIGILATION" && includeNonTeachingStaff) {
         parameters.includeNonTeachingStaff = true;
+      }
+      if (scope === "INVIGILATION" && arrangement?.invigilation === "HALL_POOL_PER_DAY" && invigilatorsPerDay.trim()) {
+        parameters.invigilatorsPerDay = Number(invigilatorsPerDay);
       }
       if (scope === "WEEKLY_DUTY" && teachersPerWeek.trim()) {
         parameters.teachersPerWeek = Number(teachersPerWeek);
@@ -194,13 +240,14 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
               <SelectValue placeholder={termId ? "Select a component for this term" : "Select a term first"} />
             </SelectTrigger>
             <SelectContent>
-              {componentsForTerm.map((c) => (
+              {componentOptions.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
-                  {c.classLevelCategory} · {c.name}
+                  {c.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {arrangement && <p className="mt-1 text-[11.5px] text-muted">{describeArrangement(arrangement, scope)}</p>}
         </div>
       )}
 
@@ -267,7 +314,20 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
         </div>
       )}
 
-      {scope === "INVIGILATION" && (
+      {scope === "INVIGILATION" && arrangement?.invigilation === "HALL_POOL_PER_DAY" && (
+        <div>
+          <Label htmlFor="trigger-invigilators-per-day">Invigilators per day (optional — uses the configured default)</Label>
+          <Input
+            id="trigger-invigilators-per-day"
+            type="number"
+            min={1}
+            value={invigilatorsPerDay}
+            onChange={(e) => setInvigilatorsPerDay(e.target.value)}
+          />
+        </div>
+      )}
+
+      {scope === "INVIGILATION" && arrangement && arrangement.invigilation !== "CLASS_TEACHER" && !arrangement.poolClassTeachersOnly && (
         <label className="flex items-center gap-2 text-[12.5px]">
           <Checkbox checked={includeNonTeachingStaff} onCheckedChange={(c) => setIncludeNonTeachingStaff(c === true)} />
           Include non-teaching staff in the eligible pool

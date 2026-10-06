@@ -1,14 +1,26 @@
 """
-BUILD_PLAN.md §9 Step 4: the CP-SAT model for `scope=INVIGILATION`.
+BUILD_PLAN.md §9 Step 4: the model for `scope=INVIGILATION`.
 
-Unlike class_timetable.py (solved per group) and exam_timetable.py (solved
-per class arm, independently), this is ONE combined solve across every
-targeted `ExamSchedule` row at once — staff are a shared, scarce resource
-across class arms here (like class_timetable.py's teachers), so a staff
-member invigilating one arm's exam is unavailable for any other arm's
-overlapping exam. This is also the first scope in this phase with a real
-optimization objective — BUILD_PLAN.md/PRD FR6.4 name load balancing as an
-actual requirement, not just "first feasible solution" like Steps 2/3.
+Three modes, one per exam arrangement (examArrangementFor in packages/types,
+resolved by apps/worker — this service only ever sees the mode it's told):
+
+- CLASS_TEACHER (Reception/Nursery, and Basic mid-term): every paper a class
+  arm sits is supervised by that arm's own class teacher(s) — first = LEAD,
+  second (if any) = ASSISTANT. Deterministic, no CP-SAT model needed.
+- ONE_PER_ARM_PER_DAY (JSS/SSS mid-term): one teacher per class arm per exam
+  day, covering every paper that arm sits that day (LEAD on each of them).
+  A teacher covers at most one arm per day, never an arm on a day it sits one
+  of the teacher's own subjects (FR6.4's JSS/SSS hard exclusion), and isn't
+  already invigilating elsewhere that day. Load-balanced.
+- HALL_POOL_PER_DAY (JSS/SSS exam, Basic exam — mixed halls): exactly N
+  invigilators per exam day for the whole sitting, not tied to any paper.
+  Load-balanced; a teacher whose own subject is being written that day is
+  avoided where possible (soft — a hall sits every subject over the period,
+  so a hard rule would rule out nearly everyone on busy days).
+
+Staff are a shared, scarce resource across arms/days, so modes 2 and 3 are
+each ONE combined solve, minimizing the maximum per-staff load (existing
+load from earlier runs included), same min-max idiom as before.
 """
 
 from typing import Any
@@ -16,9 +28,9 @@ from typing import Any
 from ortools.sat.python import cp_model
 from pydantic import BaseModel, Field
 
-LEAD = "LEAD"
-ASSISTANT = "ASSISTANT"
-ROLES = (LEAD, ASSISTANT)
+CLASS_TEACHER = "CLASS_TEACHER"
+ONE_PER_ARM_PER_DAY = "ONE_PER_ARM_PER_DAY"
+HALL_POOL_PER_DAY = "HALL_POOL_PER_DAY"
 
 SOLVE_TIME_LIMIT_SECONDS = 20.0
 # Dominates the objective so the solver always prefers a more balanced
@@ -29,156 +41,166 @@ BALANCE_WEIGHT = 1000
 
 class InvigilationExamPayload(BaseModel):
     examScheduleId: str
+    classArmId: str
     date: str
     startTime: str
     endTime: str
     ownSubjectTeacherStaffId: str | None = None
+    # CLASS_TEACHER mode only — the arm's active class teachers, in a stable order.
+    classTeacherStaffIds: list[str] = Field(default_factory=list)
 
 
 class StaffExistingLoadPayload(BaseModel):
     totalCount: int = 0
-    countByDate: dict[str, int] = Field(default_factory=dict)
-    blockedRanges: list[dict[str, str]] = Field(default_factory=list)
-
-
-def _time_to_minutes(t: str) -> int:
-    h, m = t.split(":")
-    return int(h) * 60 + int(m)
-
-
-def _ranges_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
-    return _time_to_minutes(a_start) < _time_to_minutes(b_end) and _time_to_minutes(b_start) < _time_to_minutes(a_end)
+    # Dates the staff member is already invigilating anything (any earlier,
+    # non-rejected run) — blocked outright for the per-day modes, since both
+    # occupy the whole exam day.
+    busyDates: list[str] = Field(default_factory=list)
 
 
 def solve_invigilation(
     request_id: str,
     callback_token: str,
-    max_invigilations_per_staff_per_day: int,
-    hard_exclude_own_subject_teacher: bool,
+    mode: str,
     exams: list[InvigilationExamPayload],
     eligible_staff_ids: list[str],
     existing_load: dict[str, StaffExistingLoadPayload],
+    invigilators_per_day: int = 2,
 ) -> dict[str, Any]:
     if not exams:
         return {"callbackToken": callback_token, "result": {"generatedRows": []}}
 
+    if mode == CLASS_TEACHER:
+        result = _solve_class_teacher(exams)
+    elif mode == ONE_PER_ARM_PER_DAY:
+        result = _solve_one_per_arm_per_day(exams, eligible_staff_ids, existing_load)
+    elif mode == HALL_POOL_PER_DAY:
+        result = _solve_hall_pool(exams, eligible_staff_ids, existing_load, invigilators_per_day)
+    else:
+        result = f"Unknown invigilation mode {mode!r}"
+
+    if isinstance(result, str):
+        return {"callbackToken": callback_token, "error": f"{result} (requestId={request_id})"}
+    return {"callbackToken": callback_token, "result": {"generatedRows": result}}
+
+
+def _solve_class_teacher(exams: list[InvigilationExamPayload]) -> list[dict[str, Any]] | str:
+    rows: list[dict[str, Any]] = []
+    missing_arms: set[str] = set()
+    for exam in exams:
+        if not exam.classTeacherStaffIds:
+            missing_arms.add(exam.classArmId)
+            continue
+        rows.append({"examScheduleId": exam.examScheduleId, "staffId": exam.classTeacherStaffIds[0], "role": "LEAD"})
+        if len(exam.classTeacherStaffIds) > 1:
+            rows.append({"examScheduleId": exam.examScheduleId, "staffId": exam.classTeacherStaffIds[1], "role": "ASSISTANT"})
+    if missing_arms:
+        return f"No active class teacher for class arm(s) {', '.join(sorted(missing_arms))} — assign one first"
+    return rows
+
+
+def _busy(existing_load: dict[str, StaffExistingLoadPayload], staff_id: str, date: str) -> bool:
+    load = existing_load.get(staff_id)
+    return bool(load and date in load.busyDates)
+
+
+def _existing_total(existing_load: dict[str, StaffExistingLoadPayload], staff_id: str) -> int:
+    load = existing_load.get(staff_id)
+    return load.totalCount if load else 0
+
+
+def _solve_one_per_arm_per_day(
+    exams: list[InvigilationExamPayload],
+    eligible_staff_ids: list[str],
+    existing_load: dict[str, StaffExistingLoadPayload],
+) -> list[dict[str, Any]] | str:
+    # (classArmId, date) -> that arm's papers that day.
+    arm_days: dict[tuple[str, str], list[InvigilationExamPayload]] = {}
+    for exam in exams:
+        arm_days.setdefault((exam.classArmId, exam.date), []).append(exam)
+
     model = cp_model.CpModel()
+    assign: dict[tuple[tuple[str, str], str], Any] = {}
+    for key, day_exams in arm_days.items():
+        _arm, date = key
+        own_teachers = {e.ownSubjectTeacherStaffId for e in day_exams if e.ownSubjectTeacherStaffId}
+        candidates = [s for s in eligible_staff_ids if s not in own_teachers and not _busy(existing_load, s, date)]
+        if not candidates:
+            return f"No eligible invigilator for class arm {key[0]} on {date} (everyone teaches one of that day's subjects or is already on duty)"
+        for staff_id in candidates:
+            assign[(key, staff_id)] = model.new_bool_var(f"a_{key[0]}_{date}_{staff_id}")
+        model.add(sum(assign[(key, s)] for s in candidates) == 1)
 
-    def is_blocked(staff_id: str, exam: InvigilationExamPayload) -> bool:
-        load = existing_load.get(staff_id)
-        if not load:
-            return False
-        return any(
-            blocked["date"] == exam.date and _ranges_overlap(exam.startTime, exam.endTime, blocked["startTime"], blocked["endTime"])
-            for blocked in load.blockedRanges
-        )
-
-    # assign[(examScheduleId, staffId, role)] — skipped entirely (not
-    # created) when hard-excluded (that exam's own subject teacher, JSS/SSS
-    # runs only) or already blocked by an existing assignment.
-    assign: dict[tuple[str, str, str], Any] = {}
-    for exam in exams:
-        for staff_id in eligible_staff_ids:
-            if hard_exclude_own_subject_teacher and staff_id == exam.ownSubjectTeacherStaffId:
-                continue
-            if is_blocked(staff_id, exam):
-                continue
-            for role in ROLES:
-                assign[(exam.examScheduleId, staff_id, role)] = model.new_bool_var(
-                    f"assign_{exam.examScheduleId}_{staff_id}_{role}"
-                )
-
-    # Exactly one LEAD and one ASSISTANT per exam.
-    for exam in exams:
-        for role in ROLES:
-            role_vars = [v for (eid, _sid, r), v in assign.items() if eid == exam.examScheduleId and r == role]
-            if not role_vars:
-                return {
-                    "callbackToken": callback_token,
-                    "error": f"No eligible invigilator available for exam {exam.examScheduleId} (requestId={request_id})",
-                }
-            model.add(sum(role_vars) == 1)
-
-    # A staff member holds at most one role per exam.
-    for exam in exams:
-        for staff_id in eligible_staff_ids:
-            pair_vars = [assign[k] for k in assign if k[0] == exam.examScheduleId and k[1] == staff_id]
-            if len(pair_vars) > 1:
-                model.add(sum(pair_vars) <= 1)
-
-    def assigned_to_exam(exam_id: str, staff_id: str) -> Any:
-        vars_here = [assign[k] for k in assign if k[0] == exam_id and k[1] == staff_id]
-        return sum(vars_here) if vars_here else 0
-
-    # No staff double-booked across two exams with overlapping date/time —
-    # PRD FR6.4's "no staff member invigilates two concurrent exams,"
-    # confirmed a real scenario since Step 3 solves each class arm
-    # independently with no cross-arm time coordination.
-    for i in range(len(exams)):
-        for j in range(i + 1, len(exams)):
-            a, b = exams[i], exams[j]
-            if a.date != b.date or not _ranges_overlap(a.startTime, a.endTime, b.startTime, b.endTime):
-                continue
-            for staff_id in eligible_staff_ids:
-                expr_a = assigned_to_exam(a.examScheduleId, staff_id)
-                expr_b = assigned_to_exam(b.examScheduleId, staff_id)
-                if (isinstance(expr_a, int) and expr_a == 0) or (isinstance(expr_b, int) and expr_b == 0):
-                    continue
-                model.add(expr_a + expr_b <= 1)
-
-    # MAX_INVIGILATIONS_PER_STAFF_PER_DAY: new assignments that day +
-    # existing count <= cap.
-    exams_by_date: dict[str, list[str]] = {}
-    for exam in exams:
-        exams_by_date.setdefault(exam.date, []).append(exam.examScheduleId)
-
+    # One arm per teacher per day.
+    dates = {d for (_a, d) in arm_days}
     for staff_id in eligible_staff_ids:
-        existing = existing_load.get(staff_id)
-        for date, exam_ids_that_day in exams_by_date.items():
-            existing_count = existing.countByDate.get(date, 0) if existing else 0
-            day_vars = [assign[k] for k in assign if k[1] == staff_id and k[0] in exam_ids_that_day]
-            if day_vars:
-                model.add(sum(day_vars) + existing_count <= max_invigilations_per_staff_per_day)
+        for date in dates:
+            day_vars = [v for ((arm_key, sid), v) in assign.items() if sid == staff_id and arm_key[1] == date]
+            if len(day_vars) > 1:
+                model.add(sum(day_vars) <= 1)
 
-    # Load-balancing objective (BUILD_PLAN.md/FR6.4's stated requirement,
-    # unlike Steps 2/3's "first feasible solution"): minimize the maximum
-    # per-staff total (existing + new) invigilation count across the run —
-    # the standard CP-SAT min-max idiom.
-    total_assignable = len(exams) * 2
-    max_possible_load = total_assignable + max(
-        (existing_load[s].totalCount for s in eligible_staff_ids if s in existing_load), default=0
-    )
-    max_load = model.new_int_var(0, max(max_possible_load, 1), "max_load")
+    max_load = model.new_int_var(0, len(arm_days) + max((_existing_total(existing_load, s) for s in eligible_staff_ids), default=0), "max_load")
     for staff_id in eligible_staff_ids:
-        existing_total = existing_load[staff_id].totalCount if staff_id in existing_load else 0
-        new_vars = [v for (_eid, sid, _r), v in assign.items() if sid == staff_id]
-        model.add(existing_total + sum(new_vars) <= max_load)
+        new_vars = [v for ((_k, sid), v) in assign.items() if sid == staff_id]
+        if new_vars:
+            model.add(_existing_total(existing_load, staff_id) + sum(new_vars) <= max_load)
+    model.minimize(max_load)
 
-    # Soft own-subject-teacher avoidance — only possible at all when not
-    # hard-excluded (CRECHE/NURSERY/PRIMARY runs): nudge the solver away
-    # from assigning a subject's own teacher without forbidding it outright,
-    # per FR6.4's soft-preference language for that group.
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
+    status = solver.solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return "No feasible invigilation roster found — too few eligible teachers for the class arms sitting each day"
+
+    rows: list[dict[str, Any]] = []
+    for (key, staff_id), var in assign.items():
+        if solver.value(var):
+            for exam in arm_days[key]:
+                rows.append({"examScheduleId": exam.examScheduleId, "staffId": staff_id, "role": "LEAD"})
+    return rows
+
+
+def _solve_hall_pool(
+    exams: list[InvigilationExamPayload],
+    eligible_staff_ids: list[str],
+    existing_load: dict[str, StaffExistingLoadPayload],
+    invigilators_per_day: int,
+) -> list[dict[str, Any]] | str:
+    if invigilators_per_day < 1:
+        return "Invigilators per day must be at least 1"
+
+    own_teachers_by_date: dict[str, set[str]] = {}
+    for exam in exams:
+        own = own_teachers_by_date.setdefault(exam.date, set())
+        if exam.ownSubjectTeacherStaffId:
+            own.add(exam.ownSubjectTeacherStaffId)
+    dates = sorted(own_teachers_by_date)
+
+    model = cp_model.CpModel()
+    assign: dict[tuple[str, str], Any] = {}
     soft_penalty_vars = []
-    if not hard_exclude_own_subject_teacher:
-        for exam in exams:
-            if not exam.ownSubjectTeacherStaffId:
-                continue
-            soft_penalty_vars.extend(
-                v for (eid, sid, _r), v in assign.items() if eid == exam.examScheduleId and sid == exam.ownSubjectTeacherStaffId
-            )
+    for date in dates:
+        candidates = [s for s in eligible_staff_ids if not _busy(existing_load, s, date)]
+        if len(candidates) < invigilators_per_day:
+            return f"Only {len(candidates)} eligible invigilator(s) free on {date}, but {invigilators_per_day} are required per day"
+        for staff_id in candidates:
+            var = model.new_bool_var(f"h_{date}_{staff_id}")
+            assign[(date, staff_id)] = var
+            if staff_id in own_teachers_by_date[date]:
+                soft_penalty_vars.append(var)
+        model.add(sum(assign[(date, s)] for s in candidates) == invigilators_per_day)
 
+    max_load = model.new_int_var(0, len(dates) + max((_existing_total(existing_load, s) for s in eligible_staff_ids), default=0), "max_load")
+    for staff_id in eligible_staff_ids:
+        new_vars = [v for ((_d, sid), v) in assign.items() if sid == staff_id]
+        if new_vars:
+            model.add(_existing_total(existing_load, staff_id) + sum(new_vars) <= max_load)
     model.minimize(BALANCE_WEIGHT * max_load + sum(soft_penalty_vars))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
     status = solver.solve(model)
-
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return {"callbackToken": callback_token, "error": f"No feasible invigilation roster found (requestId={request_id})"}
+        return "No feasible hall invigilation roster found"
 
-    rows: list[dict[str, Any]] = []
-    for (exam_id, staff_id, role), var in assign.items():
-        if solver.value(var):
-            rows.append({"examScheduleId": exam_id, "staffId": staff_id, "role": role})
-
-    return {"callbackToken": callback_token, "result": {"generatedRows": rows}}
+    return [{"date": date, "staffId": staff_id} for (date, staff_id), var in assign.items() if solver.value(var)]

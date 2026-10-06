@@ -7,6 +7,10 @@ isn't tied to when their students sit the exam — that's invigilation, Step
 4, a separate staff pool), and there's no shared resource across class arms
 (no teacher, no venue catalog), so each class arm's exam schedule is solved
 **independently** here — unlike class_timetable.py's per-group solve.
+
+Exception: a `unified` sitting (examArrangementFor in packages/types — JSS+SSS
+for both mid-term and exam, Basic 1-6 for the terminal exam) is ONE combined
+model on a shared fixed slot grid, see _solve_unified.
 """
 
 from typing import Any
@@ -24,6 +28,10 @@ class ExamSubjectPayload(BaseModel):
     # one of them), so the day only costs 1 unit of max_subjects_per_day, not
     # N. None means "not part of a bundle."
     concurrencyGroupId: str | None = None
+    # {EXAM,MID_TERM}_LAST_DAYS_SUBJECTS: only the exam period's last
+    # `last_days_window` days are open to this paper (and, via the shared
+    # variable, to its whole bundle).
+    lastDaysOnly: bool = False
 
 
 class ExistingLoadPayload(BaseModel):
@@ -33,11 +41,24 @@ class ExistingLoadPayload(BaseModel):
 
 class ExamClassArmPayload(BaseModel):
     classArmId: str
+    # Unified sittings only: arms of the same ClassLevel sit the identical
+    # paper at the identical time (they share one set of decision variables).
+    classLevelId: str | None = None
+    # Echoed back on every generated row — a unified JSS/SSS sitting spans two
+    # AssessmentComponents (one per category), so the callback can't assume
+    # the request's own component for every row.
+    assessmentComponentId: str | None = None
     subjects: list[ExamSubjectPayload]
     existingByDate: dict[str, ExistingLoadPayload] = Field(default_factory=dict)
 
 
 SOLVE_TIME_LIMIT_SECONDS = 20.0
+UNIFIED_SOLVE_TIME_LIMIT_SECONDS = 45.0
+
+# Objective weights. Packing (fill each exam day up to its slot capacity
+# before using a later day) is the baseline nudge; the others dominate it.
+CALC_NOT_FIRST_PENALTY = 1000
+CROSS_LEVEL_MISALIGN_PENALTY = 50
 
 
 def solve_exam_timetable(
@@ -51,7 +72,37 @@ def solve_exam_timetable(
     spread_calculation_subjects: bool,
     min_gap_between_calculation_exams_days: int,
     class_arms: list[ExamClassArmPayload],
+    unified: bool = False,
+    exam_day_end_time: str | None = None,
+    calculation_subjects_morning: bool = True,
+    last_days_window: int = 2,
+    break_after_paper: int = 0,
+    break_duration_minutes: int = 0,
 ) -> dict[str, Any]:
+    window_minutes = _window_minutes(exam_day_start_time, exam_day_end_time)
+    # {prefix}_BREAK_AFTER_PAPER/_DURATION_MINUTES: a break of N minutes after
+    # the day's Nth paper. 0 for either disables it.
+    exam_break = (break_after_paper, break_duration_minutes) if break_after_paper > 0 and break_duration_minutes > 0 else None
+
+    if unified:
+        rows = _solve_unified(
+            class_arms,
+            days,
+            exam_day_start_time,
+            max_subjects_per_day,
+            calculation_subject_duration_minutes,
+            non_calculation_subject_duration_minutes,
+            spread_calculation_subjects,
+            min_gap_between_calculation_exams_days,
+            window_minutes,
+            calculation_subjects_morning,
+            last_days_window,
+            exam_break,
+        )
+        if isinstance(rows, str):
+            return {"callbackToken": callback_token, "error": f"{rows} (requestId={request_id})"}
+        return {"callbackToken": callback_token, "result": {"generatedRows": rows}}
+
     generated_rows: list[dict[str, Any]] = []
     for arm in class_arms:
         rows = _solve_class_arm(
@@ -63,6 +114,9 @@ def solve_exam_timetable(
             non_calculation_subject_duration_minutes,
             spread_calculation_subjects,
             min_gap_between_calculation_exams_days,
+            window_minutes,
+            last_days_window,
+            exam_break,
         )
         if rows is None:
             return {
@@ -83,6 +137,9 @@ def _solve_class_arm(
     non_calc_duration: int,
     spread_calc: bool,
     min_gap: int,
+    window_minutes: int | None,
+    last_days_window: int,
+    exam_break: tuple[int, int] | None,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
     day_count = len(days)
@@ -122,6 +179,8 @@ def _solve_class_arm(
             # bundle lands on this day if chosen, so the restriction covers
             # the group as soon as one member needs it.
             if any(m.requiresCalculation for m in members) and day_idx in blocked_calc_days:
+                continue
+            if any(m.lastDaysOnly for m in members) and day_idx < day_count - last_days_window:
                 continue
             # Every member points at the SAME BoolVar object — this alone
             # forces bundle-mates onto the identical exam day, the same
@@ -213,9 +272,45 @@ def _solve_class_arm(
                 model.add(day_of[b] - day_of[a] >= min_gap).only_enforce_if(before)
                 model.add(day_of[a] - day_of[b] >= min_gap).only_enforce_if(before.Not())
 
+    # EXAM_DAY_END_TIME (optional): the papers a day holds must also fit the
+    # exam-day window by DURATION, not just by MAX_SUBJECTS_PER_DAY's count —
+    # e.g. a 09:00-12:00 window fits three 60-min papers but only two 90-min
+    # ones. One representative per bundle (members sit in parallel); a
+    # bundle costs its longest member's duration. Existing papers already
+    # on that day are approximated at the non-calculation duration (their
+    # real durations aren't in the payload).
+    if window_minutes is not None:
+        # Conservative: reserve the break inside the window whenever one is
+        # configured (whether or not a given day actually runs past it).
+        if exam_break:
+            window_minutes = max(0, window_minutes - exam_break[1])
+        for day_idx, day in enumerate(days):
+            existing = arm.existingByDate.get(day)
+            existing_minutes = (existing.count if existing else 0) * non_calc_duration
+            seen_window_groups: set[str] = set()
+            terms = []
+            for (sid, d), v in assign.items():
+                key = group_key(subject_by_id[sid])
+                if d != day_idx or key in seen_window_groups:
+                    continue
+                seen_window_groups.add(key)
+                duration = max(calc_duration if m.requiresCalculation else non_calc_duration for m in groups[key])
+                terms.append(duration * v)
+            if terms:
+                model.add(sum(terms) + existing_minutes <= window_minutes)
+
+    # Fill each exam day up to its capacity before spilling onto a later day
+    # (the day's subject count follows from its slots/window, rather than the
+    # papers being thinned out across the whole exam period).
+    packing_terms = []
+    for key in groups:
+        representative = groups[key][0].subjectId
+        packing_terms.extend(day_idx * v for (sid, day_idx), v in assign.items() if sid == representative)
+    if packing_terms:
+        model.minimize(sum(packing_terms))
+
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
-    # First feasible solution only, same "usable draft" bar as class_timetable.py.
     status = solver.solve(model)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -232,17 +327,18 @@ def _solve_class_arm(
         if not day_subjects:
             continue
         # Calculation subject(s) first (FR6.3's "earliest slot"), remaining
-        # non-calculation subjects in stable order — no break gap, unlike
-        # class_timetable.py's period grid (nothing suggests exam days pause
-        # for recess).
+        # non-calculation subjects in stable order, back to back — except for
+        # the configured break after the day's Nth paper.
         ordered = sorted(day_subjects, key=lambda s: 0 if s.requiresCalculation else 1)
-        start_hour, start_minute = (int(part) for part in exam_day_start_time.split(":"))
-        cursor_minutes = start_hour * 60 + start_minute
-        for subject in ordered:
+        cursor_minutes = _time_to_minutes(exam_day_start_time)
+        for paper_idx, subject in enumerate(ordered):
+            if exam_break and paper_idx == exam_break[0]:
+                cursor_minutes += exam_break[1]
             duration = calc_duration if subject.requiresCalculation else non_calc_duration
             rows.append(
                 {
                     "classArmId": arm.classArmId,
+                    "assessmentComponentId": arm.assessmentComponentId,
                     "subjectId": subject.subjectId,
                     "date": day,
                     "startTime": _minutes_to_time(cursor_minutes),
@@ -252,6 +348,202 @@ def _solve_class_arm(
             cursor_minutes += duration
 
     return rows
+
+
+def _solve_unified(
+    class_arms: list[ExamClassArmPayload],
+    days: list[str],
+    exam_day_start_time: str,
+    max_subjects_per_day: int,
+    calc_duration: int,
+    non_calc_duration: int,
+    spread_calc: bool,
+    min_gap: int,
+    window_minutes: int | None,
+    calculation_subjects_morning: bool,
+    last_days_window: int,
+    exam_break: tuple[int, int] | None,
+) -> list[dict[str, Any]] | str:
+    """
+    One combined model for a whole sitting (examArrangementFor's `unified`
+    sittings: JSS+SSS, or Basic 1-6 for the terminal exam) — every arm shares
+    the SAME fixed paper slots per day, so all classes start each paper
+    together (the precondition for mixing classes in one hall, and for the
+    sitting to read as one timetable). Slot length is the longer of the two
+    durations; a shorter (non-calculation) paper starts with its slot and
+    simply finishes earlier.
+
+    The unit of scheduling is (ClassLevel, bundle): every arm of a ClassLevel
+    sits the identical paper at the identical time. Across ClassLevels, a
+    subject shared by several levels is nudged (soft) onto the same slot so
+    the sitting reads as "Monday 09:00 — Mathematics, all classes" where the
+    rest of the constraints allow it.
+    """
+    model = cp_model.CpModel()
+    day_count = len(days)
+    slot_length = max(calc_duration, non_calc_duration)
+    slots_per_day = max_subjects_per_day
+    if window_minutes is not None:
+        # Count the slots that end within the window, break included.
+        slots_per_day = sum(
+            1 for k in range(max_subjects_per_day) if _slot_offset(k, slot_length, exam_break) + slot_length <= window_minutes
+        )
+    if slots_per_day <= 0 or day_count == 0:
+        return "No exam slots available — check the exam dates, EXAM_DAY_START_TIME/EXAM_DAY_END_TIME and the per-day subject count"
+
+    # ClassLevel -> its arms. Arms without a classLevelId are their own level.
+    arms_by_level: dict[str, list[ExamClassArmPayload]] = {}
+    for arm in class_arms:
+        arms_by_level.setdefault(arm.classLevelId or arm.classArmId, []).append(arm)
+
+    def group_key(subject: ExamSubjectPayload) -> str:
+        return subject.concurrencyGroupId or subject.subjectId
+
+    level_groups: dict[str, dict[str, list[ExamSubjectPayload]]] = {}
+    blocked_days: dict[str, set[int]] = {}
+    for level_id, arms in arms_by_level.items():
+        groups: dict[str, list[ExamSubjectPayload]] = {}
+        for subject in arms[0].subjects:
+            groups.setdefault(group_key(subject), []).append(subject)
+        level_groups[level_id] = groups
+        # A day where any arm of this level already has a (non-rejected)
+        # paper is left alone entirely — slot times on a shared grid can't be
+        # reconciled with an arbitrary existing paper's times.
+        blocked_days[level_id] = {
+            i for i, d in enumerate(days) if any((e := a.existingByDate.get(d)) and e.count > 0 for a in arms)
+        }
+
+    x: dict[tuple[str, str, int, int], Any] = {}
+    for level_id, groups in level_groups.items():
+        for key in groups:
+            last_days_only = any(m.lastDaysOnly for m in groups[key])
+            for d in range(day_count):
+                if d in blocked_days[level_id]:
+                    continue
+                if last_days_only and d < day_count - last_days_window:
+                    continue
+                for k in range(slots_per_day):
+                    x[(level_id, key, d, k)] = model.new_bool_var(f"x_{level_id}_{key}_{d}_{k}")
+
+    def is_calc(level_id: str, key: str) -> bool:
+        return any(m.requiresCalculation for m in level_groups[level_id][key])
+
+    for level_id, groups in level_groups.items():
+        for key in groups:
+            vars_ = [v for (lv, g, _d, _k), v in x.items() if lv == level_id and g == key]
+            if not vars_:
+                return f"No open exam day left for a subject in class level {level_id}"
+            model.add(sum(vars_) == 1)
+        for d in range(day_count):
+            for k in range(slots_per_day):
+                slot_vars = [x[(level_id, g, d, k)] for g in groups if (level_id, g, d, k) in x]
+                if len(slot_vars) > 1:
+                    model.add(sum(slot_vars) <= 1)
+            if spread_calc:
+                calc_vars = [
+                    x[(level_id, g, d, k)]
+                    for g in groups
+                    if is_calc(level_id, g)
+                    for k in range(slots_per_day)
+                    if (level_id, g, d, k) in x
+                ]
+                if len(calc_vars) > 1:
+                    model.add(sum(calc_vars) <= 1)
+
+        calc_keys = [g for g in groups if is_calc(level_id, g)]
+        if min_gap > 0 and len(calc_keys) > 1:
+            day_of = {
+                g: sum(d * v for (lv, gg, d, _k), v in x.items() if lv == level_id and gg == g) for g in calc_keys
+            }
+            for i in range(len(calc_keys)):
+                for j in range(i + 1, len(calc_keys)):
+                    a, b = calc_keys[i], calc_keys[j]
+                    before = model.new_bool_var(f"before_{level_id}_{a}_{b}")
+                    model.add(day_of[b] - day_of[a] >= min_gap).only_enforce_if(before)
+                    model.add(day_of[a] - day_of[b] >= min_gap).only_enforce_if(before.Not())
+
+    objective_terms = []
+    # Packing: earlier days first, then earlier slots.
+    for (_lv, _g, d, k), v in x.items():
+        objective_terms.append((d * slots_per_day + k) * v)
+
+    # CALCULATION_SUBJECTS_MORNING: a calculation paper belongs in the day's
+    # first slot (soft, so a day with two calculation papers — only possible
+    # with SPREAD_CALCULATION_SUBJECTS off — still solves).
+    if calculation_subjects_morning:
+        for (lv, g, _d, k), v in x.items():
+            if k > 0 and is_calc(lv, g):
+                objective_terms.append(CALC_NOT_FIRST_PENALTY * v)
+
+    # Cross-level alignment for un-bundled subjects shared by 2+ levels:
+    # y[s, d, k] is "subject s is sat in (d, k) by someone"; minimizing the
+    # number of distinct (d, k) each subject uses pulls the levels together.
+    levels_by_subject: dict[str, list[str]] = {}
+    for level_id, groups in level_groups.items():
+        for key, members in groups.items():
+            if len(members) == 1 and members[0].concurrencyGroupId is None:
+                levels_by_subject.setdefault(key, []).append(level_id)
+    for subject_id, level_ids in levels_by_subject.items():
+        if len(level_ids) < 2:
+            continue
+        for d in range(day_count):
+            for k in range(slots_per_day):
+                level_vars = [x[(lv, subject_id, d, k)] for lv in level_ids if (lv, subject_id, d, k) in x]
+                if not level_vars:
+                    continue
+                used = model.new_bool_var(f"used_{subject_id}_{d}_{k}")
+                for v in level_vars:
+                    model.add_implication(v, used)
+                objective_terms.append(CROSS_LEVEL_MISALIGN_PENALTY * used)
+
+    model.minimize(sum(objective_terms))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = UNIFIED_SOLVE_TIME_LIMIT_SECONDS
+    solver.parameters.num_workers = 8
+    status = solver.solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return "No feasible combined exam timetable found for this sitting"
+
+    day_start = _time_to_minutes(exam_day_start_time)
+    rows: list[dict[str, Any]] = []
+    for (level_id, key, d, k), v in x.items():
+        if not solver.value(v):
+            continue
+        slot_start = day_start + _slot_offset(k, slot_length, exam_break)
+        for arm in arms_by_level[level_id]:
+            for member in level_groups[level_id][key]:
+                duration = calc_duration if member.requiresCalculation else non_calc_duration
+                rows.append(
+                    {
+                        "classArmId": arm.classArmId,
+                        "assessmentComponentId": arm.assessmentComponentId,
+                        "subjectId": member.subjectId,
+                        "date": days[d],
+                        "startTime": _minutes_to_time(slot_start),
+                        "endTime": _minutes_to_time(slot_start + duration),
+                    }
+                )
+    return rows
+
+
+def _slot_offset(k: int, slot_length: int, exam_break: tuple[int, int] | None) -> int:
+    """Minutes from the exam-day start to slot k on a unified grid — the break sits after slot exam_break[0] - 1."""
+    offset = k * slot_length
+    if exam_break and k >= exam_break[0]:
+        offset += exam_break[1]
+    return offset
+
+
+def _time_to_minutes(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _window_minutes(start: str, end: str | None) -> int | None:
+    if not end:
+        return None
+    return max(0, _time_to_minutes(end) - _time_to_minutes(start))
 
 
 def _minutes_to_time(total_minutes: int) -> str:

@@ -352,20 +352,33 @@ export function MyWardExamSection({
 
 export function MyInvigilationSection({ staffId }: { staffId: string }) {
   const [invigilations, setInvigilations] = useState<InvigilationAssignmentItem[]>([]);
+  const [hallDuties, setHallDuties] = useState<{ id: string; date: string; assessmentComponent: { name: string; classLevelCategory: string } }[]>(
+    [],
+  );
   useEffect(() => {
     apiFetch<InvigilationAssignmentItem[]>(`/invigilation-assignments?staffId=${staffId}`, { auth: true })
       .then(setInvigilations)
       .catch(() => setInvigilations([]));
+    apiFetch<typeof hallDuties>(`/exam-day-invigilations?staffId=${staffId}`, { auth: true })
+      .then(setHallDuties)
+      .catch(() => setHallDuties([]));
   }, [staffId]);
 
   return (
     <CollapsibleCard title="My invigilation duty">
       <ReadOnlyScheduleTable
         headers={["Role", "Subject", "Class", "Date"]}
-        rows={invigilations.map((i) => ({
-          id: i.id,
-          cells: [i.role, i.examSchedule.subject.name, i.examSchedule.classArm.displayName, new Date(i.examSchedule.date).toLocaleDateString()],
-        }))}
+        rows={[
+          ...invigilations.map((i) => ({
+            id: i.id,
+            cells: [i.role, i.examSchedule.subject.name, i.examSchedule.classArm.displayName, new Date(i.examSchedule.date).toLocaleDateString()],
+          })),
+          // Mixed-hall duty covers every paper in the hall that day.
+          ...hallDuties.map((d) => ({
+            id: d.id,
+            cells: ["HALL", `All papers (${d.assessmentComponent.name})`, `${d.assessmentComponent.classLevelCategory} hall`, new Date(d.date).toLocaleDateString()],
+          })),
+        ]}
         emptyMessage="No invigilation duty assigned."
       />
     </CollapsibleCard>

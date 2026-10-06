@@ -15,6 +15,8 @@ import { NotificationService } from "../notifications/notification";
 import { TimetableSlotService } from "../timetable/timetable-slot";
 import { ExamScheduleService } from "./exam-schedule";
 import { InvigilationAssignmentService } from "./invigilation-assignment";
+import { ExamDayInvigilationService } from "./exam-day-invigilation";
+import { resolveSitting } from "./exam-sitting";
 
 interface ClassTimetableGeneratedRow {
   classArmId: string;
@@ -27,16 +29,22 @@ interface ClassTimetableGeneratedRow {
 
 interface ExamTimetableGeneratedRow {
   classArmId: string;
+  // Set by the solver for every row — a unified JSS/SSS sitting spans two
+  // components. Falls back to the request's own component when absent.
+  assessmentComponentId?: string | null;
   subjectId: string;
   date: string;
   startTime: string;
   endTime: string;
 }
 
+// Either a per-paper row (examScheduleId + role) or a mixed-hall day row
+// (date only — HALL_POOL_PER_DAY, persisted as ExamDayInvigilation).
 interface InvigilationGeneratedRow {
-  examScheduleId: string;
+  examScheduleId?: string;
+  date?: string;
   staffId: string;
-  role: string;
+  role?: string;
 }
 
 interface WeeklyDutyGeneratedRow {
@@ -102,6 +110,7 @@ export class SchedulingCallbackController {
     private readonly timetableSlots: TimetableSlotService,
     private readonly examSchedules: ExamScheduleService,
     private readonly invigilationAssignments: InvigilationAssignmentService,
+    private readonly examDayInvigilations: ExamDayInvigilationService,
   ) {}
 
   @Post(":requestId")
@@ -148,7 +157,11 @@ export class SchedulingCallbackController {
         );
       }
       if (request.scope === ScheduleScope.INVIGILATION) {
-        persistedCount = await this.persistInvigilationRows(requestId, rows as InvigilationGeneratedRow[]);
+        persistedCount = await this.persistInvigilationRows(
+          requestId,
+          request.assessmentComponentId,
+          rows as InvigilationGeneratedRow[],
+        );
       }
       if (request.scope === ScheduleScope.WEEKLY_DUTY) {
         persistedCount = await this.persistWeeklyDutyRows(requestId, rows as WeeklyDutyGeneratedRow[]);
@@ -304,6 +317,8 @@ export class SchedulingCallbackController {
     }
     if (rows.length === 0) return 0;
     let persisted = 0;
+    // A row may only land on a component of the request's own exam sitting.
+    const sittingComponentIds = new Set((await resolveSitting(this.prisma, assessmentComponentId)).componentIds);
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
@@ -312,16 +327,20 @@ export class SchedulingCallbackController {
           this.logger.warn(`Dropping generated row with unparseable date "${row.date}"`);
           continue;
         }
+        const rowComponentId = row.assessmentComponentId ?? assessmentComponentId;
+        if (!sittingComponentIds.has(rowComponentId)) {
+          throw new Error(`Generated exam row names component ${rowComponentId}, which is not part of this exam sitting`);
+        }
 
         await this.examSchedules.assertNoConflicts(
-          { classArmId: row.classArmId, date, startTime: row.startTime, endTime: row.endTime },
+          { classArmId: row.classArmId, subjectId: row.subjectId, date, startTime: row.startTime, endTime: row.endTime },
           undefined,
           tx,
         );
 
         await tx.examSchedule.create({
           data: {
-            assessmentComponentId,
+            assessmentComponentId: rowComponentId,
             classArmId: row.classArmId,
             subjectId: row.subjectId,
             date,
@@ -347,13 +366,39 @@ export class SchedulingCallbackController {
    * a single transaction — same belt-and-suspenders pattern, checking the
    * staff member isn't already invigilating an overlapping exam.
    */
-  private async persistInvigilationRows(requestId: string, rows: InvigilationGeneratedRow[]) {
+  private async persistInvigilationRows(
+    requestId: string,
+    assessmentComponentId: string | null,
+    rows: InvigilationGeneratedRow[],
+  ) {
     if (rows.length === 0) return 0;
     let persisted = 0;
 
     await this.prisma.$transaction(async (tx) => {
       for (const row of rows) {
-        if (!isInvigilationRole(row.role)) {
+        if (!row.examScheduleId) {
+          // Mixed-hall (HALL_POOL_PER_DAY) duty for a whole exam day.
+          const date = row.date ? new Date(row.date) : null;
+          if (!assessmentComponentId || !date || Number.isNaN(date.getTime())) {
+            this.logger.warn(`Dropping generated hall-duty row with unparseable date "${row.date}"`);
+            continue;
+          }
+          await this.examDayInvigilations.assertNoConflicts(row.staffId, date, undefined, tx);
+          await tx.examDayInvigilation.create({
+            data: {
+              assessmentComponentId,
+              date,
+              staffId: row.staffId,
+              generatedBy: TimetableGeneratedBy.AI,
+              approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
+              scheduleGenerationRequestId: requestId,
+            },
+          });
+          persisted += 1;
+          continue;
+        }
+
+        if (!row.role || !isInvigilationRole(row.role)) {
           this.logger.warn(`Dropping generated row with unrecognized role "${row.role}"`);
           continue;
         }

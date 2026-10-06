@@ -43,6 +43,8 @@ import { RejectScheduleRowDto } from "./dto/reject-schedule-row.dto";
 import { TimetableSlotService } from "../timetable/timetable-slot";
 import { ExamScheduleService } from "./exam-schedule";
 import { InvigilationAssignmentService } from "./invigilation-assignment";
+import { ExamDayInvigilationService } from "./exam-day-invigilation";
+import { resolveSitting } from "./exam-sitting";
 
 @Injectable()
 export class ScheduleGenerationRequestService {
@@ -54,6 +56,7 @@ export class ScheduleGenerationRequestService {
     private readonly timetableSlots: TimetableSlotService,
     private readonly examSchedules: ExamScheduleService,
     private readonly invigilationAssignments: InvigilationAssignmentService,
+    private readonly examDayInvigilations: ExamDayInvigilationService,
   ) {}
 
   /**
@@ -214,9 +217,11 @@ export class ScheduleGenerationRequestService {
    * BUILD_PLAN.md §9 Step 4: assessmentComponentId must resolve to an EXAM
    * or MID_TERM component (same reuse of EXAM_TIMETABLE's FK, confirmed by
    * PRD §3.8), and — per the approval-order decision made for this step —
-   * every ExamSchedule row in scope (narrowed by classArmId if set) must
-   * already be Admin-approved, so InvigilationAssignment rows are never
-   * generated against a still-editable draft.
+   * every ExamSchedule row of the component's whole sitting (e.g. JSS+SSS,
+   * narrowed by classArmId if set) must already be approved, so invigilation
+   * is never generated against a still-editable draft. A sitting that already
+   * has a non-rejected roster is refused outright (reject it first) rather
+   * than double-staffing every paper/day.
    */
   private async assertValidInvigilationRequest(dto: CreateScheduleGenerationRequestDto) {
     if (!dto.assessmentComponentId) {
@@ -228,16 +233,50 @@ export class ScheduleGenerationRequestService {
     if (component.type !== AssessmentComponentType.EXAM && component.type !== AssessmentComponentType.MID_TERM) {
       throw new BadRequestException("assessmentComponentId must resolve to an EXAM or MID_TERM component");
     }
+    const { componentIds } = await resolveSitting(this.prisma, dto.assessmentComponentId);
 
     const examSchedules = await this.prisma.examSchedule.findMany({
-      where: { assessmentComponentId: dto.assessmentComponentId, classArmId: dto.classArmId },
-      select: { approvalStatus: true },
+      where: {
+        assessmentComponentId: { in: componentIds },
+        classArmId: dto.classArmId,
+        approvalStatus: { not: TimetableApprovalStatus.REJECTED },
+      },
+      select: { id: true, date: true, approvalStatus: true },
     });
     if (examSchedules.length === 0) {
       throw new BadRequestException("No exam schedules exist yet for this assessment component — generate the exam timetable first");
     }
     if (examSchedules.some((es) => es.approvalStatus !== TimetableApprovalStatus.APPROVED)) {
-      throw new BadRequestException("All exam schedules for this assessment component must be approved before generating invigilation");
+      throw new BadRequestException("All exam schedules for this exam sitting must be approved before generating invigilation");
+    }
+
+    const notRejected = { not: TimetableApprovalStatus.REJECTED };
+    const [existingPaperDuty, existingHallDuty] = await Promise.all([
+      this.prisma.invigilationAssignment.findFirst({
+        where: { examScheduleId: { in: examSchedules.map((es) => es.id) }, approvalStatus: notRejected },
+      }),
+      this.prisma.examDayInvigilation.findFirst({
+        where: {
+          assessmentComponentId: { in: componentIds },
+          date: { in: [...new Set(examSchedules.map((es) => es.date.getTime()))].map((t) => new Date(t)) },
+          approvalStatus: notRejected,
+        },
+      }),
+    ]);
+    if (existingPaperDuty || existingHallDuty) {
+      throw new BadRequestException(
+        "An invigilation roster already exists for this exam sitting — reject the existing roster first if you want to regenerate",
+      );
+    }
+
+    const parameters = (dto.parameters ?? {}) as Record<string, unknown>;
+    if (
+      parameters.invigilatorsPerDay !== undefined &&
+      (typeof parameters.invigilatorsPerDay !== "number" ||
+        !Number.isInteger(parameters.invigilatorsPerDay) ||
+        parameters.invigilatorsPerDay < 1)
+    ) {
+      throw new BadRequestException("parameters.invigilatorsPerDay must be a positive integer");
     }
   }
 
@@ -428,10 +467,18 @@ export class ScheduleGenerationRequestService {
     const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
       where: { id: dto.assessmentComponentId! },
     });
+    const { arrangement, componentIds } = await resolveSitting(this.prisma, component.id);
+    const sittingComponents = await this.prisma.assessmentComponent.findMany({ where: { id: { in: componentIds } } });
 
     // assertValidExamTimetableRequest (called earlier in create()) already
     // guarantees these parse and fall within the component's term.
-    const parameters = (dto.parameters ?? {}) as { examStartDate: string; examEndDate: string; maxSubjectsPerDay?: number };
+    const parameters = (dto.parameters ?? {}) as {
+      examStartDate: string;
+      examEndDate: string;
+      maxSubjectsPerDay?: number;
+      calculationSubjectDurationMinutes?: number;
+      nonCalculationSubjectDurationMinutes?: number;
+    };
     const dayCount = this.resolveWeekdayCount(new Date(parameters.examStartDate), new Date(parameters.examEndDate));
 
     const group = categoryToGroup(component.classLevelCategory);
@@ -439,9 +486,32 @@ export class ScheduleGenerationRequestService {
     const groupConstraints = await this.prisma.schedulingConstraint.findMany({
       where: { scope: ScheduleScope.EXAM_TIMETABLE, classLevelCategoryGroup: group, isActive: true },
     });
-    const maxSubjectsPerDay =
-      parameters.maxSubjectsPerDay ?? Number(groupConstraints.find((c) => c.key === `${prefix}_MAX_SUBJECTS_PER_DAY`)?.value);
+    const getGroup = (key: string): unknown => groupConstraints.find((c) => c.key === key)?.value;
+    const maxSubjectsPerDay = parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`));
     if (!maxSubjectsPerDay) return; // not configured yet — nothing to check against
+
+    // A unified sitting runs on a fixed slot grid (slot = the longer paper
+    // duration); with EXAM_DAY_END_TIME set, the window also caps how many
+    // slots fit in a day — same arithmetic as exam_timetable._solve_unified.
+    let slotsPerDay = maxSubjectsPerDay;
+    const startTime = getGroup("EXAM_DAY_START_TIME");
+    const endTime = getGroup("EXAM_DAY_END_TIME");
+    if (arrangement?.unified && typeof startTime === "string" && typeof endTime === "string" && endTime) {
+      const slotLength = Math.max(
+        parameters.calculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_CALCULATION_SUBJECT_DURATION_MINUTES`)),
+        parameters.nonCalculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_NON_CALCULATION_SUBJECT_DURATION_MINUTES`)),
+      );
+      const toMinutes = (t: string) => Number(t.split(":")[0]) * 60 + Number(t.split(":")[1]);
+      const windowMinutes = toMinutes(endTime) - toMinutes(startTime);
+      const breakAfter = Number(getGroup(`${prefix}_BREAK_AFTER_PAPER`) ?? 0) || 0;
+      const breakMinutes = Number(getGroup(`${prefix}_BREAK_DURATION_MINUTES`) ?? 0) || 0;
+      // Same slot arithmetic as exam_timetable._slot_offset: the break sits
+      // after the breakAfter-th paper.
+      const slotEnd = (k: number) => k * slotLength + (breakAfter > 0 && k >= breakAfter ? breakMinutes : 0) + slotLength;
+      if (slotLength > 0) {
+        slotsPerDay = Array.from({ length: slotsPerDay }, (_, k) => k).filter((k) => slotEnd(k) <= windowMinutes).length;
+      }
+    }
 
     const globalConstraints = await this.prisma.schedulingConstraint.findMany({
       where: { scope: ScheduleScope.EXAM_TIMETABLE, classLevelCategoryGroup: null, isActive: true },
@@ -450,30 +520,37 @@ export class ScheduleGenerationRequestService {
       (globalConstraints.find((c) => c.key === "SPREAD_CALCULATION_SUBJECTS")?.value as boolean | undefined) ?? true;
     const minGap = Number(globalConstraints.find((c) => c.key === "MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS")?.value ?? 0);
 
-    const subjects = await this.resolveFlattenedRequiredSubjects(component.classLevelCategory);
-    const seenGroups = new Set<string>();
-    let distinctCount = 0;
-    let calcCount = 0;
-    for (const s of subjects) {
-      const key = s.concurrencyGroupId ?? s.id;
-      if (seenGroups.has(key)) continue;
-      seenGroups.add(key);
-      distinctCount++;
-      if (s.requiresCalculation) calcCount++;
-    }
-
     const reasons: string[] = [];
-    const dayCapacity = dayCount * maxSubjectsPerDay;
-    if (distinctCount > dayCapacity) {
-      reasons.push(`${distinctCount} subjects need scheduling but only ${dayCapacity} exam-day slots exist (${dayCount} days × ${maxSubjectsPerDay}/day)`);
+    if (slotsPerDay < 1) {
+      reasons.push("no paper fits between EXAM_DAY_START_TIME and EXAM_DAY_END_TIME at the configured durations");
     }
-    if (spreadCalculationSubjects && calcCount > dayCount) {
-      reasons.push(`${calcCount} calculation subjects must be spread one per day, but only ${dayCount} exam days exist`);
-    }
-    if (minGap > 0 && calcCount > 1) {
-      const minDaysNeeded = 1 + (calcCount - 1) * minGap;
-      if (minDaysNeeded > dayCount) {
-        reasons.push(`${calcCount} calculation subjects need at least ${minDaysNeeded} exam days (${minGap}-day gap apart) but only ${dayCount} exist`);
+    for (const sittingComponent of sittingComponents) {
+      if (sittingComponent.classLevelCategory === ClassLevelCategory.CRECHE) continue;
+      const subjects = await this.resolveFlattenedRequiredSubjects(sittingComponent.classLevelCategory);
+      const seenGroups = new Set<string>();
+      let distinctCount = 0;
+      let calcCount = 0;
+      for (const s of subjects) {
+        const key = s.concurrencyGroupId ?? s.id;
+        if (seenGroups.has(key)) continue;
+        seenGroups.add(key);
+        distinctCount++;
+        if (s.requiresCalculation) calcCount++;
+      }
+
+      const label = sittingComponent.classLevelCategory;
+      const dayCapacity = dayCount * slotsPerDay;
+      if (distinctCount > dayCapacity) {
+        reasons.push(`${label}: ${distinctCount} subjects need scheduling but only ${dayCapacity} exam-day slots exist (${dayCount} days × ${slotsPerDay}/day)`);
+      }
+      if (spreadCalculationSubjects && calcCount > dayCount) {
+        reasons.push(`${label}: ${calcCount} calculation subjects must be spread one per day, but only ${dayCount} exam days exist`);
+      }
+      if (minGap > 0 && calcCount > 1) {
+        const minDaysNeeded = 1 + (calcCount - 1) * minGap;
+        if (minDaysNeeded > dayCount) {
+          reasons.push(`${label}: ${calcCount} calculation subjects need at least ${minDaysNeeded} exam days (${minGap}-day gap apart) but only ${dayCount} exist`);
+        }
       }
     }
 
@@ -584,6 +661,9 @@ export class ScheduleGenerationRequestService {
         const rows = await tx.invigilationAssignment.findMany({ where: pendingFilter });
         for (const row of rows) await this.invigilationAssignments.assertNoConflicts(row.staffId, row.examScheduleId, tx);
         await tx.invigilationAssignment.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: approvalData });
+        const hallRows = await tx.examDayInvigilation.findMany({ where: pendingFilter });
+        for (const row of hallRows) await this.examDayInvigilations.assertNoConflicts(row.staffId, row.date, row.id, tx);
+        await tx.examDayInvigilation.updateMany({ where: { id: { in: hallRows.map((r) => r.id) } }, data: approvalData });
       }
       if (request.scope === ScheduleScope.WEEKLY_DUTY) {
         // No per-row conflict check exists for DutyAssignment (no overlap
@@ -612,8 +692,10 @@ export class ScheduleGenerationRequestService {
 
       if (request.scope === ScheduleScope.CLASS_TIMETABLE) await tx.timetableSlot.updateMany({ where: pendingFilter, data: rejectionData });
       if (request.scope === ScheduleScope.EXAM_TIMETABLE) await tx.examSchedule.updateMany({ where: pendingFilter, data: rejectionData });
-      if (request.scope === ScheduleScope.INVIGILATION)
+      if (request.scope === ScheduleScope.INVIGILATION) {
         await tx.invigilationAssignment.updateMany({ where: pendingFilter, data: rejectionData });
+        await tx.examDayInvigilation.updateMany({ where: pendingFilter, data: rejectionData });
+      }
       if (request.scope === ScheduleScope.WEEKLY_DUTY) await tx.dutyAssignment.updateMany({ where: pendingFilter, data: rejectionData });
 
       return tx.scheduleGenerationRequest.update({

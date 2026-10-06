@@ -6,6 +6,7 @@ import { ScheduleGenerationRequestController, ScheduleGenerationRequestService }
 import { SchedulingCallbackController } from "./scheduling-callback.controller";
 import { ExamScheduleController, ExamScheduleService } from "./exam-schedule";
 import { InvigilationAssignmentController, InvigilationAssignmentService } from "./invigilation-assignment";
+import { ExamDayInvigilationController, ExamDayInvigilationService } from "./exam-day-invigilation";
 import { DutyAssignmentController, DutyAssignmentService } from "./duty-assignment";
 import { DutyRosterWeekController, DutyRosterWeekService } from "./duty-roster-week";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -34,6 +35,7 @@ import { TimetableModule } from "../timetable/timetable.module";
     SchedulingCallbackController,
     ExamScheduleController,
     InvigilationAssignmentController,
+    ExamDayInvigilationController,
     DutyAssignmentController,
     DutyRosterWeekController,
   ],
@@ -42,6 +44,7 @@ import { TimetableModule } from "../timetable/timetable.module";
     ScheduleGenerationRequestService,
     ExamScheduleService,
     InvigilationAssignmentService,
+    ExamDayInvigilationService,
     DutyAssignmentService,
     DutyRosterWeekService,
   ],

@@ -28,6 +28,14 @@ interface InvigilationAssignmentItem {
   examSchedule: { assessmentComponentId: string; classArm: { displayName: string } };
   createdAt: string;
 }
+// Mixed-hall invigilation duty (one row per staff per exam day).
+interface ExamDayInvigilationItem {
+  id: string;
+  scheduleGenerationRequestId: string | null;
+  assessmentComponentId: string;
+  assessmentComponent: { classLevelCategory: string; name: string };
+  createdAt: string;
+}
 interface DutyAssignmentItem {
   id: string;
   scheduleGenerationRequestId: string | null;
@@ -121,16 +129,18 @@ export const SchedulingApprovalsQueue = forwardRef<{ refresh: () => void }, { ca
           apiFetch<ExamScheduleItem[]>("/exam-schedules?approvalStatus=PENDING_REVIEW", { auth: true }),
           apiFetch<InvigilationAssignmentItem[]>("/invigilation-assignments?approvalStatus=PENDING_REVIEW", { auth: true }),
           apiFetch<DutyAssignmentItem[]>("/duty-assignments?approvalStatus=PENDING_REVIEW", { auth: true }),
+          apiFetch<ExamDayInvigilationItem[]>("/exam-day-invigilations?approvalStatus=PENDING_REVIEW", { auth: true }),
         ]);
         if (results.every((r) => r.status === "rejected")) {
           const first = results[0];
           throw first.status === "rejected" ? first.reason : new Error("Failed to load pending schedule items");
         }
-        const [slotsR, examSchedulesR, invigilationsR, dutiesR] = results;
+        const [slotsR, examSchedulesR, invigilationsR, dutiesR, hallDutiesR] = results;
         const slots = slotsR.status === "fulfilled" ? slotsR.value : [];
         const examSchedules = examSchedulesR.status === "fulfilled" ? examSchedulesR.value : [];
         const invigilations = invigilationsR.status === "fulfilled" ? invigilationsR.value : [];
         const duties = dutiesR.status === "fulfilled" ? dutiesR.value : [];
+        const hallDuties = hallDutiesR.status === "fulfilled" ? hallDutiesR.value : [];
 
         const slotGroups = groupByRequest(
           slots,
@@ -155,6 +165,12 @@ export const SchedulingApprovalsQueue = forwardRef<{ refresh: () => void }, { ca
           (items) => [...new Set(items.map((i) => i.examSchedule.classArm.displayName))].join(", "),
           (_requestId, items) => `/planner?tab=invigilation&assessmentComponentId=${items[0]!.examSchedule.assessmentComponentId}`,
         );
+        const hallGroups = groupByRequest(
+          hallDuties,
+          "INVIGILATION",
+          (items) => `Exam hall — ${items[0]!.assessmentComponent.classLevelCategory} ${items[0]!.assessmentComponent.name}`,
+          (_requestId, items) => `/planner?tab=invigilation&assessmentComponentId=${items[0]!.assessmentComponentId}`,
+        );
         const dutyGroups = groupByRequest(
           duties,
           "WEEKLY_DUTY",
@@ -163,7 +179,7 @@ export const SchedulingApprovalsQueue = forwardRef<{ refresh: () => void }, { ca
         );
 
         setGroups(
-          [...slotGroups, ...examGroups, ...invigGroups, ...dutyGroups].sort(
+          [...slotGroups, ...examGroups, ...invigGroups, ...hallGroups, ...dutyGroups].sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
           ),
         );

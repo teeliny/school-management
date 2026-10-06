@@ -31,6 +31,95 @@ export function groupToCategories(group: ClassLevelCategoryGroup): ClassLevelCat
   return group === "JSS_SSS" ? ["JSS", "SSS"] : ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"];
 }
 
+/** The two AssessmentComponent types that get an exam timetable (CA never does). */
+export type ExamComponentType = "MID_TERM" | "EXAM";
+
+/**
+ * How an exam sitting's invigilators are chosen:
+ * - CLASS_TEACHER: each class arm is supervised by its own CLASS_TEACHER(s)
+ *   for every paper it sits (first = LEAD, second = ASSISTANT).
+ * - ONE_PER_ARM_PER_DAY: one teacher covers every paper a class arm sits on a
+ *   given day (stored as LEAD on each of that day's ExamSchedule rows).
+ * - HALL_POOL_PER_DAY: a mixed hall — a pre-defined number of invigilators
+ *   supervise the whole sitting for the day (ExamDayInvigilation rows, not
+ *   tied to any one paper).
+ */
+export type ExamInvigilationMode = "CLASS_TEACHER" | "ONE_PER_ARM_PER_DAY" | "HALL_POOL_PER_DAY";
+
+export interface ExamArrangement {
+  // Every category whose same-term/same-type/same-sequence component is
+  // generated together with this one in ONE run (and listed together). Only
+  // a `unified` sitting also shares one slot grid across those categories.
+  sittingCategories: ClassLevelCategory[];
+  // true = every arm in the sitting shares fixed paper slots (everyone starts
+  // together, so classes can be mixed in a hall); false = each arm's papers
+  // are laid out independently, back to back.
+  unified: boolean;
+  invigilation: ExamInvigilationMode;
+  // HALL_POOL_PER_DAY only: draw invigilators from the sitting's own
+  // CLASS_TEACHERs only (Basic), rather than every eligible teacher with an
+  // active assignment in the sitting (JSS/SSS).
+  poolClassTeachersOnly: boolean;
+  // HALL_POOL_PER_DAY only: global INVIGILATION SchedulingConstraint key
+  // holding the pre-defined number of invigilators per day.
+  invigilatorsPerDayKey: string | null;
+}
+
+/** Fallback when the invigilatorsPerDayKey constraint row isn't configured. */
+export const DEFAULT_HALL_INVIGILATORS_PER_DAY = 2;
+
+/**
+ * The school's exam arrangement per section and component type:
+ * - JSS/SSS mid-term: one combined timetable, one teacher per class arm per day.
+ * - JSS/SSS exam: one combined (mixed-hall) timetable, N invigilators per day.
+ * - Basic (PRIMARY) exam: one combined (mixed-hall) timetable across Basic
+ *   1-6, N invigilators per day from the Basic class teachers.
+ * - Reception/Nursery/Basic mid-term: one run for the whole section, laid
+ *   out per class arm, invigilated by each arm's class teacher.
+ * - Reception/Nursery exam: same, one run for Reception + Nursery.
+ * Shared by apps/api (trigger validation, listing) and apps/worker (payload
+ * building) so both sides agree on which components form one sitting.
+ */
+export function examArrangementFor(category: ClassLevelCategory, type: ExamComponentType): ExamArrangement {
+  if (category === "JSS" || category === "SSS") {
+    return type === "MID_TERM"
+      ? {
+          sittingCategories: ["JSS", "SSS"],
+          unified: true,
+          invigilation: "ONE_PER_ARM_PER_DAY",
+          poolClassTeachersOnly: false,
+          invigilatorsPerDayKey: null,
+        }
+      : {
+          sittingCategories: ["JSS", "SSS"],
+          unified: true,
+          invigilation: "HALL_POOL_PER_DAY",
+          poolClassTeachersOnly: false,
+          invigilatorsPerDayKey: "JSS_SSS_EXAM_INVIGILATORS_PER_DAY",
+        };
+  }
+  if (category === "PRIMARY" && type === "EXAM") {
+    return {
+      sittingCategories: ["PRIMARY"],
+      unified: true,
+      invigilation: "HALL_POOL_PER_DAY",
+      poolClassTeachersOnly: true,
+      invigilatorsPerDayKey: "PRIMARY_EXAM_INVIGILATORS_PER_DAY",
+    };
+  }
+  // Early years/Basic class-teacher sittings: generated in one run per
+  // section (mid-term: Reception + Nursery + Basic; exam: Reception +
+  // Nursery, Basic being its own mixed hall above), but still laid out per
+  // class arm — each arm sits with its own class teacher, so no shared grid.
+  return {
+    sittingCategories: type === "MID_TERM" ? ["RECEPTION", "NURSERY", "PRIMARY"] : ["RECEPTION", "NURSERY"],
+    unified: false,
+    invigilation: "CLASS_TEACHER",
+    poolClassTeachersOnly: false,
+    invigilatorsPerDayKey: null,
+  };
+}
+
 export interface DefaultSchedulingConstraint {
   scope: ScheduleScope;
   // null/omitted = applies to the whole scope; set = per-group override —
@@ -273,12 +362,28 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
     value: 45,
   },
 
+  // Exam-day break: {EXAM,MID_TERM}_BREAK_DURATION_MINUTES after the day's
+  // {EXAM,MID_TERM}_BREAK_AFTER_PAPER-th paper (0 = no break). Defaults put
+  // it roughly mid-morning for each section's papers-per-day.
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "EXAM_BREAK_AFTER_PAPER", value: 1 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "EXAM_BREAK_DURATION_MINUTES", value: 30 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "MID_TERM_BREAK_AFTER_PAPER", value: 2 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "JSS_SSS", key: "MID_TERM_BREAK_DURATION_MINUTES", value: 30 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "EXAM_BREAK_AFTER_PAPER", value: 2 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "EXAM_BREAK_DURATION_MINUTES", value: 30 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "MID_TERM_BREAK_AFTER_PAPER", value: 2 },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "MID_TERM_BREAK_DURATION_MINUTES", value: 30 },
+
   { scope: "INVIGILATION", key: "MAX_INVIGILATIONS_PER_STAFF_PER_DAY", value: 2 },
   {
     scope: "INVIGILATION",
     key: "EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES",
     value: ["BURSAR", "PRINCIPAL", "VICE_PRINCIPAL"],
   },
+  // HALL_POOL_PER_DAY sittings (see examArrangementFor) — invigilators on
+  // duty per exam day for the mixed JSS/SSS hall and the mixed Basic hall.
+  { scope: "INVIGILATION", key: "JSS_SSS_EXAM_INVIGILATORS_PER_DAY", value: 4 },
+  { scope: "INVIGILATION", key: "PRIMARY_EXAM_INVIGILATORS_PER_DAY", value: DEFAULT_HALL_INVIGILATORS_PER_DAY },
 
   { scope: "WEEKLY_DUTY", key: "TEACHERS_PER_WEEK", value: 3 },
   {

@@ -21,6 +21,15 @@ interface InvigilationAssignmentItem {
   examSchedule: { date: string; startTime: string; endTime: string; classArm: { displayName: string }; subject: { name: string } };
   staff: { user: { firstName: string; lastName: string } };
 }
+// Mixed-hall duty (ExamDayInvigilation): N invigilators for the whole hall
+// per exam day, not tied to a single paper.
+interface HallDutyItem {
+  id: string;
+  date: string;
+  staffId: string;
+  approvalStatus: ApprovalStatus;
+  staff: { user: { firstName: string; lastName: string } };
+}
 interface StaffOption {
   id: string;
   user: { firstName: string; lastName: string };
@@ -56,6 +65,7 @@ export function InvigilationGrid({
   canManage: boolean;
 }) {
   const [rows, setRows] = useState<InvigilationAssignmentItem[] | null>(null);
+  const [hallRows, setHallRows] = useState<HallDutyItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
@@ -67,6 +77,10 @@ export function InvigilationGrid({
       return;
     }
     const qs = `assessmentComponentId=${assessmentComponentId}`;
+    Promise.allSettled([
+      apiFetch<HallDutyItem[]>(`/exam-day-invigilations?${qs}`, { auth: true }),
+      apiFetch<HallDutyItem[]>(`/exam-day-invigilations?${qs}&approvalStatus=PENDING_REVIEW`, { auth: true }),
+    ]).then((results) => setHallRows(results.flatMap((r) => (r.status === "fulfilled" ? r.value : []))));
     Promise.allSettled([
       apiFetch<InvigilationAssignmentItem[]>(`/invigilation-assignments?${qs}`, { auth: true }),
       apiFetch<InvigilationAssignmentItem[]>(`/invigilation-assignments?${qs}&approvalStatus=PENDING_REVIEW`, { auth: true }),
@@ -99,11 +113,32 @@ export function InvigilationGrid({
 
   const staffSelectOptions = useMemo(() => {
     const byId = new Map(staffOptions.map((s) => [s.id, s]));
-    for (const row of rows ?? []) {
+    for (const row of [...(rows ?? []), ...hallRows]) {
       if (!byId.has(row.staffId)) byId.set(row.staffId, { id: row.staffId, user: row.staff.user });
     }
     return [...byId.values()];
-  }, [staffOptions, rows]);
+  }, [staffOptions, rows, hallRows]);
+
+  const hallDates = useMemo(() => {
+    const byDate = new Map<string, HallDutyItem[]>();
+    for (const row of hallRows) {
+      const key = row.date.slice(0, 10);
+      byDate.set(key, [...(byDate.get(key) ?? []), row]);
+    }
+    return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [hallRows]);
+
+  async function saveHallStaff(row: HallDutyItem, staffId: string) {
+    setFieldStatus((s) => ({ ...s, [row.id]: "saving" }));
+    try {
+      await apiFetch(`/exam-day-invigilations/${row.id}`, { method: "PATCH", auth: true, body: { staffId } });
+      setFieldStatus((s) => ({ ...s, [row.id]: "saved" }));
+      load();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Failed to save change");
+      setFieldStatus((s) => ({ ...s, [row.id]: "error" }));
+    }
+  }
 
   const examIds = useMemo(() => {
     if (!rows) return [];
@@ -154,13 +189,70 @@ export function InvigilationGrid({
   if (!assessmentComponentId) return <p className="text-sm text-muted">Select an assessment component to view its invigilation roster.</p>;
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!rows) return <p className="text-sm text-muted">Loading…</p>;
-  if (examIds.length === 0) {
+  if (examIds.length === 0 && hallDates.length === 0) {
     return <p className="text-sm text-muted">{canManage ? "No invigilation roster yet for this component." : "No invigilation roster published yet."}</p>;
   }
 
   return (
     <div className="space-y-2">
       {actionError && <p className="text-[12.5px] text-danger">{actionError}</p>}
+      {hallDates.length > 0 && (
+        <div className="overflow-x-auto">
+          <p className="mb-1 text-[12.5px] text-muted">Exam hall invigilators — on duty for every paper in the hall that day.</p>
+          <table className="w-full text-left text-[12.5px]">
+            <thead>
+              <tr className="border-b border-border text-[10.5px] uppercase tracking-wide text-muted">
+                <th className="py-2 pr-3 font-medium">Date</th>
+                <th className="py-2 pr-0 font-medium">Invigilators</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hallDates.map(([date, dayRows]) => (
+                <tr key={date} className="border-b border-border align-top even:bg-card-inset">
+                  <td className="whitespace-nowrap py-2 pr-3">{new Date(date).toLocaleDateString()}</td>
+                  <td className="py-2 pr-0">
+                    <div className="flex flex-wrap gap-2">
+                      {dayRows.map((row) => (
+                        <div
+                          key={row.id}
+                          className={cn(
+                            "min-w-[200px] rounded-lg border bg-card-inset p-2 text-[11.5px]",
+                            row.approvalStatus === "PENDING_REVIEW" ? "border-dashed border-warning" : "border-border",
+                          )}
+                        >
+                          {row.approvalStatus === "PENDING_REVIEW" && (
+                            <Badge variant="warning" className="mb-1 text-[9px]">
+                              Pending
+                            </Badge>
+                          )}
+                          {canManage ? (
+                            <Select value={row.staffId} onValueChange={(staffId) => saveHallStaff(row, staffId)}>
+                              <SelectTrigger className="h-7 px-1.5 text-[11px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {staffSelectOptions.map((s) => (
+                                  <SelectItem key={s.id} value={s.id}>
+                                    {formatPersonName(s.user)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="font-medium">{formatPersonName(row.staff.user)}</div>
+                          )}
+                          {fieldStatus[row.id] === "error" && <span className="text-[10px] text-danger">Failed to save</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {examIds.length > 0 && (
       <DndContext onDragEnd={handleDragEnd}>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[12.5px]">
@@ -219,6 +311,7 @@ export function InvigilationGrid({
           </table>
         </div>
       </DndContext>
+      )}
     </div>
   );
 }

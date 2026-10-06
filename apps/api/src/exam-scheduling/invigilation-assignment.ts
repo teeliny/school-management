@@ -22,6 +22,7 @@ import { UpdateInvigilationAssignmentDto } from "./dto/update-invigilation-assig
 import { SwapInvigilationAssignmentDto } from "./dto/swap-invigilation-assignment.dto";
 import { withDisplayName } from "../academic-structure/class-arm";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
+import { resolveSitting } from "./exam-sitting";
 
 /**
  * BUILD_PLAN.md §9 Step 4: no manual CRUD yet (read endpoints arrive with
@@ -55,8 +56,19 @@ export class InvigilationAssignmentService {
       include: { examSchedule: true },
     });
 
+    // A mixed-hall duty (ExamDayInvigilation) occupies the whole exam day.
+    const hallDuty = await client.examDayInvigilation.findFirst({
+      where: { staffId, date: target.date, approvalStatus: { not: TimetableApprovalStatus.REJECTED } },
+    });
+    if (hallDuty) {
+      throw new BadRequestException("Staff member is already on hall invigilation duty on this date");
+    }
+
     for (const assignment of otherAssignments) {
       if (assignment.examSchedule.date.getTime() !== target.date.getTime()) continue;
+      // Concurrent papers in the SAME class arm (an options-column bundle in
+      // a unified sitting) are one room, one invigilator — not a double-booking.
+      if (assignment.examSchedule.classArmId === target.classArmId) continue;
       if (timeRangesOverlap(target.startTime, target.endTime, assignment.examSchedule.startTime, assignment.examSchedule.endTime)) {
         throw new BadRequestException(
           `Staff member is already invigilating another exam from ${assignment.examSchedule.startTime} to ${assignment.examSchedule.endTime} on this date`,
@@ -83,7 +95,7 @@ export class InvigilationAssignmentService {
     client: PrismaService | Prisma.TransactionClient = this.prisma,
   ) {
     const existing = await client.invigilationAssignment.findFirst({
-      where: { examScheduleId, staffId, role: { not: role } },
+      where: { examScheduleId, staffId, role: { not: role }, approvalStatus: { not: TimetableApprovalStatus.REJECTED } },
     });
     if (existing) {
       throw new BadRequestException("Staff member already holds the other invigilation role for this exam");
@@ -110,7 +122,11 @@ export class InvigilationAssignmentService {
     // invigilation rows for exams in their own section.
     const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
     const examScheduleWhere: Prisma.ExamScheduleWhereInput = {};
-    if (assessmentComponentId) examScheduleWhere.assessmentComponentId = assessmentComponentId;
+    // Resolved to the component's whole exam sitting (e.g. JSS+SSS) —
+    // generated and reviewed as one roster, so it's listed as one too.
+    if (assessmentComponentId) {
+      examScheduleWhere.assessmentComponentId = { in: (await resolveSitting(this.prisma, assessmentComponentId)).componentIds };
+    }
     if (categories) examScheduleWhere.classArm = { classLevel: { category: { in: categories } } };
 
     const rows = await this.prisma.invigilationAssignment.findMany({

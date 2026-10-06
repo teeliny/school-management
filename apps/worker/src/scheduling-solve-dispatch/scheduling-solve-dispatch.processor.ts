@@ -18,6 +18,8 @@ import {
   categoryToGroup,
   computePeriodTime,
   DAYS_OF_WEEK,
+  DEFAULT_HALL_INVIGILATORS_PER_DAY,
+  examArrangementFor,
   normalizeSubjectName,
   parseSpecialPeriods,
   parseSubjectDayPeriodRequirements,
@@ -56,6 +58,9 @@ interface RequiredSubject {
   // timetable/exam-timetable solvers schedule them in parallel (same period
   // slot / same exam day) instead of each reserving its own weekly capacity.
   concurrencyGroupId: string | null;
+  // That group's display name (e.g. "CHEM/COMM/CRS") — only used to match
+  // name-keyed EXAM_TIMETABLE constraints (*_LAST_DAYS_SUBJECTS).
+  concurrencyGroupName: string | null;
 }
 
 interface ResolvedSubject {
@@ -221,26 +226,34 @@ interface ExamSubjectPayload {
   subjectId: string;
   requiresCalculation: boolean;
   concurrencyGroupId: string | null;
+  // {EXAM,MID_TERM}_LAST_DAYS_SUBJECTS: may only be sat on the exam period's
+  // last N days ({prefix}_LAST_DAYS_WINDOW).
+  lastDaysOnly: boolean;
 }
 
 interface ExamClassArmPayload {
   classArmId: string;
+  classLevelId: string;
+  // Echoed back per generated row — a unified JSS/SSS sitting spans two
+  // components (see examArrangementFor), so each row names its own.
+  assessmentComponentId: string;
   subjects: ExamSubjectPayload[];
   existingByDate: Record<string, { count: number; hasCalc: boolean }>;
 }
 
 interface InvigilationExamPayload {
   examScheduleId: string;
+  classArmId: string;
   date: string;
   startTime: string;
   endTime: string;
   ownSubjectTeacherStaffId: string | null;
+  classTeacherStaffIds: string[];
 }
 
 interface StaffExistingLoad {
   totalCount: number;
-  countByDate: Record<string, number>;
-  blockedRanges: { date: string; startTime: string; endTime: string }[];
+  busyDates: string[];
 }
 
 interface WeeklyDutyGroupPayload {
@@ -613,14 +626,38 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
-   * BUILD_PLAN.md §9 Step 3: `AssessmentComponent.classLevelCategory`
-   * already fixes the category (unlike CLASS_TIMETABLE, no Principal/
-   * Headteacher re-derivation needed here — that authorization already
-   * happened at trigger time), and `ExamSchedule` has no `staffId`, so this
-   * payload needs neither a teacher lookup nor cross-class-arm constraints —
-   * each class arm's exam schedule is solved independently by the Python
-   * side (no shared teacher resource, no venue-capacity concept exists in
-   * this codebase to contend over).
+   * The components that form one sitting with `component` (examArrangementFor
+   * in packages/types): the same term/type/sequence component of every
+   * category in the sitting — e.g. a JSS MID_TERM run also covers SSS's
+   * MID_TERM component as ONE timetable. Always includes `component` itself.
+   */
+  private async resolveSittingComponents(component: {
+    id: string;
+    termId: string;
+    type: AssessmentComponentType;
+    sequence: number;
+    classLevelCategory: ClassLevelCategory;
+  }) {
+    const arrangement = examArrangementFor(component.classLevelCategory, component.type as "MID_TERM" | "EXAM");
+    const components = await this.prisma.assessmentComponent.findMany({
+      where: {
+        termId: component.termId,
+        type: component.type,
+        sequence: component.sequence,
+        classLevelCategory: { in: arrangement.sittingCategories },
+      },
+      include: { term: true },
+    });
+    return { arrangement, components };
+  }
+
+  /**
+   * BUILD_PLAN.md §9 Step 3, revised for exam sittings: the triggered
+   * component's sitting (resolveSittingComponents) decides both WHICH arms
+   * are scheduled together and HOW — a `unified` sitting (JSS+SSS, Basic's
+   * terminal exam) is solved as one combined model on a shared slot grid; any
+   * other sitting is solved independently per arm (Reception/Nursery, Basic
+   * mid-term). `ExamSchedule` has no `staffId` — invigilation is its own run.
    */
   private async buildExamTimetablePayload(
     request: {
@@ -639,21 +676,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       where: { id: request.assessmentComponentId },
       include: { term: true },
     });
+    const { arrangement, components } = await this.resolveSittingComponents(component);
+    const componentByCategory = new Map(components.map((c) => [c.classLevelCategory, c]));
 
     // Creche has no ClassSubject rows, so a component scoped to it (nothing
     // stops one from being created — CreateAssessmentComponentDto only
     // validates against the full ClassLevelCategory enum) has no exam to
     // schedule; skip it the same way GENERATION_CATEGORIES excludes CRECHE
     // from whole-scope class-timetable generation above.
-    const examClassArms =
-      component.classLevelCategory === ClassLevelCategory.CRECHE
-        ? []
-        : request.classArmId
-          ? await this.prisma.classArm.findMany({ where: { id: request.classArmId }, select: { id: true, classLevelId: true } })
-          : await this.prisma.classArm.findMany({
-              where: { academicSessionId: component.term.academicSessionId, classLevel: { category: component.classLevelCategory } },
-              select: { id: true, classLevelId: true },
-            });
+    const sittingCategories = [...componentByCategory.keys()].filter((c) => c !== ClassLevelCategory.CRECHE);
+    const examClassArms = request.classArmId
+      ? await this.prisma.classArm.findMany({
+          where: { id: request.classArmId, classLevel: { category: { in: sittingCategories } } },
+          select: { id: true, classLevelId: true, classLevel: { select: { category: true } } },
+        })
+      : await this.prisma.classArm.findMany({
+          where: { academicSessionId: component.term.academicSessionId, classLevel: { category: { in: sittingCategories } } },
+          select: { id: true, classLevelId: true, classLevel: { select: { category: true } } },
+        });
     const classArmIds = examClassArms.map((a) => a.id);
 
     // Required subjects are resolved per ClassLevel, not once for the whole
@@ -662,15 +702,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // NURSERY) must not get an exam scheduled for that ClassLevel's arms,
     // even though it's still required for the rest of the category. Cached
     // per classLevelId since several arms typically share one ClassLevel.
+    // Assigned from the {prefix}_LAST_DAYS_SUBJECTS constraint below, before
+    // subjectPayloadsForLevel is first called.
+    let lastDaysSubjectNames = new Set<string>();
     const subjectPayloadsByLevel = new Map<string, ExamSubjectPayload[]>();
-    const subjectPayloadsForLevel = async (classLevelId: string): Promise<ExamSubjectPayload[]> => {
+    const subjectPayloadsForLevel = async (category: ClassLevelCategory, classLevelId: string): Promise<ExamSubjectPayload[]> => {
       let payloads = subjectPayloadsByLevel.get(classLevelId);
       if (!payloads) {
-        const requiredSubjects = await this.resolveRequiredSubjects(component.classLevelCategory, component.termId, classLevelId);
+        const requiredSubjects = await this.resolveRequiredSubjects(category, component.termId, classLevelId);
         payloads = requiredSubjects.map((s) => ({
           subjectId: s.id,
           requiresCalculation: s.requiresCalculation,
           concurrencyGroupId: s.concurrencyGroupId,
+          // Matched by subject name OR its options-group name (e.g.
+          // "CHEM/COMM/CRS" pins the whole SSS bundle without also catching
+          // JSS's own same-named CRS). Bundle-mates share one day anyway.
+          lastDaysOnly:
+            lastDaysSubjectNames.has(normalizeSubjectName(s.name)) ||
+            (s.concurrencyGroupName !== null && lastDaysSubjectNames.has(normalizeSubjectName(s.concurrencyGroupName))),
         }));
         subjectPayloadsByLevel.set(classLevelId, payloads);
       }
@@ -688,6 +737,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const examEndDate = new Date(parameters.examEndDate);
     const days = this.resolveWeekdayDates(examStartDate, examEndDate);
 
+    // Every category in a sitting shares one ClassLevelCategoryGroup (JSS+SSS,
+    // or PRIMARY alone), so the group's constraints apply to the whole run.
     const group = categoryToGroup(component.classLevelCategory);
     // MID_TERM and EXAM share one duration-split mechanism (Step 3 design
     // decision) via separate key prefixes so both stay independently tunable.
@@ -705,13 +756,35 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const minGapBetweenCalculationExamsDays = Number(
       globalConstraints.find((c) => c.key === "MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS")?.value ?? 1,
     );
+    const calculationSubjectsMorning =
+      (globalConstraints.find((c) => c.key === "CALCULATION_SUBJECTS_MORNING")?.value as boolean | undefined) ?? true;
+    // {prefix}_LAST_DAYS_SUBJECTS (group-scoped, list of subject or options-
+    // group names): papers that must fall on the last {prefix}_LAST_DAYS_WINDOW
+    // (default 2) exam days — e.g. SSS's Chemistry/Commerce/CRS column.
+    const lastDaysRaw = getGroup(`${prefix}_LAST_DAYS_SUBJECTS`);
+    lastDaysSubjectNames = new Set(
+      (Array.isArray(lastDaysRaw) ? lastDaysRaw : typeof lastDaysRaw === "string" ? lastDaysRaw.split(",") : [])
+        .map((n) => normalizeSubjectName(String(n)))
+        .filter(Boolean),
+    );
+    const lastDaysWindow = Number(getGroup(`${prefix}_LAST_DAYS_WINDOW`) ?? 2);
+    // {prefix}_BREAK_AFTER_PAPER/_BREAK_DURATION_MINUTES (group-scoped): a
+    // break of that length after the day's Nth paper; unset/0 = no break.
+    const breakAfterPaper = Number(getGroup(`${prefix}_BREAK_AFTER_PAPER`) ?? 0) || 0;
+    const breakDurationMinutes = Number(getGroup(`${prefix}_BREAK_DURATION_MINUTES`) ?? 0) || 0;
+
+    // Optional: when set, the number of papers a day holds also follows from
+    // the start-end window and the paper durations (not just the count cap).
+    const examDayEndTime = getGroup("EXAM_DAY_END_TIME");
 
     const existingByClassArm = await this.summarizeExistingExamLoad(classArmIds, examStartDate, examEndDate);
 
     const classArms: ExamClassArmPayload[] = await Promise.all(
       examClassArms.map(async (arm) => ({
         classArmId: arm.id,
-        subjects: await subjectPayloadsForLevel(arm.classLevelId),
+        classLevelId: arm.classLevelId,
+        assessmentComponentId: componentByCategory.get(arm.classLevel.category)!.id,
+        subjects: await subjectPayloadsForLevel(arm.classLevel.category, arm.classLevelId),
         existingByDate: existingByClassArm[arm.id] ?? {},
       })),
     );
@@ -721,6 +794,12 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       scope: ScheduleScope.EXAM_TIMETABLE,
       days,
       examDayStartTime: String(getGroup("EXAM_DAY_START_TIME")),
+      examDayEndTime: typeof examDayEndTime === "string" && examDayEndTime ? examDayEndTime : null,
+      unified: arrangement.unified,
+      calculationSubjectsMorning,
+      lastDaysWindow,
+      breakAfterPaper,
+      breakDurationMinutes,
       maxSubjectsPerDay: parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`)),
       calculationSubjectDurationMinutes:
         parameters.calculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_CALCULATION_SUBJECT_DURATION_MINUTES`)),
@@ -781,14 +860,12 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
-   * BUILD_PLAN.md §9 Step 4: unlike EXAM_TIMETABLE (independent per class
-   * arm), staff are a shared, scarce resource across arms here — so this
-   * builds ONE flat payload covering every target `ExamSchedule` row at
-   * once, not grouped/independent. The trigger endpoint already enforced
-   * that every matching `ExamSchedule` is `APPROVED` (the approval-order
-   * decision for this step) — re-filtered here defensively rather than
-   * trusted from the job payload, same "don't trust upstream" precedent as
-   * every other branch.
+   * BUILD_PLAN.md §9 Step 4, revised for exam sittings: covers every APPROVED
+   * `ExamSchedule` of the triggered component's whole sitting (e.g. JSS+SSS)
+   * in one flat payload, plus the sitting's invigilation mode
+   * (examArrangementFor) — CLASS_TEACHER, ONE_PER_ARM_PER_DAY or
+   * HALL_POOL_PER_DAY. The trigger endpoint already enforced that every
+   * matching `ExamSchedule` is `APPROVED` — re-filtered here defensively.
    */
   private async buildInvigilationPayload(
     request: {
@@ -805,10 +882,12 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       where: { id: request.assessmentComponentId },
       include: { term: true },
     });
+    const { arrangement, components } = await this.resolveSittingComponents(component);
+    const academicSessionId = component.term.academicSessionId;
 
     const examSchedules = await this.prisma.examSchedule.findMany({
       where: {
-        assessmentComponentId: request.assessmentComponentId,
+        assessmentComponentId: { in: components.map((c) => c.id) },
         classArmId: request.classArmId ?? undefined,
         approvalStatus: TimetableApprovalStatus.APPROVED,
       },
@@ -817,34 +896,57 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const globalConstraints = await this.prisma.schedulingConstraint.findMany({
       where: { scope: ScheduleScope.INVIGILATION, classLevelCategoryGroup: null, isActive: true },
     });
-    const maxInvigilationsPerStaffPerDay = Number(
-      globalConstraints.find((c) => c.key === "MAX_INVIGILATIONS_PER_STAFF_PER_DAY")?.value ?? 2,
-    );
     const excludedTypes =
       (globalConstraints.find((c) => c.key === "EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES")?.value as string[] | undefined) ?? [];
+    const parameters = (request.parameters ?? {}) as { includeNonTeachingStaff?: boolean; invigilatorsPerDay?: number };
+    const invigilatorsPerDay =
+      parameters.invigilatorsPerDay ??
+      Number(
+        (arrangement.invigilatorsPerDayKey &&
+          globalConstraints.find((c) => c.key === arrangement.invigilatorsPerDayKey)?.value) ??
+          DEFAULT_HALL_INVIGILATORS_PER_DAY,
+      );
 
-    const parameters = (request.parameters ?? {}) as { includeNonTeachingStaff?: boolean };
-    const eligibleStaffIds = await this.resolveEligibleInvigilatorIds(parameters.includeNonTeachingStaff === true, excludedTypes);
+    const eligibleStaffIds =
+      arrangement.invigilation === "CLASS_TEACHER"
+        ? []
+        : await this.resolveEligibleInvigilatorIds({
+            includeNonTeachingStaff: parameters.includeNonTeachingStaff === true,
+            excludedTypes,
+            academicSessionId,
+            sittingCategories: arrangement.sittingCategories,
+            classTeachersOnly: arrangement.poolClassTeachersOnly,
+          });
 
-    // FR6.4: hard-exclude for JSS/SSS runs, soft preference only for
-    // CRECHE/NURSERY/PRIMARY — derived once for the whole run from the
-    // component's own classLevelCategory, since a run always targets one
-    // component (one fixed category).
-    const hardExcludeOwnSubjectTeacher = categoryToGroup(component.classLevelCategory) === "JSS_SSS";
+    const classTeachersByArm = new Map<string, string[]>();
+    if (arrangement.invigilation === "CLASS_TEACHER") {
+      const classTeacherRows = await this.prisma.staffAssignment.findMany({
+        where: {
+          assignmentType: AssignmentType.CLASS_TEACHER,
+          classArmId: { in: [...new Set(examSchedules.map((es) => es.classArmId))] },
+          academicSessionId,
+          isActive: true,
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      for (const row of classTeacherRows) {
+        if (!row.classArmId) continue;
+        const list = classTeachersByArm.get(row.classArmId) ?? [];
+        if (!list.includes(row.staffId)) list.push(row.staffId);
+        classTeachersByArm.set(row.classArmId, list);
+      }
+    }
 
     const exams: InvigilationExamPayload[] = [];
     for (const es of examSchedules) {
-      const ownSubjectTeacherStaffId = await this.resolveOwnSubjectTeacher(
-        es.subjectId,
-        es.classArmId,
-        component.term.academicSessionId,
-      );
       exams.push({
         examScheduleId: es.id,
+        classArmId: es.classArmId,
         date: es.date.toISOString().slice(0, 10),
         startTime: es.startTime,
         endTime: es.endTime,
-        ownSubjectTeacherStaffId,
+        ownSubjectTeacherStaffId: await this.resolveOwnSubjectTeacher(es.subjectId, es.classArmId, academicSessionId),
+        classTeacherStaffIds: classTeachersByArm.get(es.classArmId) ?? [],
       });
     }
 
@@ -853,8 +955,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     return {
       requestId: request.id,
       scope: ScheduleScope.INVIGILATION,
-      maxInvigilationsPerStaffPerDay,
-      hardExcludeOwnSubjectTeacher,
+      invigilationMode: arrangement.invigilation,
+      invigilatorsPerDay,
       exams,
       eligibleStaffIds,
       existingLoad,
@@ -864,23 +966,31 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
-   * FR6.4: "the pool of active staff" minus the named exclusions — no
-   * StaffCategory restriction stated in PRD. Per your Step 4 decision, the
-   * teaching-only-vs-everyone choice is a run-time toggle
-   * (`parameters.includeNonTeachingStaff`, default false/teaching-only,
-   * mirroring FR6.11's stricter weekly-duty rule) rather than a fixed rule.
+   * FR6.4: active teaching staff minus the named exclusions
+   * (EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES), narrowed to the sitting's own
+   * section — teachers holding an active CLASS_TEACHER/SUBJECT_TEACHER
+   * assignment on one of the sitting's class arms this session (only
+   * CLASS_TEACHER for a classTeachersOnly sitting, i.e. Basic's mixed hall).
+   * `includeNonTeachingStaff` (run-time toggle) widens it to every active
+   * staff member, still minus the exclusions.
    */
-  private async resolveEligibleInvigilatorIds(includeNonTeachingStaff: boolean, excludedTypes: string[]): Promise<string[]> {
+  private async resolveEligibleInvigilatorIds(options: {
+    includeNonTeachingStaff: boolean;
+    excludedTypes: string[];
+    academicSessionId: string;
+    sittingCategories: ClassLevelCategory[];
+    classTeachersOnly: boolean;
+  }): Promise<string[]> {
     const excludedStaffIds = new Set(
       (
         await this.prisma.staffAssignment.findMany({
-          where: { assignmentType: { in: excludedTypes as AssignmentType[] }, isActive: true },
+          where: { assignmentType: { in: options.excludedTypes as AssignmentType[] }, isActive: true },
           select: { staffId: true },
         })
       ).map((a) => a.staffId),
     );
 
-    if (includeNonTeachingStaff) {
+    if (options.includeNonTeachingStaff && !options.classTeachersOnly) {
       const allStaff = await this.prisma.staffProfile.findMany({
         where: { status: StaffStatus.ACTIVE },
         select: { id: true },
@@ -889,7 +999,15 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     }
 
     const teachingAssignments = await this.prisma.staffAssignment.findMany({
-      where: { assignmentType: { in: [AssignmentType.CLASS_TEACHER, AssignmentType.SUBJECT_TEACHER] }, isActive: true },
+      where: {
+        assignmentType: options.classTeachersOnly
+          ? AssignmentType.CLASS_TEACHER
+          : { in: [AssignmentType.CLASS_TEACHER, AssignmentType.SUBJECT_TEACHER] },
+        isActive: true,
+        academicSessionId: options.academicSessionId,
+        classArm: { classLevel: { category: { in: options.sittingCategories } } },
+        staff: { status: StaffStatus.ACTIVE },
+      },
       select: { staffId: true },
     });
     const teachingStaffIds = new Set(teachingAssignments.map((a) => a.staffId));
@@ -915,26 +1033,38 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
   }
 
   /**
-   * Existing (non-rejected) InvigilationAssignment load per eligible staff
-   * member — a total count (for the load-balancing objective, spanning
-   * beyond just this run), a per-date count (for MAX_INVIGILATIONS_PER_
-   * STAFF_PER_DAY), and blocked exam-time ranges (for cross-exam
-   * double-booking, since a staff member could already be invigilating an
-   * exam from an earlier, unrelated run at an overlapping time).
+   * Existing (non-rejected) invigilation load per eligible staff member,
+   * across both per-paper InvigilationAssignment rows and mixed-hall
+   * ExamDayInvigilation rows — a total count (load-balancing objective,
+   * counted in invigilation-days so the two kinds weigh the same) and the
+   * dates they're already on duty (blocked outright: both per-day modes
+   * occupy the whole exam day).
    */
   private async resolveExistingInvigilationLoad(staffIds: string[]): Promise<Record<string, StaffExistingLoad>> {
-    const existing = await this.prisma.invigilationAssignment.findMany({
-      where: { staffId: { in: staffIds }, approvalStatus: { not: TimetableApprovalStatus.REJECTED } },
-      include: { examSchedule: true },
-    });
+    if (staffIds.length === 0) return {};
+    const [paperRows, hallRows] = await Promise.all([
+      this.prisma.invigilationAssignment.findMany({
+        where: { staffId: { in: staffIds }, approvalStatus: { not: TimetableApprovalStatus.REJECTED } },
+        include: { examSchedule: { select: { date: true } } },
+      }),
+      this.prisma.examDayInvigilation.findMany({
+        where: { staffId: { in: staffIds }, approvalStatus: { not: TimetableApprovalStatus.REJECTED } },
+        select: { staffId: true, date: true },
+      }),
+    ]);
+
+    const datesByStaff = new Map<string, Set<string>>();
+    const add = (staffId: string, date: Date) => {
+      const set = datesByStaff.get(staffId) ?? new Set<string>();
+      set.add(date.toISOString().slice(0, 10));
+      datesByStaff.set(staffId, set);
+    };
+    for (const row of paperRows) add(row.staffId, row.examSchedule.date);
+    for (const row of hallRows) add(row.staffId, row.date);
 
     const summary: Record<string, StaffExistingLoad> = {};
-    for (const row of existing) {
-      const dateKey = row.examSchedule.date.toISOString().slice(0, 10);
-      const entry = (summary[row.staffId] ??= { totalCount: 0, countByDate: {}, blockedRanges: [] });
-      entry.totalCount += 1;
-      entry.countByDate[dateKey] = (entry.countByDate[dateKey] ?? 0) + 1;
-      entry.blockedRanges.push({ date: dateKey, startTime: row.examSchedule.startTime, endTime: row.examSchedule.endTime });
+    for (const [staffId, dates] of datesByStaff) {
+      summary[staffId] = { totalCount: dates.size, busyDates: [...dates] };
     }
     return summary;
   }
@@ -1192,6 +1322,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       },
       include: {
         subject: { include: { childSubjects: true } },
+        concurrencyGroup: { select: { name: true } },
         childPeriodOverrides: true,
         // Only the disabled rows for this exact term — ClassSubjectTermStatus.subjectId
         // is either the classSubject's own subject (disables the whole
@@ -1212,6 +1343,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
             requiresCalculation: cs.subject.requiresCalculation,
             periodsPerWeek: cs.periodsPerWeek,
             concurrencyGroupId: cs.concurrencyGroupId,
+            concurrencyGroupName: cs.concurrencyGroup?.name ?? null,
           },
         ];
       }
@@ -1230,6 +1362,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           // schema.prisma comment for the sparse-override reasoning.
           periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
           concurrencyGroupId: cs.concurrencyGroupId,
+          concurrencyGroupName: cs.concurrencyGroup?.name ?? null,
         }));
     });
   }

@@ -78,6 +78,7 @@ model User {
   reviewedScheduleGenerationRequests ScheduleGenerationRequest[] @relation("ScheduleGenerationRequestReviewer")
   approvedExamSchedules              ExamSchedule[]
   approvedInvigilationAssignments    InvigilationAssignment[]
+  approvedExamDayInvigilations       ExamDayInvigilation[]
   approvedDutyAssignments            DutyAssignment[]
   debtExcusalsGranted                StudentProfile[]            @relation("StudentDebtExcusedBy")
   createdHomework                    Homework[]
@@ -376,6 +377,7 @@ model StaffProfile {
   paymentsRecorded                Payment[]
   discountRequestsRaised          DiscountRequest[]
   invigilationAssignments         InvigilationAssignment[]
+  examDayInvigilations            ExamDayInvigilation[]
   dutyAssignments                 DutyAssignment[]
   feeStructureAssignmentsRecorded FeeStructureStudentAssignment[]
 
@@ -986,6 +988,7 @@ model ScheduleGenerationRequest {
   timetableSlots          TimetableSlot[]
   examSchedules           ExamSchedule[]
   invigilationAssignments InvigilationAssignment[]
+  examDayInvigilations    ExamDayInvigilation[]
   dutyAssignments         DutyAssignment[]
 
   @@index([status])
@@ -1035,10 +1038,18 @@ enum InvigilationRole {
 }
 
 // BUILD_PLAN.md §9 Step 4: one row per (examSchedule, staff) pairing — who
-// invigilates a given exam sitting. Fixed at exactly one LEAD + one
-// ASSISTANT per ExamSchedule (the @@unique below enforces it) — the only
-// signal in PRD is the two-value role enum itself; no hall-capacity field
-// exists anywhere in this codebase to scale an ASSISTANT count by.
+// invigilates a given exam sitting. At most one LEAD + one ASSISTANT per
+// ExamSchedule. A CLASS_TEACHER sitting (examArrangementFor in
+// packages/types) uses LEAD/ASSISTANT for the arm's first/second class
+// teacher; a ONE_PER_ARM_PER_DAY sitting writes a LEAD only. A mixed-hall
+// (HALL_POOL_PER_DAY) sitting doesn't use this model at all — see
+// ExamDayInvigilation.
+//
+// **Revised**: (examScheduleId, role) uniqueness is a hand-added partial
+// index (WHERE "approvalStatus" != 'REJECTED'), not a plain @@unique — same
+// reject-then-regenerate collision DutyAssignment hit (a REJECTED roster's
+// rows stay for their audit trail and must not block a regenerate, which for
+// a CLASS_TEACHER sitting reproduces the exact same rows every time).
 model InvigilationAssignment {
   id                          String                     @id @default(uuid())
   examScheduleId              String
@@ -1057,10 +1068,43 @@ model InvigilationAssignment {
   createdAt                   DateTime                   @default(now())
   updatedAt                   DateTime                   @updatedAt
 
-  @@unique([examScheduleId, role])
+  @@index([examScheduleId, role])
   @@index([staffId])
   @@index([scheduleGenerationRequestId])
   @@map("invigilation_assignments")
+}
+
+// Mixed-hall (HALL_POOL_PER_DAY, see examArrangementFor in packages/types)
+// invigilation duty: one row per (staff, exam date) — the pre-defined number
+// of invigilators supervising the whole hall that day, not tied to any one
+// paper. assessmentComponentId is the component the INVIGILATION run was
+// triggered for; a JSS/SSS sitting spans both the JSS and SSS components, so
+// readers resolve the sitting's sibling components rather than matching this
+// column alone (ExamDayInvigilationService.findAll). At most one non-REJECTED
+// row per (assessmentComponentId, date, staffId) — hand-added partial unique
+// index, same precedent as DutyAssignment.
+model ExamDayInvigilation {
+  id                          String                     @id @default(uuid())
+  assessmentComponentId       String
+  assessmentComponent         AssessmentComponent        @relation(fields: [assessmentComponentId], references: [id], onDelete: Cascade)
+  date                        DateTime                   @db.Date
+  staffId                     String
+  staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  generatedBy                 TimetableGeneratedBy       @default(MANUAL)
+  approvalStatus              TimetableApprovalStatus    @default(APPROVED)
+  approvedByUserId            String?
+  approvedByUser              User?                      @relation(fields: [approvedByUserId], references: [id])
+  approvedAt                  DateTime?
+  rejectionReason             String?
+  scheduleGenerationRequestId String?
+  scheduleGenerationRequest   ScheduleGenerationRequest? @relation(fields: [scheduleGenerationRequestId], references: [id])
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+
+  @@index([assessmentComponentId, date])
+  @@index([staffId, date])
+  @@index([scheduleGenerationRequestId])
+  @@map("exam_day_invigilations")
 }
 
 // BUILD_PLAN.md §9 Step 5: one row per (staff, week) pairing — general
@@ -1193,6 +1237,7 @@ model AssessmentComponent {
   scoreEntries               ScoreEntry[]
   scheduleGenerationRequests ScheduleGenerationRequest[]
   examSchedules              ExamSchedule[]
+  examDayInvigilations       ExamDayInvigilation[]
   linkedHomework             Homework[]
 
   @@unique([termId, classLevelCategory, type, sequence])

@@ -42,10 +42,18 @@ class SolveRequest(BaseModel):
     spreadCalculationSubjects: bool = True
     minGapBetweenCalculationExamsDays: int = 1
     classArms: list[ExamClassArmPayload] = []
+    # Unified sitting (one shared slot grid across every arm) — see
+    # exam_timetable._solve_unified. examDayEndTime optional: when set, a day's
+    # papers must also fit the start-end window by duration.
+    unified: bool = False
+    examDayEndTime: str | None = None
+    lastDaysWindow: int = 2
+    breakAfterPaper: int = 0
+    breakDurationMinutes: int = 0
 
     # INVIGILATION-specific shape (BUILD_PLAN.md §9 Step 4).
-    maxInvigilationsPerStaffPerDay: int = 2
-    hardExcludeOwnSubjectTeacher: bool = True
+    invigilationMode: str = "CLASS_TEACHER"
+    invigilatorsPerDay: int = 2
     exams: list[InvigilationExamPayload] = []
     eligibleStaffIds: list[str] = []
     existingLoad: dict[str, StaffExistingLoadPayload] = {}
@@ -135,17 +143,23 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             spread_calculation_subjects=payload.spreadCalculationSubjects,
             min_gap_between_calculation_exams_days=payload.minGapBetweenCalculationExamsDays,
             class_arms=payload.classArms,
+            unified=payload.unified,
+            exam_day_end_time=payload.examDayEndTime,
+            calculation_subjects_morning=payload.calculationSubjectsMorning,
+            last_days_window=payload.lastDaysWindow,
+            break_after_paper=payload.breakAfterPaper,
+            break_duration_minutes=payload.breakDurationMinutes,
         )
     elif payload.scope == "INVIGILATION":
         body = await asyncio.to_thread(
             solve_invigilation,
             request_id=payload.requestId,
             callback_token=payload.callbackToken,
-            max_invigilations_per_staff_per_day=payload.maxInvigilationsPerStaffPerDay,
-            hard_exclude_own_subject_teacher=payload.hardExcludeOwnSubjectTeacher,
+            mode=payload.invigilationMode,
             exams=payload.exams,
             eligible_staff_ids=payload.eligibleStaffIds,
             existing_load=payload.existingLoad,
+            invigilators_per_day=payload.invigilatorsPerDay,
         )
     elif payload.scope == "WEEKLY_DUTY":
         body = await asyncio.to_thread(

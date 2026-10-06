@@ -18,6 +18,7 @@ export type AuditModelKey =
   | "timetableSlot"
   | "examSchedule"
   | "invigilationAssignment"
+  | "examDayInvigilation"
   | "dutyAssignment"
   | "dutyRosterWeek"
   | "scheduleGenerationRequest"

@@ -20,9 +20,15 @@ import type { RequestUser } from "../auth/jwt.strategy";
 import { Audited } from "../audit/audited.decorator";
 import { UpdateExamScheduleDto } from "./dto/update-exam-schedule.dto";
 import { withDisplayName } from "../academic-structure/class-arm";
+import { resolveSitting } from "./exam-sitting";
 
 interface ExamConflictCheckInput {
   classArmId: string;
+  // Optional: when given, two overlapping papers that are both members of
+  // the same "options column" bundle (ClassSubject.concurrencyGroupId) are
+  // allowed — a student only ever sits one of them, and a unified sitting
+  // deliberately puts bundle-mates in the same slot.
+  subjectId?: string;
   date: Date;
   startTime: string;
   endTime: string;
@@ -59,11 +65,38 @@ export class ExamScheduleService {
     });
     for (const slot of sameDaySlots) {
       if (timeRangesOverlap(input.startTime, input.endTime, slot.startTime, slot.endTime)) {
+        if (input.subjectId && (await this.areBundleMates(input.classArmId, input.subjectId, slot.subjectId, client))) continue;
         throw new BadRequestException(
           `Class arm already has an exam from ${slot.startTime} to ${slot.endTime} on this date`,
         );
       }
     }
+  }
+
+  /** Both subjects sit in the same non-null ClassSubject.concurrencyGroupId for this arm's category (group children inherit their parent row's). */
+  private async areBundleMates(
+    classArmId: string,
+    subjectIdA: string,
+    subjectIdB: string,
+    client: PrismaService | Prisma.TransactionClient,
+  ): Promise<boolean> {
+    if (subjectIdA === subjectIdB) return false;
+    const arm = await client.classArm.findUniqueOrThrow({ where: { id: classArmId }, include: { classLevel: true } });
+    const rows = await client.classSubject.findMany({
+      where: {
+        classLevelCategory: arm.classLevel.category,
+        concurrencyGroupId: { not: null },
+        OR: [
+          { subjectId: { in: [subjectIdA, subjectIdB] } },
+          { subject: { childSubjects: { some: { id: { in: [subjectIdA, subjectIdB] } } } } },
+        ],
+      },
+      include: { subject: { include: { childSubjects: { select: { id: true } } } } },
+    });
+    const groupOf = (subjectId: string) =>
+      rows.find((r) => r.subjectId === subjectId || r.subject.childSubjects.some((c) => c.id === subjectId))?.concurrencyGroupId;
+    const groupA = groupOf(subjectIdA);
+    return Boolean(groupA) && groupA === groupOf(subjectIdB);
   }
 
   // Same PARENT-scoping precedent as TimetableSlotService's own copy of this
@@ -129,9 +162,14 @@ export class ExamScheduleService {
       }
     }
 
+    // A component resolves to its whole exam sitting (e.g. JSS+SSS share one
+    // timetable — examArrangementFor), so either component shows all of it.
+    const componentIds = filters.assessmentComponentId
+      ? (await resolveSitting(this.prisma, filters.assessmentComponentId)).componentIds
+      : undefined;
     const rows = await this.prisma.examSchedule.findMany({
       where: {
-        assessmentComponentId: filters.assessmentComponentId,
+        assessmentComponentId: componentIds ? { in: componentIds } : undefined,
         classArmId: classArmWhere,
         approvalStatus: filters.approvalStatus ?? TimetableApprovalStatus.APPROVED,
       },
