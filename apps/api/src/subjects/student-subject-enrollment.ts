@@ -142,6 +142,49 @@ export class StudentSubjectEnrollmentService {
         update: { status: EnrollmentStatus.ACTIVE, classArmId: params.classArmId },
       });
     }
+
+    // A class change leaves the old class's enrollments behind — the upsert
+    // above only reaches subjects the new class also has as COMPULSORY. Left
+    // ACTIVE on the old arm, they keep showing the old class's homework and
+    // put the old subjects on the full-term report (which reads every
+    // SubjectTermResult for the student+term, not just the current arm's).
+    // Move the ones that still apply to the new class (e.g. an elective after
+    // an arm change within the same category); drop the rest along with
+    // their term results, which no aggregation would ever refresh again.
+    const leftovers = await tx.studentSubjectEnrollment.findMany({
+      where: {
+        studentId: params.studentId,
+        termId: term.id,
+        status: EnrollmentStatus.ACTIVE,
+        classArmId: { not: params.classArmId },
+      },
+      select: { id: true, subjectId: true, classArmId: true, subject: { select: { childSubjects: { select: { id: true } } } } },
+    });
+    for (const enrollment of leftovers) {
+      const classSubject = classSubjects.find((cs) => cs.subjectId === enrollment.subjectId);
+      const levelStatus = classSubject
+        ? await tx.classSubjectLevelStatus.findUnique({
+            where: {
+              classSubjectId_classLevelId: { classSubjectId: classSubject.id, classLevelId: classArm.classLevelId },
+            },
+          })
+        : null;
+      const stillApplies = classSubject?.subject.isActive && !(levelStatus && !levelStatus.isActive);
+
+      if (stillApplies) {
+        await tx.studentSubjectEnrollment.update({ where: { id: enrollment.id }, data: { classArmId: params.classArmId } });
+        continue;
+      }
+      await tx.studentSubjectEnrollment.update({ where: { id: enrollment.id }, data: { status: EnrollmentStatus.DROPPED } });
+      await tx.subjectTermResult.deleteMany({
+        where: {
+          studentId: params.studentId,
+          termId: term.id,
+          classArmId: enrollment.classArmId,
+          subjectId: { in: [enrollment.subjectId, ...enrollment.subject.childSubjects.map((c) => c.id)] },
+        },
+      });
+    }
   }
 
   /**

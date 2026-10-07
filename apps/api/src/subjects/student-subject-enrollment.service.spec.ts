@@ -26,7 +26,8 @@ function buildTxMock() {
     classSubject: { findMany: jest.fn() },
     classSubjectTermStatus: { findUnique: jest.fn() },
     classSubjectLevelStatus: { findUnique: jest.fn() },
-    studentSubjectEnrollment: { upsert: jest.fn() },
+    studentSubjectEnrollment: { upsert: jest.fn(), findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+    subjectTermResult: { deleteMany: jest.fn() },
   };
 }
 
@@ -133,6 +134,42 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 
     expect(tx.classSubjectTermStatus.findUnique).not.toHaveBeenCalled();
     expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("moves a leftover enrollment to the new arm when the subject still applies to the new class", async () => {
+    tx.classSubject.findMany.mockResolvedValue([
+      { id: "cs-2", subjectId: "subj-general", type: SubjectType.GENERAL, subject: { isActive: true } },
+    ]);
+    tx.studentSubjectEnrollment.findMany.mockResolvedValue([
+      { id: "enr-1", subjectId: "subj-general", classArmId: "old-arm", subject: { childSubjects: [] } },
+    ]);
+
+    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, { studentId: "student-1", classArmId: "arm-1" });
+
+    expect(tx.studentSubjectEnrollment.update).toHaveBeenCalledWith({ where: { id: "enr-1" }, data: { classArmId: "arm-1" } });
+    expect(tx.subjectTermResult.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("drops a leftover enrollment (and its term results) when the subject doesn't apply to the new class", async () => {
+    tx.classSubject.findMany.mockResolvedValue([]);
+    tx.studentSubjectEnrollment.findMany.mockResolvedValue([
+      { id: "enr-1", subjectId: "group-old", classArmId: "old-arm", subject: { childSubjects: [{ id: "child-old" }] } },
+    ]);
+
+    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, { studentId: "student-1", classArmId: "arm-1" });
+
+    expect(tx.studentSubjectEnrollment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { studentId: "student-1", termId: "term-1", status: EnrollmentStatus.ACTIVE, classArmId: { not: "arm-1" } },
+      }),
+    );
+    expect(tx.studentSubjectEnrollment.update).toHaveBeenCalledWith({
+      where: { id: "enr-1" },
+      data: { status: EnrollmentStatus.DROPPED },
+    });
+    expect(tx.subjectTermResult.deleteMany).toHaveBeenCalledWith({
+      where: { studentId: "student-1", termId: "term-1", classArmId: "old-arm", subjectId: { in: ["group-old", "child-old"] } },
+    });
   });
 
   it("no-ops when there is no current term for the session (known Term.isCurrent gap)", async () => {
