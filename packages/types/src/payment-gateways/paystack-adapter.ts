@@ -155,6 +155,7 @@ function mapPaystackResult(data: {
     gatewayTransactionReference: String(data.id),
     paidAt: data.paid_at ? new Date(data.paid_at) : null,
     channel: data.channel,
+    ...(data.status === "abandoned" ? { abandoned: true } : {}),
   };
 }
 

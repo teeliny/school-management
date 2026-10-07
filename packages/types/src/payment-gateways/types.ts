@@ -43,6 +43,15 @@ export interface GatewayTransactionResult {
   paidAt: Date | null;
   /** Provider's own channel string (e.g. "CARD", "card", "bank_transfer") — mapped to PaymentMethod by the caller. */
   channel: string;
+  /**
+   * Set only alongside status PENDING when the provider says the checkout
+   * was opened and left uncompleted (Paystack "abandoned"). Still PENDING
+   * because the payer can return to the same checkout and finish it, but a
+   * caller may give up on it after long enough (see the worker's
+   * payment-reconciliation sweep). Monnify maps its own ABANDONED straight
+   * to FAILED and never sets this.
+   */
+  abandoned?: boolean;
 }
 
 /**

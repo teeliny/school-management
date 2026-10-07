@@ -80,6 +80,7 @@ describe("PaystackAdapter", () => {
     expect(result.gatewayTransactionReference).toBe("123456");
     // 500000 kobo -> 5000 Naira.
     expect(result.amountPaid).toBe(5000);
+    expect(result.abandoned).toBe(paystackStatus === "abandoned" ? true : undefined);
   });
 
   it("verifyTransaction requests the correct endpoint", async () => {

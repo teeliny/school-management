@@ -25,6 +25,13 @@ const STUCK_THRESHOLD_MS = 15 * 60 * 1000;
 // past STUCK_THRESHOLD_MS) rules out any eventual-consistency lag before
 // giving up.
 const NOT_FOUND_GIVE_UP_MS = 60 * 60 * 1000;
+// A checkout the payer opened and closed (Paystack "abandoned") stays
+// PENDING on the gateway's side indefinitely, so without a cutoff it would
+// sit in this sweep — and the dashboard's "stuck" count — forever. The payer
+// can still return to that same checkout and pay for a while, so this is
+// deliberately much longer than NOT_FOUND_GIVE_UP_MS; a payer who comes back
+// later just starts a fresh payment.
+const ABANDONED_GIVE_UP_MS = 24 * 60 * 60 * 1000;
 
 const GATEWAY_METHODS: PaymentMethod[] = [
   PaymentMethod.GATEWAY_CARD,
@@ -92,6 +99,10 @@ export class PaymentReconciliationProcessor extends WorkerHost implements OnModu
 
         if (result.status !== "PENDING") {
           await this.resolveGatewayOutcome(payment.invoiceId, payment.gatewayProvider, result);
+          resolved++;
+        } else if (result.abandoned && Date.now() - payment.createdAt.getTime() > ABANDONED_GIVE_UP_MS) {
+          this.logger.warn(`Giving up on payment ${payment.id}: checkout abandoned on the gateway for over 24h — marking FAILED`);
+          await this.prisma.payment.update({ where: { id: payment.id }, data: { status: PaymentStatus.FAILED } });
           resolved++;
         }
       } catch (error) {

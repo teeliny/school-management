@@ -156,6 +156,36 @@ describe("PaymentReconciliationProcessor.process (PRD FR7.6)", () => {
     expect(prisma.__tx.payment.update).not.toHaveBeenCalled();
   });
 
+  it("keeps an abandoned checkout PENDING while the payer could still return to it (under 24h)", async () => {
+    const recent = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    prisma.payment.findMany.mockResolvedValue([buildStuckPayment({ createdAt: recent })]);
+    monnify.verifyTransaction.mockResolvedValue({ status: "PENDING", abandoned: true });
+
+    await processor.process({} as never);
+
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+  });
+
+  it("gives up and marks FAILED once a checkout has been abandoned for over 24h", async () => {
+    const oldEnough = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    prisma.payment.findMany.mockResolvedValue([buildStuckPayment({ createdAt: oldEnough })]);
+    monnify.verifyTransaction.mockResolvedValue({ status: "PENDING", abandoned: true });
+
+    await processor.process({} as never);
+
+    expect(prisma.payment.update).toHaveBeenCalledWith({ where: { id: "payment-abcdef12" }, data: { status: "FAILED" } });
+  });
+
+  it("never gives up on a plain (non-abandoned) PENDING result, however old", async () => {
+    const oldEnough = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    prisma.payment.findMany.mockResolvedValue([buildStuckPayment({ createdAt: oldEnough })]);
+    monnify.verifyTransaction.mockResolvedValue({ status: "PENDING" });
+
+    await processor.process({} as never);
+
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+  });
+
   it("is idempotent — a SUCCESSFUL payment already recorded for this gatewayTransactionReference is not reprocessed", async () => {
     prisma.payment.findMany.mockResolvedValue([buildStuckPayment()]);
     prisma.payment.findFirst.mockResolvedValue({ id: "already-processed" });
