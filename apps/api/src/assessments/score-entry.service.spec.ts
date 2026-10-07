@@ -10,7 +10,7 @@ function buildPrismaMock() {
     assessmentComponent: { findUniqueOrThrow: jest.fn() },
     subject: { findUniqueOrThrow: jest.fn() },
     scoreEntry: { upsert: jest.fn(), findUnique: jest.fn() },
-    studentSubjectEnrollment: { findFirst: jest.fn(), count: jest.fn() },
+    studentSubjectEnrollment: { findFirst: jest.fn(), findMany: jest.fn() },
   };
 }
 
@@ -68,7 +68,7 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
       termId: "term-1",
       status: AssessmentComponentStatus.OPEN,
     });
-    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: false });
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: false, parentSubjectId: null });
     // Default: no existing row, i.e. this write is a first entry — tests
     // that want to exercise the "correction" path override this.
     prisma.scoreEntry.findUnique.mockResolvedValue(null);
@@ -176,11 +176,23 @@ describe("ScoreEntryService.enter (PRD §3.6/FR4.2)", () => {
     expect(prisma.studentSubjectEnrollment.findFirst).toHaveBeenCalledWith({
       where: {
         studentId: "student-1",
-        subjectId: "subj-1",
+        subjectId: { in: ["subj-1"] },
         classArmId: "arm-1",
         termId: "term-1",
         status: "ACTIVE",
       },
+    });
+  });
+
+  it("accepts the student's enrollment in the group as covering a child subject", async () => {
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", isGroup: false, parentSubjectId: "group-1" });
+    staffAssignments.findActiveAssignment.mockResolvedValue({ id: "assignment-1", staffId: "staff-1" });
+    prisma.scoreEntry.upsert.mockResolvedValue({ id: "score-1" });
+
+    await service.enter(buildDto(), USER, false);
+
+    expect(prisma.studentSubjectEnrollment.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({ subjectId: { in: ["subj-1", "group-1"] } }),
     });
   });
 
@@ -282,13 +294,16 @@ describe("ScoreEntryService.summary", () => {
     const prisma = buildPrismaMock();
     prisma.scoreEntry.count = jest.fn().mockResolvedValue(12);
     prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({ id: "comp-1", termId: "term-1" });
-    prisma.studentSubjectEnrollment.count.mockResolvedValue(18);
+    prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", parentSubjectId: "group-1" });
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue(Array.from({ length: 18 }, (_, i) => ({ studentId: `s-${i}` })));
     const service = new ScoreEntryService(prisma as never, {} as never, {} as never, {} as never);
 
     const result = await service.summary({ classArmId: "arm-1", subjectId: "subj-1", assessmentComponentId: "comp-1" });
 
-    expect(prisma.studentSubjectEnrollment.count).toHaveBeenCalledWith({
-      where: { classArmId: "arm-1", subjectId: "subj-1", termId: "term-1", status: "ACTIVE" },
+    expect(prisma.studentSubjectEnrollment.findMany).toHaveBeenCalledWith({
+      where: { classArmId: "arm-1", subjectId: { in: ["subj-1", "group-1"] }, termId: "term-1", status: "ACTIVE" },
+      select: { studentId: true },
+      distinct: ["studentId"],
     });
     expect(result).toEqual({ totalStudents: 18, enteredCount: 12 });
   });

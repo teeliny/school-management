@@ -31,6 +31,19 @@ import { Audited } from "../audit/audited.decorator";
 type Tx = Prisma.TransactionClient;
 
 /**
+ * Subject ids whose ACTIVE enrollment covers `subject` for scoring/homework:
+ * the subject itself plus, for a child subject, its group parent. Students
+ * are enrolled in the group (ClassSubject points at the group, so auto-enroll
+ * creates exactly that row), never in each child — and the report pipeline
+ * (SubjectTermResultService, the mid-term report processor) already expands
+ * a group enrollment into its children. So don't "fix" this by backfilling
+ * child enrollments: those readers would then count each child twice.
+ */
+export function coveringEnrollmentSubjectIds(subject: { id: string; parentSubjectId: string | null }): string[] {
+  return subject.parentSubjectId ? [subject.id, subject.parentSubjectId] : [subject.id];
+}
+
+/**
  * PRD §3.3 applicability rules engine:
  *  - COMPULSORY: auto-applies to every student in the assigned class.
  *  - GENERAL: available to any student in the assigned class; opt-in.

@@ -9,6 +9,7 @@ import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
 import { ClassSubjectLevelStatusService } from "../subjects/class-subject-level-status";
+import { coveringEnrollmentSubjectIds } from "../subjects/student-subject-enrollment";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { Audited } from "../audit/audited.decorator";
 import type { AuditRequestOverrides } from "../audit/audit.interceptor";
@@ -88,10 +89,12 @@ export class ScoreEntryService {
     // decide which subjects a student needs a result for; without it, a
     // ScoreEntry could be written for a subject the student never enrolled
     // in and would never surface in that completeness check.
+    // A child subject (e.g. Basic Science) is covered by the student's
+    // enrollment in its group (Basic Science and Technology).
     const enrollment = await this.prisma.studentSubjectEnrollment.findFirst({
       where: {
         studentId: dto.studentId,
-        subjectId: dto.subjectId,
+        subjectId: { in: coveringEnrollmentSubjectIds(subject) },
         classArmId: dto.classArmId,
         termId: component.termId,
         status: EnrollmentStatus.ACTIVE,
@@ -178,18 +181,21 @@ export class ScoreEntryService {
     const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
       where: { id: filters.assessmentComponentId },
     });
-    const [totalStudents, enteredCount] = await Promise.all([
-      this.prisma.studentSubjectEnrollment.count({
+    const subject = await this.prisma.subject.findUniqueOrThrow({ where: { id: filters.subjectId } });
+    const [enrolled, enteredCount] = await Promise.all([
+      this.prisma.studentSubjectEnrollment.findMany({
         where: {
           classArmId: filters.classArmId,
-          subjectId: filters.subjectId,
+          subjectId: { in: coveringEnrollmentSubjectIds(subject) },
           termId: component.termId,
           status: EnrollmentStatus.ACTIVE,
         },
+        select: { studentId: true },
+        distinct: ["studentId"],
       }),
       this.prisma.scoreEntry.count({ where: filters }),
     ]);
-    return { totalStudents, enteredCount };
+    return { totalStudents: enrolled.length, enteredCount };
   }
 }
 

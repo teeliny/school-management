@@ -39,6 +39,7 @@ import { AbilityFactory } from "../casl/ability.factory";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { ClassSubjectTermStatusService } from "../subjects/class-subject-term-status";
 import { ClassSubjectLevelStatusService } from "../subjects/class-subject-level-status";
+import { coveringEnrollmentSubjectIds } from "../subjects/student-subject-enrollment";
 import { ScoreEntryService } from "../assessments/score-entry";
 import { NotificationService } from "../notifications/notification";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
@@ -221,10 +222,23 @@ export class HomeworkService {
    */
   private async guardianReadScope(studentIds: string[], termId?: string) {
     if (studentIds.length === 0) return { where: undefined, enrollments: [] };
-    const enrollments = await this.prisma.studentSubjectEnrollment.findMany({
+    const rows = await this.prisma.studentSubjectEnrollment.findMany({
       where: { studentId: { in: studentIds }, status: EnrollmentStatus.ACTIVE, ...(termId ? { termId } : {}) },
-      select: { studentId: true, subjectId: true, classArmId: true, termId: true },
+      select: {
+        studentId: true,
+        subjectId: true,
+        classArmId: true,
+        termId: true,
+        subject: { select: { childSubjects: { select: { id: true } } } },
+      },
     });
+    // Homework is set on child subjects, but students are enrolled in the
+    // group — a group enrollment covers each of its children
+    // (coveringEnrollmentSubjectIds is the same rule from the child's side).
+    const enrollments = rows.flatMap(({ subject, ...e }) => [
+      e,
+      ...subject.childSubjects.map((child) => ({ ...e, subjectId: child.id })),
+    ]);
     if (enrollments.length === 0) return { where: undefined, enrollments };
     const tuples = new Map<string, Prisma.HomeworkWhereInput>();
     for (const e of enrollments) {
@@ -307,10 +321,16 @@ export class HomeworkService {
   }
 
   /** ACTIVE enrollments for this homework's subject+class arm+term — the roster that can submit/be marked. */
-  private roster(homework: { subjectId: string; classArmId: string; termId: string }, studentIds?: string[]) {
+  private async roster(homework: { subjectId: string; classArmId: string; termId: string }, studentIds?: string[]) {
+    const subject = await this.prisma.subject.findUniqueOrThrow({
+      where: { id: homework.subjectId },
+      select: { id: true, parentSubjectId: true },
+    });
     return this.prisma.studentSubjectEnrollment.findMany({
+      // distinct: a student enrolled in both the group and the child appears once.
+      distinct: ["studentId"],
       where: {
-        subjectId: homework.subjectId,
+        subjectId: { in: coveringEnrollmentSubjectIds(subject) },
         classArmId: homework.classArmId,
         termId: homework.termId,
         status: EnrollmentStatus.ACTIVE,
@@ -586,9 +606,13 @@ export class HomeworkService {
     const wardTuples = guardian.enrollments;
     return homework.map((h) => ({
       ...h,
-      wardStudentIds: wardTuples
-        .filter((e) => e.subjectId === h.subjectId && e.classArmId === h.classArmId && e.termId === h.termId)
-        .map((e) => e.studentId),
+      wardStudentIds: [
+        ...new Set(
+          wardTuples
+            .filter((e) => e.subjectId === h.subjectId && e.classArmId === h.classArmId && e.termId === h.termId)
+            .map((e) => e.studentId),
+        ),
+      ],
     }));
   }
 
