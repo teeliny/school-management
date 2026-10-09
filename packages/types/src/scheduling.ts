@@ -373,6 +373,11 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "EXAM_BREAK_DURATION_MINUTES", value: 30 },
   { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "MID_TERM_BREAK_AFTER_PAPER", value: 2 },
   { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "MID_TERM_BREAK_DURATION_MINUTES", value: 30 },
+  // {EXAM,MID_TERM}_COLLAPSE_GROUP_SUBJECTS (group-scoped, not seeded —
+  // school-specific): string[] of "GroupSubjectName@ClassLevel,..." — sit
+  // that group as one paper instead of one per child for those levels, e.g.
+  // ["English Language@Basic 1,Basic 2,Basic 3,Basic 4,Basic 6"]. See
+  // parseCollapsedGroupSubjects.
 
   { scope: "INVIGILATION", key: "MAX_INVIGILATIONS_PER_STAFF_PER_DAY", value: 2 },
   {
@@ -680,6 +685,57 @@ export function allowedDaysForClassLevel(
 /** Case/whitespace-insensitive key for matching a SchedulingConstraint subject-name entry against `Subject.name`. */
 export function normalizeSubjectName(name: string): string {
   return name.trim().toUpperCase();
+}
+
+/** One {EXAM,MID_TERM}_COLLAPSE_GROUP_SUBJECTS entry — see parseCollapsedGroupSubjects. */
+export interface CollapsedGroupSubject {
+  groupName: string;
+  // Optional "@ClassLevelName,ClassLevelName" suffix, same convention as
+  // SubjectDayRestriction.classLevelNames; undefined = every ClassLevel the
+  // (group-scoped) key applies to.
+  classLevelNames?: string[];
+}
+
+/**
+ * Parses {EXAM,MID_TERM}_COLLAPSE_GROUP_SUBJECTS's
+ * `"GroupSubjectName[@ClassLevel,...]"` string-list format (EXAM_TIMETABLE,
+ * group-scoped): for the named ClassLevels, an `isGroup` subject is sat as
+ * ONE paper (an ExamSchedule row against the group subject itself) instead of
+ * one paper per child — e.g. `"English Language@Basic 1,Basic 2"` sits
+ * Basic's Comprehension/Composition/Grammar/Literature as a single "English
+ * Language" paper. Exam timetables only: the group is still never assignable
+ * or scoreable (score entry stays per child). Malformed entries are skipped,
+ * same posture as parseSubjectDayRestrictions.
+ */
+export function parseCollapsedGroupSubjects(raw: unknown): CollapsedGroupSubject[] {
+  const entries = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+  const result: CollapsedGroupSubject[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "string") continue;
+    const scopeIndex = entry.indexOf("@");
+    const groupName = (scopeIndex === -1 ? entry : entry.slice(0, scopeIndex)).trim();
+    if (!groupName) continue;
+    const classLevelNames =
+      scopeIndex === -1
+        ? undefined
+        : entry
+            .slice(scopeIndex + 1)
+            .split(",")
+            .map(normalizeSubjectName)
+            .filter((name) => name.length > 0);
+    result.push({ groupName, ...(classLevelNames ? { classLevelNames } : {}) });
+  }
+  return result;
+}
+
+/** The normalized group-subject names to sit as one paper in `classLevelName` — see parseCollapsedGroupSubjects. */
+export function collapsedGroupNamesForClassLevel(entries: CollapsedGroupSubject[], classLevelName: string): Set<string> {
+  const levelKey = normalizeSubjectName(classLevelName);
+  return new Set(
+    entries
+      .filter((e) => !e.classLevelNames || e.classLevelNames.includes(levelKey))
+      .map((e) => normalizeSubjectName(e.groupName)),
+  );
 }
 
 /** One ClassLevel's membership in a whole-level sync pool — see SYNC_ALL_SUBJECTS_CLASS_LEVEL_NAMES below. */

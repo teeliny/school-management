@@ -235,6 +235,12 @@ function ExamCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: row.id });
   const pending = row.approvalStatus === "PENDING_REVIEW";
+  // A group sat as one paper ({EXAM,MID_TERM}_COLLAPSE_GROUP_SUBJECTS, e.g.
+  // Basic's "English Language") isn't in the flattened options — keep it
+  // selectable on its own row so the Select doesn't render blank.
+  const options = subjects.some((s) => s.id === row.subjectId)
+    ? subjects
+    : [{ id: row.subjectId, name: row.subject.name }, ...subjects];
 
   return (
     <div
@@ -272,7 +278,7 @@ function ExamCard({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {subjects.map((s) => (
+              {options.map((s) => (
                 <SelectItem key={s.id} value={s.id}>
                   {s.name}
                 </SelectItem>

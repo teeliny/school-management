@@ -16,11 +16,13 @@ import {
   allowedDaysForClassLevel,
   CLASS_LEVEL_CATEGORIES,
   categoryToGroup,
+  collapsedGroupNamesForClassLevel,
   computePeriodTime,
   DAYS_OF_WEEK,
   DEFAULT_HALL_INVIGILATORS_PER_DAY,
   examArrangementFor,
   normalizeSubjectName,
+  parseCollapsedGroupSubjects,
   parseSpecialPeriods,
   parseSubjectDayPeriodRequirements,
   parseSubjectDayRestrictions,
@@ -30,6 +32,7 @@ import {
   specialPeriodAppliesTo,
   timeRangesOverlap,
   type ClassLevelCategoryGroup,
+  type CollapsedGroupSubject,
   type DayOfWeek,
   type PeriodStructure,
   type SchedulingSolveDispatchJob,
@@ -688,11 +691,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const examClassArms = request.classArmId
       ? await this.prisma.classArm.findMany({
           where: { id: request.classArmId, classLevel: { category: { in: sittingCategories } } },
-          select: { id: true, classLevelId: true, classLevel: { select: { category: true } } },
+          select: { id: true, classLevelId: true, classLevel: { select: { category: true, name: true } } },
         })
       : await this.prisma.classArm.findMany({
           where: { academicSessionId: component.term.academicSessionId, classLevel: { category: { in: sittingCategories } } },
-          select: { id: true, classLevelId: true, classLevel: { select: { category: true } } },
+          select: { id: true, classLevelId: true, classLevel: { select: { category: true, name: true } } },
         });
     const classArmIds = examClassArms.map((a) => a.id);
 
@@ -702,14 +705,24 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // NURSERY) must not get an exam scheduled for that ClassLevel's arms,
     // even though it's still required for the rest of the category. Cached
     // per classLevelId since several arms typically share one ClassLevel.
-    // Assigned from the {prefix}_LAST_DAYS_SUBJECTS constraint below, before
-    // subjectPayloadsForLevel is first called.
+    // Assigned from the {prefix}_LAST_DAYS_SUBJECTS/_COLLAPSE_GROUP_SUBJECTS
+    // constraints below, before subjectPayloadsForLevel is first called.
     let lastDaysSubjectNames = new Set<string>();
+    let collapsedGroupSubjects: CollapsedGroupSubject[] = [];
     const subjectPayloadsByLevel = new Map<string, ExamSubjectPayload[]>();
-    const subjectPayloadsForLevel = async (category: ClassLevelCategory, classLevelId: string): Promise<ExamSubjectPayload[]> => {
+    const subjectPayloadsForLevel = async (
+      category: ClassLevelCategory,
+      classLevelId: string,
+      classLevelName: string,
+    ): Promise<ExamSubjectPayload[]> => {
       let payloads = subjectPayloadsByLevel.get(classLevelId);
       if (!payloads) {
-        const requiredSubjects = await this.resolveRequiredSubjects(category, component.termId, classLevelId);
+        const requiredSubjects = await this.resolveRequiredSubjects(
+          category,
+          component.termId,
+          classLevelId,
+          collapsedGroupNamesForClassLevel(collapsedGroupSubjects, classLevelName),
+        );
         payloads = requiredSubjects.map((s) => ({
           subjectId: s.id,
           requiresCalculation: s.requiresCalculation,
@@ -768,6 +781,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         .filter(Boolean),
     );
     const lastDaysWindow = Number(getGroup(`${prefix}_LAST_DAYS_WINDOW`) ?? 2);
+    // {prefix}_COLLAPSE_GROUP_SUBJECTS (group-scoped): group subjects sat as
+    // one paper instead of one per child for the named ClassLevels — e.g.
+    // Basic's four English Language parts as a single "English Language" paper.
+    collapsedGroupSubjects = parseCollapsedGroupSubjects(getGroup(`${prefix}_COLLAPSE_GROUP_SUBJECTS`));
     // {prefix}_BREAK_AFTER_PAPER/_BREAK_DURATION_MINUTES (group-scoped): a
     // break of that length after the day's Nth paper; unset/0 = no break.
     const breakAfterPaper = Number(getGroup(`${prefix}_BREAK_AFTER_PAPER`) ?? 0) || 0;
@@ -784,7 +801,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         classArmId: arm.id,
         classLevelId: arm.classLevelId,
         assessmentComponentId: componentByCategory.get(arm.classLevel.category)!.id,
-        subjects: await subjectPayloadsForLevel(arm.classLevel.category, arm.classLevelId),
+        subjects: await subjectPayloadsForLevel(arm.classLevel.category, arm.classLevelId, arm.classLevel.name),
         existingByDate: existingByClassArm[arm.id] ?? {},
       })),
     );
@@ -1309,19 +1326,28 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
    * resolver didn't, so a per-term-disabled subject still got scheduled/
    * examined and warned "no active SUBJECT_TEACHER" once no teacher was
    * bothered to be assigned for the term it's disabled in.
+   * collapsedGroupNames (EXAM_TIMETABLE only, normalized group names from
+   * {EXAM,MID_TERM}_COLLAPSE_GROUP_SUBJECTS) keeps a matching group as ONE
+   * entry for the group subject itself instead of flattening it — the exam
+   * is sat as a single paper. Never passed for CLASS_TIMETABLE.
    */
   private async resolveRequiredSubjects(
     category: ClassLevelCategory,
     termId: string,
     classLevelId?: string,
+    collapsedGroupNames?: Set<string>,
   ): Promise<RequiredSubject[]> {
     const classSubjects = await this.prisma.classSubject.findMany({
       where: {
         classLevelCategory: category,
+        // Catalogue-wide disable (Subject.isActive) — same exclusion as
+        // score entry/enrollment; previously only the per-term/per-level
+        // disables below were honored here.
+        subject: { isActive: true },
         ...(classLevelId ? { levelStatuses: { none: { classLevelId, isActive: false } } } : {}),
       },
       include: {
-        subject: { include: { childSubjects: true } },
+        subject: { include: { childSubjects: { where: { isActive: true } } } },
         concurrencyGroup: { select: { name: true } },
         childPeriodOverrides: true,
         // Only the disabled rows for this exact term — ClassSubjectTermStatus.subjectId
@@ -1349,21 +1375,35 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       }
 
       const disabledChildIds = new Set(cs.termStatuses.map((s) => s.subjectId));
-      return cs.subject.childSubjects
-        .filter((child) => !disabledChildIds.has(child.id))
-        .map((child) => ({
-          id: child.id,
-          name: child.name,
-          requiresCalculation: child.requiresCalculation,
-          // A child inherits the parent ClassSubject row's periodsPerWeek
-          // unless it has its own ClassSubjectChildPeriods override (e.g.
-          // Basic Science and Technology's Physical and Health Education
-          // running 2/week while its siblings run 3) — see that model's
-          // schema.prisma comment for the sparse-override reasoning.
-          periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
-          concurrencyGroupId: cs.concurrencyGroupId,
-          concurrencyGroupName: cs.concurrencyGroup?.name ?? null,
-        }));
+      const activeChildren = cs.subject.childSubjects.filter((child) => !disabledChildIds.has(child.id));
+
+      if (collapsedGroupNames?.has(normalizeSubjectName(cs.subject.name))) {
+        if (activeChildren.length === 0) return [];
+        return [
+          {
+            id: cs.subject.id,
+            name: cs.subject.name,
+            requiresCalculation: cs.subject.requiresCalculation || activeChildren.some((c) => c.requiresCalculation),
+            periodsPerWeek: cs.periodsPerWeek,
+            concurrencyGroupId: cs.concurrencyGroupId,
+            concurrencyGroupName: cs.concurrencyGroup?.name ?? null,
+          },
+        ];
+      }
+
+      return activeChildren.map((child) => ({
+        id: child.id,
+        name: child.name,
+        requiresCalculation: child.requiresCalculation,
+        // A child inherits the parent ClassSubject row's periodsPerWeek
+        // unless it has its own ClassSubjectChildPeriods override (e.g.
+        // Basic Science and Technology's Physical and Health Education
+        // running 2/week while its siblings run 3) — see that model's
+        // schema.prisma comment for the sparse-override reasoning.
+        periodsPerWeek: cs.childPeriodOverrides.find((o) => o.childSubjectId === child.id)?.periodsPerWeek ?? cs.periodsPerWeek,
+        concurrencyGroupId: cs.concurrencyGroupId,
+        concurrencyGroupName: cs.concurrencyGroup?.name ?? null,
+      }));
     });
   }
 

@@ -25,7 +25,10 @@ import {
 import {
   CLASS_LEVEL_CATEGORIES,
   categoryToGroup,
+  collapsedGroupNamesForClassLevel,
   DAYS_OF_WEEK,
+  normalizeSubjectName,
+  parseCollapsedGroupSubjects,
   parseSpecialPeriods,
   specialPeriodAppliesTo,
   QUEUE_NAMES,
@@ -288,19 +291,41 @@ export class ScheduleGenerationRequestService {
    * deliberately re-derived here rather than shared with the worker: this
    * needs to run synchronously in the API, before any BullMQ involvement,
    * matching the worker's own "never trust upstream, re-derive" precedent
-   * in reverse.
+   * in reverse. Applies the same exclusions the worker does — disabled for
+   * this ClassLevel (ClassSubjectLevelStatus), disabled for this term
+   * (ClassSubjectTermStatus, whole row or one child) — plus a catalogue-wide
+   * disabled Subject (Subject.isActive); without them a disabled subject
+   * still inflated the "N subjects need scheduling" count. collapsedGroupNames
+   * mirrors the worker's {EXAM,MID_TERM}_COLLAPSE_GROUP_SUBJECTS handling (a
+   * matching group counts as one paper, not one per child).
    */
   private async resolveFlattenedRequiredSubjects(
     category: ClassLevelCategory,
+    termId: string,
+    classLevelId: string,
+    collapsedGroupNames?: Set<string>,
   ): Promise<{ id: string; periodsPerWeek: number; requiresCalculation: boolean; concurrencyGroupId: string | null }[]> {
     const classSubjects = await this.prisma.classSubject.findMany({
-      where: { classLevelCategory: category },
-      include: { subject: { include: { childSubjects: true } }, childPeriodOverrides: true },
+      where: {
+        classLevelCategory: category,
+        subject: { isActive: true },
+        levelStatuses: { none: { classLevelId, isActive: false } },
+      },
+      include: {
+        subject: { include: { childSubjects: { where: { isActive: true } } } },
+        childPeriodOverrides: true,
+        termStatuses: { where: { termId, isActive: false } },
+      },
     });
 
-    return classSubjects.flatMap((cs) =>
-      cs.subject.isGroup
-        ? cs.subject.childSubjects.map((child) => ({
+    return classSubjects.flatMap((cs) => {
+      if (cs.termStatuses.some((s) => s.subjectId === cs.subjectId)) return [];
+      const disabledChildIds = new Set(cs.termStatuses.map((s) => s.subjectId));
+      const activeChildren = cs.subject.childSubjects.filter((child) => !disabledChildIds.has(child.id));
+      if (cs.subject.isGroup && activeChildren.length === 0) return [];
+
+      return cs.subject.isGroup && !collapsedGroupNames?.has(normalizeSubjectName(cs.subject.name))
+        ? activeChildren.map((child) => ({
             id: child.id,
             // Same per-child override precedence as apps/worker's own
             // resolveRequiredSubjects (ClassSubjectChildPeriods) — re-derived
@@ -313,11 +338,11 @@ export class ScheduleGenerationRequestService {
             {
               id: cs.subject.id,
               periodsPerWeek: cs.periodsPerWeek,
-              requiresCalculation: cs.subject.requiresCalculation,
+              requiresCalculation: cs.subject.requiresCalculation || activeChildren.some((child) => child.requiresCalculation),
               concurrencyGroupId: cs.concurrencyGroupId,
             },
-          ],
-    );
+          ];
+    });
   }
 
   /**
@@ -415,7 +440,9 @@ export class ScheduleGenerationRequestService {
     });
 
     const capacityByClassLevel = new Map<string, number | null>();
-    const requiredByCategory = new Map<ClassLevelCategory, number>();
+    // Per ClassLevel, not per category — a subject disabled for one specific
+    // ClassLevel (ClassSubjectLevelStatus) only drops out of that level's load.
+    const requiredByClassLevel = new Map<string, number>();
     const overshoots: string[] = [];
 
     for (const arm of classArms) {
@@ -426,8 +453,8 @@ export class ScheduleGenerationRequestService {
       const capacity = capacityByClassLevel.get(arm.classLevelId) ?? null;
       if (capacity === null) continue; // period structure not configured yet — nothing to check against
 
-      if (!requiredByCategory.has(arm.classLevel.category)) {
-        const subjects = await this.resolveFlattenedRequiredSubjects(arm.classLevel.category);
+      if (!requiredByClassLevel.has(arm.classLevelId)) {
+        const subjects = await this.resolveFlattenedRequiredSubjects(arm.classLevel.category, term.id, arm.classLevelId);
         const seenGroups = new Set<string>();
         let total = 0;
         for (const s of subjects) {
@@ -436,9 +463,9 @@ export class ScheduleGenerationRequestService {
           seenGroups.add(key);
           total += s.periodsPerWeek;
         }
-        requiredByCategory.set(arm.classLevel.category, total);
+        requiredByClassLevel.set(arm.classLevelId, total);
       }
-      const required = requiredByCategory.get(arm.classLevel.category)!;
+      const required = requiredByClassLevel.get(arm.classLevelId)!;
 
       if (required > capacity) {
         overshoots.push(`${arm.name} (${arm.classLevel.category}) needs ${required} periods/week but only ${capacity} are available`);
@@ -519,6 +546,7 @@ export class ScheduleGenerationRequestService {
     const spreadCalculationSubjects =
       (globalConstraints.find((c) => c.key === "SPREAD_CALCULATION_SUBJECTS")?.value as boolean | undefined) ?? true;
     const minGap = Number(globalConstraints.find((c) => c.key === "MIN_GAP_BETWEEN_CALCULATION_EXAMS_DAYS")?.value ?? 0);
+    const collapsedGroupSubjects = parseCollapsedGroupSubjects(getGroup(`${prefix}_COLLAPSE_GROUP_SUBJECTS`));
 
     const reasons: string[] = [];
     if (slotsPerDay < 1) {
@@ -526,16 +554,33 @@ export class ScheduleGenerationRequestService {
     }
     for (const sittingComponent of sittingComponents) {
       if (sittingComponent.classLevelCategory === ClassLevelCategory.CRECHE) continue;
-      const subjects = await this.resolveFlattenedRequiredSubjects(sittingComponent.classLevelCategory);
-      const seenGroups = new Set<string>();
+      // Per ClassLevel (level-disabled subjects and COLLAPSE_GROUP_SUBJECTS
+      // both make paper counts differ); the category's busiest level is what must fit.
+      const levels = await this.prisma.classLevel.findMany({
+        where: { category: sittingComponent.classLevelCategory },
+        select: { id: true, name: true },
+      });
       let distinctCount = 0;
       let calcCount = 0;
-      for (const s of subjects) {
-        const key = s.concurrencyGroupId ?? s.id;
-        if (seenGroups.has(key)) continue;
-        seenGroups.add(key);
-        distinctCount++;
-        if (s.requiresCalculation) calcCount++;
+      for (const level of levels) {
+        const subjects = await this.resolveFlattenedRequiredSubjects(
+          sittingComponent.classLevelCategory,
+          sittingComponent.termId,
+          level.id,
+          collapsedGroupNamesForClassLevel(collapsedGroupSubjects, level.name),
+        );
+        const seenGroups = new Set<string>();
+        let levelCount = 0;
+        let levelCalcCount = 0;
+        for (const s of subjects) {
+          const key = s.concurrencyGroupId ?? s.id;
+          if (seenGroups.has(key)) continue;
+          seenGroups.add(key);
+          levelCount++;
+          if (s.requiresCalculation) levelCalcCount++;
+        }
+        distinctCount = Math.max(distinctCount, levelCount);
+        calcCount = Math.max(calcCount, levelCalcCount);
       }
 
       const label = sittingComponent.classLevelCategory;
