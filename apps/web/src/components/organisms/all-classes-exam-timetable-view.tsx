@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, ApiError } from "../../lib/api";
+import { buildExamColumns } from "../../lib/exam-columns";
 import { Badge } from "../atoms/badge";
 import { ClickReveal } from "../molecules/click-reveal";
 
@@ -23,10 +24,10 @@ function isoDate(date: string) {
 
 /**
  * The exam-timetable half of BUILD_PLAN.md §9 Step 7's whole-school overview
- * — a Date+Class-by-time-slot grid (columns derived from the loaded rows'
- * distinct startTimes, same approach as the single-class ExamTimetableGrid,
- * since exam slot durations vary by calc/non-calc subject rather than
- * following a fixed period structure). Read-only — editing stays in the
+ * — a Date+Class-by-time-slot grid laid out like AllClassesTimetableView
+ * (time-range column headers plus a BREAK column), with columns from
+ * `buildExamColumns` since exam days have no fixed period structure — same
+ * approach as the single-class ExamTimetableGrid. Read-only — editing stays in the
  * single-class ExamTimetableGrid, reached here via each row's "Edit" link.
  */
 export function AllClassesExamTimetableView({
@@ -68,10 +69,7 @@ export function AllClassesExamTimetableView({
     if (!rows) return [];
     return [...new Set(rows.map((r) => isoDate(r.date)))].sort();
   }, [rows]);
-  const timeColumns = useMemo(() => {
-    if (!rows) return [];
-    return [...new Set(rows.map((r) => r.startTime))].sort();
-  }, [rows]);
+  const columns = useMemo(() => buildExamColumns(rows ?? []), [rows]);
   const classArmsByDate = useMemo(() => {
     const map = new Map<string, { classArmId: string; displayName: string }[]>();
     if (!rows) return map;
@@ -88,8 +86,13 @@ export function AllClassesExamTimetableView({
     return map;
   }, [rows, dateKeys]);
   const rowByCell = useMemo(() => {
-    const map = new Map<string, ExamScheduleItem>();
-    for (const row of rows ?? []) map.set(`${row.classArmId}|${isoDate(row.date)}|${row.startTime}`, row);
+    // An arm can sit several papers in one slot (elective alternatives), so
+    // each cell holds a list rather than whichever row was seen last.
+    const map = new Map<string, ExamScheduleItem[]>();
+    for (const row of rows ?? []) {
+      const key = `${row.classArmId}|${isoDate(row.date)}|${row.startTime}`;
+      map.set(key, [...(map.get(key) ?? []), row]);
+    }
     return map;
   }, [rows]);
 
@@ -107,19 +110,27 @@ export function AllClassesExamTimetableView({
         return (
           <div key={date}>
             <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
-              {new Date(date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+              {new Date(date).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" })}
             </div>
             <div className="overflow-x-auto rounded-lg border border-border">
-              <div className="grid" style={{ gridTemplateColumns: `160px repeat(${timeColumns.length}, minmax(110px, 1fr))` }}>
+              <div className="grid" style={{ gridTemplateColumns: `160px repeat(${columns.length}, minmax(110px, 1fr))` }}>
                 <div className="border-b border-border bg-card-inset px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">
                   Class
                 </div>
-                {timeColumns.map((t) => (
+                {columns.map((col, i) => (
                   <div
-                    key={t}
+                    key={i}
                     className="border-b border-border bg-card-inset px-1.5 py-1.5 text-center font-mono text-[9.5px] font-medium text-muted"
                   >
-                    {t}
+                    {col.kind === "break" ? (
+                      <>
+                        Break
+                        <br />
+                        {col.startTime}–{col.endTime}
+                      </>
+                    ) : (
+                      `${col.startTime}–${col.endTime}`
+                    )}
                   </div>
                 ))}
 
@@ -135,12 +146,16 @@ export function AllClassesExamTimetableView({
                         Edit
                       </button>
                     </div>
-                    {timeColumns.map((t) => {
-                      const row = rowByCell.get(`${arm.classArmId}|${date}|${t}`);
+                    {columns.map((col, i) => {
+                      if (col.kind === "break") {
+                        return <div key={i} className="border-b border-border bg-muted/10" />;
+                      }
+                      const cellRows = rowByCell.get(`${arm.classArmId}|${date}|${col.startTime}`) ?? [];
                       return (
-                        <div key={t} className="border-b border-border px-1 py-1.5">
-                          {row && (
+                        <div key={i} className="space-y-1 border-b border-border px-1 py-1.5">
+                          {cellRows.map((row) => (
                             <ClickReveal
+                              key={row.id}
                               className={
                                 row.approvalStatus === "PENDING_REVIEW"
                                   ? "rounded border border-dashed border-warning px-1 py-0.5"
@@ -159,7 +174,7 @@ export function AllClassesExamTimetableView({
                                 </Badge>
                               )}
                             </ClickReveal>
-                          )}
+                          ))}
                         </div>
                       );
                     })}
