@@ -59,6 +59,12 @@ class ExamClassArmPayload(BaseModel):
     assessmentComponentId: str | None = None
     subjects: list[ExamSubjectPayload]
     existingByDate: dict[str, ExistingLoadPayload] = Field(default_factory=dict)
+    # Per-arm (non-unified) sittings only: arms sharing an alignment group
+    # (their ClassLevelCategory — all Basic classes, Nursery 1 & 2) sit each
+    # subject they have in common on the same day and in the same paper
+    # position wherever the other rules allow (ALIGN_PENALTY). None = solved
+    # with no reference to any other arm.
+    alignmentGroup: str | None = None
 
 
 SOLVE_TIME_LIMIT_SECONDS = 20.0
@@ -76,6 +82,10 @@ SPREAD_BALANCE_PENALTY = 2000
 # {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS: outweighs everything else, so the
 # weekday is honored whenever the exam period has one that can take the paper.
 OFF_WEEKDAY_PENALTY = 100000
+# Per-arm alignment (ExamClassArmPayload.alignmentGroup): per subject sat on
+# a different day from the group's reference arm. Below the spread penalties,
+# so an even spread still wins over copying the reference's days.
+ALIGN_PENALTY = 500
 
 _WEEKDAY_NAMES = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
 
@@ -154,7 +164,12 @@ def solve_exam_timetable(
         return {"callbackToken": callback_token, "result": {"generatedRows": rows}}
 
     generated_rows: list[dict[str, Any]] = []
-    for arm in class_arms:
+    # Per alignment group: subjectId -> (date, paper position) as first sat
+    # by the group's reference arm — the arm with the most papers, solved
+    # first, so the others line their shared subjects up with it.
+    references: dict[str, dict[str, tuple[str, int]]] = {}
+    for arm in sorted(class_arms, key=lambda a: -len(a.subjects)):
+        reference = references.setdefault(arm.alignmentGroup, {}) if arm.alignmentGroup else None
         rows = _solve_class_arm(
             arm,
             days,
@@ -168,6 +183,7 @@ def solve_exam_timetable(
             last_days_window,
             exam_break,
             spread_papers_across_days,
+            reference,
         )
         if rows is None:
             return {
@@ -175,8 +191,44 @@ def solve_exam_timetable(
                 "error": f"No feasible exam timetable found for class arm {arm.classArmId} (requestId={request_id})",
             }
         generated_rows.extend(rows)
+        if reference is not None:
+            # Subjects only a later arm has (e.g. Nursery 2's Multiplication)
+            # extend the reference too, for any third arm that shares them.
+            for date_rows in _rows_by_date(rows).values():
+                for position, row in enumerate(date_rows):
+                    reference.setdefault(row["subjectId"], (row["date"], position))
 
     return {"callbackToken": callback_token, "result": {"generatedRows": generated_rows}}
+
+
+def _rows_by_date(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Generated rows grouped by date, each day's rows in paper order."""
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for row in sorted(rows, key=lambda r: (r["date"], r["startTime"])):
+        by_date.setdefault(row["date"], []).append(row)
+    return by_date
+
+
+def _order_day(subjects: list[ExamSubjectPayload], reference_positions: dict[str, int]) -> list[ExamSubjectPayload]:
+    """
+    A day's paper order: a FIRST_PAPER_SUBJECTS paper opens the day; a paper
+    the alignment reference sat on this same day keeps the reference's
+    position where that's free (so shared papers start together across the
+    group); the rest fill the remaining positions calculation-first. Always
+    positions 0..n-1, so a short day's free slots stay at its end.
+    """
+    count = len(subjects)
+    remaining = sorted(subjects, key=lambda s: (0 if s.firstPaper else 1, 0 if s.requiresCalculation else 1))
+    slots: list[ExamSubjectPayload | None] = [None] * count
+    if remaining and remaining[0].firstPaper:
+        slots[0] = remaining.pop(0)
+    for subject in list(remaining):
+        position = reference_positions.get(subject.subjectId)
+        if position is not None and position < count and slots[position] is None:
+            slots[position] = subject
+            remaining.remove(subject)
+    fill = iter(remaining)
+    return [slot if slot is not None else next(fill) for slot in slots]
 
 
 def _solve_class_arm(
@@ -192,6 +244,7 @@ def _solve_class_arm(
     last_days_window: int,
     exam_break: tuple[int, int] | None,
     spread: bool = False,
+    reference: dict[str, tuple[str, int]] | None = None,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
     day_count = len(days)
@@ -385,6 +438,10 @@ def _solve_class_arm(
             for (sid, day_idx), v in assign.items()
             if sid == representative and not _day_allowed(members, days[day_idx])
         )
+    if reference:
+        for (sid, day_idx), v in assign.items():
+            if sid in reference and reference[sid][0] != days[day_idx]:
+                objective_terms.append(ALIGN_PENALTY * v)
     if objective_terms:
         model.minimize(sum(objective_terms))
 
@@ -406,11 +463,14 @@ def _solve_class_arm(
         if not day_subjects:
             continue
         # FIRST_PAPER_SUBJECTS first, then calculation subject(s) (FR6.3's
-        # "earliest slot"), remaining non-calculation subjects in stable
-        # order, back to back — except for the configured break after the
-        # day's Nth paper. Back to back from the day's start means a day with
-        # fewer papers than slots leaves its LAST slot(s) free.
-        ordered = sorted(day_subjects, key=lambda s: (0 if s.firstPaper else 1, 0 if s.requiresCalculation else 1))
+        # "earliest slot") unless the alignment reference fixes a position
+        # (_order_day), back to back — except for the configured break after
+        # the day's Nth paper. Back to back from the day's start means a day
+        # with fewer papers than slots leaves its LAST slot(s) free.
+        reference_positions = {
+            sid: position for sid, (ref_day, position) in (reference or {}).items() if ref_day == day
+        }
+        ordered = _order_day(day_subjects, reference_positions)
         cursor_minutes = _time_to_minutes(exam_day_start_time)
         for paper_idx, subject in enumerate(ordered):
             if exam_break and paper_idx == exam_break[0]:

@@ -248,6 +248,11 @@ interface ExamClassArmPayload {
   assessmentComponentId: string;
   subjects: ExamSubjectPayload[];
   existingByDate: Record<string, { count: number; hasCalc: boolean }>;
+  // Per-arm sittings only (null for unified ones, which align on their shared
+  // grid instead): arms with the same value — their ClassLevelCategory, i.e.
+  // every Basic class, Nursery 1 & 2 — sit shared subjects on the same day
+  // and paper position where the other rules allow.
+  alignmentGroup: string | null;
 }
 
 interface InvigilationExamPayload {
@@ -836,6 +841,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         assessmentComponentId: componentByCategory.get(arm.classLevel.category)!.id,
         subjects: await subjectPayloadsForLevel(arm.classLevel.category, arm.classLevelId, arm.classLevel.name),
         existingByDate: existingByClassArm[arm.id] ?? {},
+        alignmentGroup: arrangement.unified ? null : arm.classLevel.category,
       })),
     );
 
