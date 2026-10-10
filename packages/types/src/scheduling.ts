@@ -378,6 +378,17 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   // that group as one paper instead of one per child for those levels, e.g.
   // ["English Language@Basic 1,Basic 2,Basic 3,Basic 4,Basic 6"]. See
   // parseCollapsedGroupSubjects.
+  // {EXAM,MID_TERM}_FIRST_PAPER_SUBJECTS (group-scoped, not seeded) — same
+  // "SubjectName@ClassLevel,..." format: those papers always open their exam
+  // day. {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS (group-scoped, not seeded) —
+  // SUBJECT_ALLOWED_DAYS' "SubjectName:DAY[@ClassLevel,...]" format applied to
+  // exam dates, as a strong preference (another day if none can take it).
+  // Spread each class's papers over every exam day (at least one a day, free
+  // slots at the end of the day) instead of packing the earliest days full —
+  // the early-years/Basic section, where class levels sit very different
+  // paper counts in one exam period.
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "MID_TERM_SPREAD_PAPERS_ACROSS_DAYS", value: true },
+  { scope: "EXAM_TIMETABLE", classLevelCategoryGroup: "CRECHE_NURSERY_PRIMARY", key: "EXAM_SPREAD_PAPERS_ACROSS_DAYS", value: true },
 
   { scope: "INVIGILATION", key: "MAX_INVIGILATIONS_PER_STAFF_PER_DAY", value: 2 },
   {

@@ -13,6 +13,7 @@ for both mid-term and exam, Basic 1-6 for the terminal exam) is ONE combined
 model on a shared fixed slot grid, see _solve_unified.
 """
 
+from datetime import date
 from typing import Any
 
 from ortools.sat.python import cp_model
@@ -32,6 +33,14 @@ class ExamSubjectPayload(BaseModel):
     # `last_days_window` days are open to this paper (and, via the shared
     # variable, to its whole bundle).
     lastDaysOnly: bool = False
+    # {EXAM,MID_TERM}_FIRST_PAPER_SUBJECTS: always the first paper of
+    # whichever day it lands on — so no two of them share a day.
+    firstPaper: bool = False
+    # {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS: weekday names ("TUESDAY") this
+    # paper should be sat on; None = any exam day. Soft (OFF_WEEKDAY_PENALTY):
+    # when the exam period has no such weekday, or it can't take the paper,
+    # the paper moves to another day rather than failing the run.
+    allowedDays: list[str] | None = None
 
 
 class ExistingLoadPayload(BaseModel):
@@ -59,6 +68,45 @@ UNIFIED_SOLVE_TIME_LIMIT_SECONDS = 45.0
 # before using a later day) is the baseline nudge; the others dominate it.
 CALC_NOT_FIRST_PENALTY = 1000
 CROSS_LEVEL_MISALIGN_PENALTY = 50
+# {EXAM,MID_TERM}_SPREAD_PAPERS_ACROSS_DAYS: an exam day a class sits nothing
+# on is the costliest outcome, then an uneven spread (busiest day minus
+# quietest day). Both dominate packing, calc-first and cross-level alignment.
+EMPTY_DAY_PENALTY = 20000
+SPREAD_BALANCE_PENALTY = 2000
+# {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS: outweighs everything else, so the
+# weekday is honored whenever the exam period has one that can take the paper.
+OFF_WEEKDAY_PENALTY = 100000
+
+_WEEKDAY_NAMES = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+
+
+def _day_allowed(members: list[ExamSubjectPayload], day: str) -> bool:
+    """Whether every member of a bundle may sit on `day` ("YYYY-MM-DD") under its allowedDays."""
+    weekday = _WEEKDAY_NAMES[date.fromisoformat(day).weekday()]
+    return all(m.allowedDays is None or weekday in m.allowedDays for m in members)
+
+
+def _spread_terms(model: cp_model.CpModel, loads: list[Any], max_load: int, name: str) -> list[Any]:
+    """
+    Objective terms spreading one class's papers over every exam day: a
+    penalty per empty day, plus one on (busiest - quietest) day load. `loads`
+    is one linear expression (or plain int) per exam day.
+    """
+    terms: list[Any] = []
+    busiest = model.new_int_var(0, max_load, f"busiest_{name}")
+    quietest = model.new_int_var(0, max_load, f"quietest_{name}")
+    for d, load in enumerate(loads):
+        model.add(busiest >= load)
+        model.add(quietest <= load)
+        if isinstance(load, int):
+            if load == 0:
+                terms.append(EMPTY_DAY_PENALTY)
+            continue
+        empty = model.new_bool_var(f"empty_{name}_{d}")
+        model.add(load >= 1).only_enforce_if(empty.Not())
+        terms.append(EMPTY_DAY_PENALTY * empty)
+    terms.append(SPREAD_BALANCE_PENALTY * (busiest - quietest))
+    return terms
 
 
 def solve_exam_timetable(
@@ -78,6 +126,7 @@ def solve_exam_timetable(
     last_days_window: int = 2,
     break_after_paper: int = 0,
     break_duration_minutes: int = 0,
+    spread_papers_across_days: bool = False,
 ) -> dict[str, Any]:
     window_minutes = _window_minutes(exam_day_start_time, exam_day_end_time)
     # {prefix}_BREAK_AFTER_PAPER/_DURATION_MINUTES: a break of N minutes after
@@ -98,6 +147,7 @@ def solve_exam_timetable(
             calculation_subjects_morning,
             last_days_window,
             exam_break,
+            spread_papers_across_days,
         )
         if isinstance(rows, str):
             return {"callbackToken": callback_token, "error": f"{rows} (requestId={request_id})"}
@@ -117,6 +167,7 @@ def solve_exam_timetable(
             window_minutes,
             last_days_window,
             exam_break,
+            spread_papers_across_days,
         )
         if rows is None:
             return {
@@ -140,6 +191,7 @@ def _solve_class_arm(
     window_minutes: int | None,
     last_days_window: int,
     exam_break: tuple[int, int] | None,
+    spread: bool = False,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
     day_count = len(days)
@@ -206,7 +258,9 @@ def _solve_class_arm(
     # Daily capacity: existing load + new assignments <= max_subjects_per_day.
     # Deduped by group_key so an N-member bundle (all sharing the identical
     # variable at this day_idx, set up above) costs 1 unit of capacity, not
-    # N — a student only ever sits one of them.
+    # N — a student only ever sits one of them. Each day's load is kept for
+    # the spread objective below.
+    day_loads: list[Any] = []
     for day_idx, day in enumerate(days):
         existing = arm.existingByDate.get(day)
         existing_count = existing.count if existing else 0
@@ -219,6 +273,20 @@ def _solve_class_arm(
             day_vars.append(v)
         if day_vars:
             model.add(sum(day_vars) + existing_count <= max_subjects_per_day)
+        day_loads.append(sum(day_vars) + existing_count if day_vars else existing_count)
+
+    # FIRST_PAPER_SUBJECTS: each opens its day, so at most one per day.
+    for day_idx in range(day_count):
+        seen_first_groups: set[str] = set()
+        first_vars = []
+        for (sid, d), v in assign.items():
+            key = group_key(subject_by_id[sid])
+            if d != day_idx or key in seen_first_groups or not any(m.firstPaper for m in groups[key]):
+                continue
+            seen_first_groups.add(key)
+            first_vars.append(v)
+        if len(first_vars) > 1:
+            model.add(sum(first_vars) <= 1)
 
     # SPREAD_CALCULATION_SUBJECTS: at most one calculation-subject exam per
     # day, counting existing load too — same per-group dedupe as above.
@@ -301,13 +369,24 @@ def _solve_class_arm(
 
     # Fill each exam day up to its capacity before spilling onto a later day
     # (the day's subject count follows from its slots/window, rather than the
-    # papers being thinned out across the whole exam period).
-    packing_terms = []
+    # papers being thinned out across the whole exam period) — unless
+    # SPREAD_PAPERS_ACROSS_DAYS, where packing only breaks ties between
+    # equally even spreads (extra papers go on the earlier days).
+    objective_terms: list[Any] = []
     for key in groups:
         representative = groups[key][0].subjectId
-        packing_terms.extend(day_idx * v for (sid, day_idx), v in assign.items() if sid == representative)
-    if packing_terms:
-        model.minimize(sum(packing_terms))
+        objective_terms.extend(day_idx * v for (sid, day_idx), v in assign.items() if sid == representative)
+    if spread:
+        objective_terms.extend(_spread_terms(model, day_loads, max_subjects_per_day, arm.classArmId))
+    for key, members in groups.items():
+        representative = members[0].subjectId
+        objective_terms.extend(
+            OFF_WEEKDAY_PENALTY * v
+            for (sid, day_idx), v in assign.items()
+            if sid == representative and not _day_allowed(members, days[day_idx])
+        )
+    if objective_terms:
+        model.minimize(sum(objective_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = SOLVE_TIME_LIMIT_SECONDS
@@ -326,10 +405,12 @@ def _solve_class_arm(
         day_subjects = subjects_by_day[day_idx]
         if not day_subjects:
             continue
-        # Calculation subject(s) first (FR6.3's "earliest slot"), remaining
-        # non-calculation subjects in stable order, back to back — except for
-        # the configured break after the day's Nth paper.
-        ordered = sorted(day_subjects, key=lambda s: 0 if s.requiresCalculation else 1)
+        # FIRST_PAPER_SUBJECTS first, then calculation subject(s) (FR6.3's
+        # "earliest slot"), remaining non-calculation subjects in stable
+        # order, back to back — except for the configured break after the
+        # day's Nth paper. Back to back from the day's start means a day with
+        # fewer papers than slots leaves its LAST slot(s) free.
+        ordered = sorted(day_subjects, key=lambda s: (0 if s.firstPaper else 1, 0 if s.requiresCalculation else 1))
         cursor_minutes = _time_to_minutes(exam_day_start_time)
         for paper_idx, subject in enumerate(ordered):
             if exam_break and paper_idx == exam_break[0]:
@@ -363,6 +444,7 @@ def _solve_unified(
     calculation_subjects_morning: bool,
     last_days_window: int,
     exam_break: tuple[int, int] | None,
+    spread: bool = False,
 ) -> list[dict[str, Any]] | str:
     """
     One combined model for a whole sitting (examArrangementFor's `unified`
@@ -417,12 +499,15 @@ def _solve_unified(
     for level_id, groups in level_groups.items():
         for key in groups:
             last_days_only = any(m.lastDaysOnly for m in groups[key])
+            # FIRST_PAPER_SUBJECTS only ever get slot 0 — which also caps them
+            # at one per day, since a slot holds one paper per level.
+            first_paper = any(m.firstPaper for m in groups[key])
             for d in range(day_count):
                 if d in blocked_days[level_id]:
                     continue
                 if last_days_only and d < day_count - last_days_window:
                     continue
-                for k in range(slots_per_day):
+                for k in range(1 if first_paper else slots_per_day):
                     x[(level_id, key, d, k)] = model.new_bool_var(f"x_{level_id}_{key}_{d}_{k}")
 
     def is_calc(level_id: str, key: str) -> bool:
@@ -466,6 +551,25 @@ def _solve_unified(
     # Packing: earlier days first, then earlier slots.
     for (_lv, _g, d, k), v in x.items():
         objective_terms.append((d * slots_per_day + k) * v)
+        if not _day_allowed(level_groups[_lv][_g], days[d]):
+            objective_terms.append(OFF_WEEKDAY_PENALTY * v)
+
+    # SPREAD_PAPERS_ACROSS_DAYS: every level sits at least one paper a day,
+    # as evenly as its paper count allows, its papers filling the day's slots
+    # from the first one — so a lighter day's free slots are its last.
+    if spread:
+        for level_id, groups in level_groups.items():
+            loads: list[Any] = []
+            for d in range(day_count):
+                slot_loads = [
+                    [x[(level_id, g, d, k)] for g in groups if (level_id, g, d, k) in x] for k in range(slots_per_day)
+                ]
+                for k in range(1, slots_per_day):
+                    if slot_loads[k]:
+                        model.add(sum(slot_loads[k]) <= sum(slot_loads[k - 1]))
+                day_vars = [v for slot in slot_loads for v in slot]
+                loads.append(sum(day_vars) if day_vars else 0)
+            objective_terms.extend(_spread_terms(model, loads, slots_per_day, level_id))
 
     # CALCULATION_SUBJECTS_MORNING: a calculation paper belongs in the day's
     # first slot (soft, so a day with two calculation papers — only possible

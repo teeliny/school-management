@@ -232,6 +232,12 @@ interface ExamSubjectPayload {
   // {EXAM,MID_TERM}_LAST_DAYS_SUBJECTS: may only be sat on the exam period's
   // last N days ({prefix}_LAST_DAYS_WINDOW).
   lastDaysOnly: boolean;
+  // {prefix}_FIRST_PAPER_SUBJECTS: always the day's first paper.
+  firstPaper: boolean;
+  // {prefix}_SUBJECT_ALLOWED_DAYS: the weekdays this paper should be sat on
+  // (soft — another day when none in the exam period can take it); null =
+  // any exam day.
+  allowedDays: DayOfWeek[] | null;
 }
 
 interface ExamClassArmPayload {
@@ -709,6 +715,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // constraints below, before subjectPayloadsForLevel is first called.
     let lastDaysSubjectNames = new Set<string>();
     let collapsedGroupSubjects: CollapsedGroupSubject[] = [];
+    let firstPaperSubjects: CollapsedGroupSubject[] = [];
+    const examAllowedDaysBySubject = new Map<string, SubjectDayRestriction[]>();
     const subjectPayloadsByLevel = new Map<string, ExamSubjectPayload[]>();
     const subjectPayloadsForLevel = async (
       category: ClassLevelCategory,
@@ -723,6 +731,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           classLevelId,
           collapsedGroupNamesForClassLevel(collapsedGroupSubjects, classLevelName),
         );
+        const firstPaperNames = collapsedGroupNamesForClassLevel(firstPaperSubjects, classLevelName);
         payloads = requiredSubjects.map((s) => ({
           subjectId: s.id,
           requiresCalculation: s.requiresCalculation,
@@ -733,6 +742,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           lastDaysOnly:
             lastDaysSubjectNames.has(normalizeSubjectName(s.name)) ||
             (s.concurrencyGroupName !== null && lastDaysSubjectNames.has(normalizeSubjectName(s.concurrencyGroupName))),
+          firstPaper:
+            firstPaperNames.has(normalizeSubjectName(s.name)) ||
+            (s.concurrencyGroupName !== null && firstPaperNames.has(normalizeSubjectName(s.concurrencyGroupName))),
+          allowedDays:
+            allowedDaysForClassLevel(examAllowedDaysBySubject.get(normalizeSubjectName(s.name)) ?? [], classLevelName) ?? null,
         }));
         subjectPayloadsByLevel.set(classLevelId, payloads);
       }
@@ -785,6 +799,25 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // one paper instead of one per child for the named ClassLevels — e.g.
     // Basic's four English Language parts as a single "English Language" paper.
     collapsedGroupSubjects = parseCollapsedGroupSubjects(getGroup(`${prefix}_COLLAPSE_GROUP_SUBJECTS`));
+    // {prefix}_FIRST_PAPER_SUBJECTS (group-scoped): "SubjectName[@ClassLevel,...]"
+    // entries, same format as _COLLAPSE_GROUP_SUBJECTS — papers that must be
+    // the first of whichever day they land on, e.g. Basic's Mathematics/
+    // English/VAT/QAT, Nursery's Literacy/Numeracy.
+    firstPaperSubjects = parseCollapsedGroupSubjects(getGroup(`${prefix}_FIRST_PAPER_SUBJECTS`));
+    // {prefix}_SUBJECT_ALLOWED_DAYS (group-scoped): CLASS_TIMETABLE's
+    // SUBJECT_ALLOWED_DAYS format ("MUSIC:TUESDAY[@ClassLevel,...]") applied to
+    // exam days — the paper goes on an exam date of those weekdays when one
+    // can take it, otherwise on another day (the solver treats it as soft).
+    for (const restriction of parseSubjectDayRestrictions(getGroup(`${prefix}_SUBJECT_ALLOWED_DAYS`))) {
+      const key = normalizeSubjectName(restriction.subjectName);
+      examAllowedDaysBySubject.set(key, [...(examAllowedDaysBySubject.get(key) ?? []), restriction]);
+    }
+    // {prefix}_SPREAD_PAPERS_ACROSS_DAYS (group-scoped boolean): spread each
+    // class's papers evenly over every exam day (a class with fewer papers
+    // than the sitting's longest still sits at least one paper a day, its
+    // free slots falling at the end of the day) instead of packing each day
+    // full before moving to the next.
+    const spreadPapersAcrossDays = getGroup(`${prefix}_SPREAD_PAPERS_ACROSS_DAYS`) === true;
     // {prefix}_BREAK_AFTER_PAPER/_BREAK_DURATION_MINUTES (group-scoped): a
     // break of that length after the day's Nth paper; unset/0 = no break.
     const breakAfterPaper = Number(getGroup(`${prefix}_BREAK_AFTER_PAPER`) ?? 0) || 0;
@@ -815,6 +848,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       unified: arrangement.unified,
       calculationSubjectsMorning,
       lastDaysWindow,
+      spreadPapersAcrossDays,
       breakAfterPaper,
       breakDurationMinutes,
       maxSubjectsPerDay: parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`)),

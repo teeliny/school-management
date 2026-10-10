@@ -48,6 +48,7 @@ class SolveRequest(BaseModel):
     unified: bool = False
     examDayEndTime: str | None = None
     lastDaysWindow: int = 2
+    spreadPapersAcrossDays: bool = False
     breakAfterPaper: int = 0
     breakDurationMinutes: int = 0
 
@@ -147,6 +148,7 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             exam_day_end_time=payload.examDayEndTime,
             calculation_subjects_morning=payload.calculationSubjectsMorning,
             last_days_window=payload.lastDaysWindow,
+            spread_papers_across_days=payload.spreadPapersAcrossDays,
             break_after_paper=payload.breakAfterPaper,
             break_duration_minutes=payload.breakDurationMinutes,
         )
