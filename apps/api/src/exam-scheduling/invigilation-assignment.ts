@@ -125,7 +125,7 @@ export class InvigilationAssignmentService {
     // Resolved to the component's whole exam sitting (e.g. JSS+SSS) —
     // generated and reviewed as one roster, so it's listed as one too.
     if (assessmentComponentId) {
-      examScheduleWhere.assessmentComponentId = { in: (await resolveSitting(this.prisma, assessmentComponentId)).componentIds };
+      examScheduleWhere.assessmentComponentId = { in: (await resolveSitting(this.prisma, assessmentComponentId, { display: true })).componentIds };
     }
     if (categories) examScheduleWhere.classArm = { classLevel: { category: { in: categories } } };
 

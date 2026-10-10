@@ -70,7 +70,7 @@ export class ExamDayInvigilationService {
     user?: RequestUser,
   ) {
     const componentIds = filters.assessmentComponentId
-      ? (await resolveSitting(this.prisma, filters.assessmentComponentId)).componentIds
+      ? (await resolveSitting(this.prisma, filters.assessmentComponentId, { display: true })).componentIds
       : undefined;
     const categories = user ? resolvePrincipalHeadteacherCategories(user) : null;
 

@@ -162,10 +162,11 @@ export class ExamScheduleService {
       }
     }
 
-    // A component resolves to its whole exam sitting (e.g. JSS+SSS share one
-    // timetable — examArrangementFor), so either component shows all of it.
+    // A component resolves to its whole displayed sitting (e.g. JSS+SSS share
+    // one timetable, Nursery+Primary are listed together — examArrangementFor),
+    // so any of its components shows all of it.
     const componentIds = filters.assessmentComponentId
-      ? (await resolveSitting(this.prisma, filters.assessmentComponentId)).componentIds
+      ? (await resolveSitting(this.prisma, filters.assessmentComponentId, { display: true })).componentIds
       : undefined;
     const rows = await this.prisma.examSchedule.findMany({
       where: {

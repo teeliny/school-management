@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { formatPersonName, type ClassLevelCategory } from "@school/types";
 import { useCurrentUser } from "../../lib/use-current-user";
 import { apiFetch } from "../../lib/api";
+import { groupComponentsBySitting, sittingOptionFor } from "../../lib/exam-sittings";
 import { AppShell } from "../../components/templates/app-shell";
 import { PageLoadingSkeleton } from "../../components/templates/page-loading-skeleton";
 import { Letterhead } from "../../components/molecules/letterhead";
@@ -75,6 +76,7 @@ interface AssessmentComponentOption {
   type: "CA" | "MID_TERM" | "EXAM";
   classLevelCategory: string;
   termId: string;
+  sequence: number;
 }
 interface StaffAssignmentItem {
   assignmentType: string;
@@ -318,13 +320,15 @@ function PlannerPageInner() {
   // Scoped to a term first (every term has its own same-named "Mid-Term
   // Test"/"Exam" component — without this, the picker shows several
   // identically-labeled entries with no way to tell them apart), then
-  // grouped Secondary/Primary the same way as before, then narrowed to the
-  // viewer's own group if they're a scoped Principal/Headteacher.
+  // collapsed to one option per exam sitting (JSS + SSS, Nursery + Primary
+  // mid-term — groupComponentsBySitting, same as the Generate form), then
+  // grouped Secondary/Primary, then narrowed to the viewer's own group if
+  // they're a scoped Principal/Headteacher.
   function GroupedComponentOptions({ termId }: { termId: string }) {
-    const forTerm = termId ? components.filter((c) => c.termId === termId) : components;
-    const secondary = forTerm.filter((c) => groupOf(c.classLevelCategory) === "JSS_SSS" && (!scopedGroup || scopedGroup === "JSS_SSS"));
-    const primary = forTerm.filter(
-      (c) => groupOf(c.classLevelCategory) === "CRECHE_NURSERY_PRIMARY" && (!scopedGroup || scopedGroup === "CRECHE_NURSERY_PRIMARY"),
+    const sittings = groupComponentsBySitting(termId ? components.filter((c) => c.termId === termId) : components);
+    const secondary = sittings.filter((o) => groupOf(o.categories[0]!) === "JSS_SSS" && (!scopedGroup || scopedGroup === "JSS_SSS"));
+    const primary = sittings.filter(
+      (o) => groupOf(o.categories[0]!) === "CRECHE_NURSERY_PRIMARY" && (!scopedGroup || scopedGroup === "CRECHE_NURSERY_PRIMARY"),
     );
     return (
       <>
@@ -333,7 +337,7 @@ function PlannerPageInner() {
             <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted">Secondary (JSS / SSS)</div>
             {secondary.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                {c.classLevelCategory} · {c.name}
+                {c.label}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -343,7 +347,7 @@ function PlannerPageInner() {
             <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted">Primary (Creche / Reception / Nursery / Primary)</div>
             {primary.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                {c.classLevelCategory} · {c.name}
+                {c.label}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -354,12 +358,16 @@ function PlannerPageInner() {
 
   const termsForCtSession = terms.filter((t) => !ctAcademicSessionId || t.academicSessionId === ctAcademicSessionId);
   const selectedDutyTerm = terms.find((t) => t.id === dutyTermId);
-  const etSelectedComponent = components.find((c) => c.id === etComponentId);
-  // Only class arms that actually belong to the selected component's
-  // classLevelCategory can ever have exam rows for it — e.g. a JSS Mid-Term
-  // component's rows are only ever for JSS class arms, never SSS/Primary.
-  const etClassArmOptions = etSelectedComponent
-    ? classArms.filter((arm) => arm.classLevel.category === etSelectedComponent.classLevelCategory)
+  // The dropdowns list one option per sitting, keyed by its representative
+  // component — a deep link may carry any component of the sitting (e.g.
+  // SSS's), so the Select value is mapped onto that sitting's option.
+  const sittingOptions = groupComponentsBySitting(components);
+  const etSitting = etComponentId ? sittingOptionFor(sittingOptions, etComponentId) : undefined;
+  const ivSitting = ivComponentId ? sittingOptionFor(sittingOptions, ivComponentId) : undefined;
+  // Only class arms in the selected sitting's categories can ever have exam
+  // rows for it — e.g. JSS + SSS mid-term rows are never for a Primary arm.
+  const etClassArmOptions = etSitting
+    ? classArms.filter((arm) => etSitting.categories.includes(arm.classLevel.category as ClassLevelCategory))
     : classArms;
 
   return (
@@ -572,7 +580,7 @@ function PlannerPageInner() {
                   <div>
                     <Label htmlFor="et-component">Assessment component</Label>
                     <Select
-                      value={etComponentId}
+                      value={etSitting?.id ?? etComponentId}
                       onValueChange={(v) => {
                         setEtComponentId(v);
                         // A class arm from a different classLevelCategory than
@@ -668,7 +676,7 @@ function PlannerPageInner() {
                 </div>
                 <div>
                   <Label htmlFor="iv-component">Assessment component</Label>
-                  <Select value={ivComponentId} onValueChange={setIvComponentId}>
+                  <Select value={ivSitting?.id ?? ivComponentId} onValueChange={setIvComponentId}>
                     <SelectTrigger id="iv-component" className="mt-1">
                       <SelectValue placeholder={ivTermId ? "Select a component for this term" : "Select a term first"} />
                     </SelectTrigger>

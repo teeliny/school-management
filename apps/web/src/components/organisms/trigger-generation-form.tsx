@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { categoryToGroup, examArrangementFor, type ClassLevelCategory, type ExamArrangement } from "@school/types";
+import { groupComponentsBySitting } from "../../lib/exam-sittings";
 import { apiFetch, ApiError } from "../../lib/api";
 import { Badge } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -83,7 +84,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastResult, setLastResult] = useState<{ id: string; status: string } | null>(null);
+  const [lastResults, setLastResults] = useState<{ id: string; status: string }[]>([]);
 
   useEffect(() => {
     apiFetch<ClassArmOption[]>("/class-arms", { auth: true }).then(setClassArms).catch(() => setClassArms([]));
@@ -108,32 +109,21 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
     (c) => c.classLevelCategory !== "CRECHE",
   );
 
-  // Components that generate together as ONE sitting (examArrangementFor —
-  // e.g. JSS + SSS) collapse into a single option, since picking either one
-  // starts the identical combined run. Ordered by section, mid-term first.
-  const CATEGORY_ORDER: ClassLevelCategory[] = ["RECEPTION", "NURSERY", "PRIMARY", "JSS", "SSS"];
-  const componentOptions = (() => {
-    const bySitting = new Map<string, { id: string; label: string; type: string; firstCategory: number }>();
-    for (const c of componentsForTerm) {
-      const type = c.type === "MID_TERM" ? "MID_TERM" : "EXAM";
-      const sitting = examArrangementFor(c.classLevelCategory, type).sittingCategories;
-      const key = `${c.termId}|${type}|${c.sequence}|${sitting.join(",")}`;
-      if (bySitting.has(key)) continue;
-      const present = sitting.filter((cat) => componentsForTerm.some((o) => o.termId === c.termId && o.type === c.type && o.sequence === c.sequence && o.classLevelCategory === cat));
-      bySitting.set(key, {
-        id: c.id,
-        label: `${present.join(" + ")} · ${c.name}`,
-        type,
-        firstCategory: CATEGORY_ORDER.indexOf(present[0] ?? c.classLevelCategory),
-      });
-    }
-    return [...bySitting.values()].sort((a, b) => a.type.localeCompare(b.type) * -1 || a.firstCategory - b.firstCategory);
-  })();
-
-  const selectedComponent = components.find((c) => c.id === assessmentComponentId);
-  const arrangement = selectedComponent
-    ? examArrangementFor(selectedComponent.classLevelCategory, selectedComponent.type === "MID_TERM" ? "MID_TERM" : "EXAM")
-    : null;
+  // One option per displayed sitting (examArrangementFor's displayCategories
+  // — JSS + SSS, Nursery + Primary). Most are one generation run; Nursery +
+  // Primary's exam is two (Basic's mixed hall, Reception/Nursery per arm), so
+  // `runs` holds one entry per generation sitting and submitting posts one
+  // request per run — narrowed to the run covering the picked class arm, if any.
+  const componentOptions = groupComponentsBySitting(componentsForTerm);
+  const selectedOption = componentOptions.find((o) => o.id === assessmentComponentId);
+  const selectedArmCategory = classArms.find((arm) => arm.id === classArmId)?.classLevel.category;
+  const runs = (selectedOption?.generationIds ?? [])
+    .map((id) => components.find((c) => c.id === id))
+    .filter((c): c is AssessmentComponentOption => c !== undefined)
+    .map((c) => ({ componentId: c.id, arrangement: examArrangementFor(c.classLevelCategory, c.type === "MID_TERM" ? "MID_TERM" : "EXAM") }))
+    .filter((run) => !selectedArmCategory || run.arrangement.sittingCategories.includes(selectedArmCategory));
+  const hasHallRun = runs.some((run) => run.arrangement.invigilation === "HALL_POOL_PER_DAY");
+  const hasOpenPoolRun = runs.some((run) => run.arrangement.invigilation !== "CLASS_TEACHER" && !run.arrangement.poolClassTeachersOnly);
 
   // Once a class level group is picked for CLASS_TIMETABLE, the class arm
   // list below it narrows to that group's arms only — picking a group and
@@ -155,7 +145,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setLastResult(null);
+    setLastResults([]);
     setSubmitting(true);
     try {
       const parameters: Record<string, unknown> = {};
@@ -166,7 +156,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
       if (scope === "INVIGILATION" && includeNonTeachingStaff) {
         parameters.includeNonTeachingStaff = true;
       }
-      if (scope === "INVIGILATION" && arrangement?.invigilation === "HALL_POOL_PER_DAY" && invigilatorsPerDay.trim()) {
+      if (scope === "INVIGILATION" && hasHallRun && invigilatorsPerDay.trim()) {
         parameters.invigilatorsPerDay = Number(invigilatorsPerDay);
       }
       if (scope === "WEEKLY_DUTY" && teachersPerWeek.trim()) {
@@ -175,20 +165,29 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
 
       const body: Record<string, unknown> = { scope };
       if (scope === "CLASS_TIMETABLE" || scope === "WEEKLY_DUTY") body.termId = termId || undefined;
-      if (scope === "EXAM_TIMETABLE" || scope === "INVIGILATION") body.assessmentComponentId = assessmentComponentId || undefined;
       if (scope !== "WEEKLY_DUTY") body.classArmId = classArmId || undefined;
       if ((scope === "WEEKLY_DUTY" || scope === "CLASS_TIMETABLE") && classLevelCategoryGroup) {
         body.classLevelCategoryGroup = classLevelCategoryGroup;
       }
       if (Object.keys(parameters).length > 0) body.parameters = parameters;
 
-      const result = await apiFetch<{ id: string; status: string }>("/schedule-generation-requests", {
-        method: "POST",
-        auth: true,
-        body,
-      });
-      setLastResult(result);
-      onTriggered();
+      const isExamScope = scope === "EXAM_TIMETABLE" || scope === "INVIGILATION";
+      const bodies =
+        isExamScope && runs.length > 0
+          ? runs.map((run) => ({ ...body, assessmentComponentId: run.componentId }))
+          : [{ ...body, ...(isExamScope ? { assessmentComponentId: assessmentComponentId || undefined } : {}) }];
+      const results: { id: string; status: string }[] = [];
+      try {
+        for (const runBody of bodies) {
+          results.push(
+            await apiFetch<{ id: string; status: string }>("/schedule-generation-requests", { method: "POST", auth: true, body: runBody }),
+          );
+        }
+      } finally {
+        // A later run failing still leaves the earlier ones started — show those.
+        setLastResults(results);
+        if (results.length > 0) onTriggered();
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to trigger generation");
     } finally {
@@ -247,7 +246,11 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
               ))}
             </SelectContent>
           </Select>
-          {arrangement && <p className="mt-1 text-[11.5px] text-muted">{describeArrangement(arrangement, scope)}</p>}
+          {runs.map((run) => (
+            <p key={run.componentId} className="mt-1 text-[11.5px] text-muted">
+              {describeArrangement(run.arrangement, scope)}
+            </p>
+          ))}
         </div>
       )}
 
@@ -314,7 +317,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
         </div>
       )}
 
-      {scope === "INVIGILATION" && arrangement?.invigilation === "HALL_POOL_PER_DAY" && (
+      {scope === "INVIGILATION" && hasHallRun && (
         <div>
           <Label htmlFor="trigger-invigilators-per-day">Invigilators per day (optional — uses the configured default)</Label>
           <Input
@@ -327,7 +330,7 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
         </div>
       )}
 
-      {scope === "INVIGILATION" && arrangement && arrangement.invigilation !== "CLASS_TEACHER" && !arrangement.poolClassTeachersOnly && (
+      {scope === "INVIGILATION" && hasOpenPoolRun && (
         <label className="flex items-center gap-2 text-[12.5px]">
           <Checkbox checked={includeNonTeachingStaff} onCheckedChange={(c) => setIncludeNonTeachingStaff(c === true)} />
           Include non-teaching staff in the eligible pool
@@ -348,12 +351,12 @@ export function TriggerGenerationForm({ onTriggered }: { onTriggered: () => void
       )}
 
       {error && <p className="text-[12.5px] text-danger">{error}</p>}
-      {lastResult && (
-        <p className="text-[12.5px] text-muted">
-          Request <span className="font-mono">{lastResult.id.slice(0, 8)}</span> created —{" "}
-          <Badge variant="warning">{lastResult.status}</Badge>
+      {lastResults.map((result) => (
+        <p key={result.id} className="text-[12.5px] text-muted">
+          Request <span className="font-mono">{result.id.slice(0, 8)}</span> created —{" "}
+          <Badge variant="warning">{result.status}</Badge>
         </p>
-      )}
+      ))}
 
       <Button type="submit" disabled={submitting}>
         {submitting ? "Starting…" : "Start generation"}

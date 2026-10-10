@@ -51,6 +51,13 @@ export interface ExamArrangement {
   // generated together with this one in ONE run (and listed together). Only
   // a `unified` sitting also shares one slot grid across those categories.
   sittingCategories: ClassLevelCategory[];
+  // Every category whose same-term/same-type/same-sequence component is
+  // SHOWN together with this one — one exam timetable / invigilation roster
+  // and one picker entry per section, even where generation still runs as
+  // separate sittings (Basic's exam is a mixed hall on a shared grid,
+  // Reception/Nursery's sits per arm with class teachers). Always a superset
+  // of sittingCategories.
+  displayCategories: ClassLevelCategory[];
   // true = every arm in the sitting shares fixed paper slots (everyone starts
   // together, so classes can be mixed in a hall); false = each arm's papers
   // are laid out independently, back to back.
@@ -80,11 +87,14 @@ export const DEFAULT_HALL_INVIGILATORS_PER_DAY = 2;
  * Shared by apps/api (trigger validation, listing) and apps/worker (payload
  * building) so both sides agree on which components form one sitting.
  */
+const EARLY_YEARS_AND_BASIC: ClassLevelCategory[] = ["RECEPTION", "NURSERY", "PRIMARY"];
+
 export function examArrangementFor(category: ClassLevelCategory, type: ExamComponentType): ExamArrangement {
   if (category === "JSS" || category === "SSS") {
     return type === "MID_TERM"
       ? {
           sittingCategories: ["JSS", "SSS"],
+          displayCategories: ["JSS", "SSS"],
           unified: true,
           invigilation: "ONE_PER_ARM_PER_DAY",
           poolClassTeachersOnly: false,
@@ -92,6 +102,7 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
         }
       : {
           sittingCategories: ["JSS", "SSS"],
+          displayCategories: ["JSS", "SSS"],
           unified: true,
           invigilation: "HALL_POOL_PER_DAY",
           poolClassTeachersOnly: false,
@@ -101,6 +112,7 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
   if (category === "PRIMARY" && type === "EXAM") {
     return {
       sittingCategories: ["PRIMARY"],
+      displayCategories: EARLY_YEARS_AND_BASIC,
       unified: true,
       invigilation: "HALL_POOL_PER_DAY",
       poolClassTeachersOnly: true,
@@ -112,7 +124,8 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
   // Nursery, Basic being its own mixed hall above), but still laid out per
   // class arm — each arm sits with its own class teacher, so no shared grid.
   return {
-    sittingCategories: type === "MID_TERM" ? ["RECEPTION", "NURSERY", "PRIMARY"] : ["RECEPTION", "NURSERY"],
+    sittingCategories: type === "MID_TERM" ? EARLY_YEARS_AND_BASIC : ["RECEPTION", "NURSERY"],
+    displayCategories: EARLY_YEARS_AND_BASIC,
     unified: false,
     invigilation: "CLASS_TEACHER",
     poolClassTeachersOnly: false,
