@@ -20,6 +20,7 @@ import { Audited } from "../audit/audited.decorator";
 import { UpdateInvigilationAssignmentDto } from "./dto/update-invigilation-assignment.dto";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { resolveSitting } from "./exam-sitting";
+import { assertInvigilationEligible } from "./invigilation-eligibility";
 
 /**
  * Mixed-hall (HALL_POOL_PER_DAY) invigilation duty — one row per (staff,
@@ -91,6 +92,7 @@ export class ExamDayInvigilationService {
 
   async update(id: string, dto: UpdateInvigilationAssignmentDto) {
     const existing = await this.prisma.examDayInvigilation.findUniqueOrThrow({ where: { id } });
+    await assertInvigilationEligible(this.prisma, dto.staffId);
     await this.assertNoConflicts(dto.staffId, existing.date, id);
     return this.prisma.examDayInvigilation.update({ where: { id }, data: { staffId: dto.staffId } });
   }

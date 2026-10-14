@@ -977,6 +977,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
 
     const classTeachersByArm = new Map<string, string[]>();
     if (arrangement.invigilation === "CLASS_TEACHER") {
+      const hardExcluded = new Set(await this.resolveHardExcludedInvigilatorIds());
       const classTeacherRows = await this.prisma.staffAssignment.findMany({
         where: {
           assignmentType: AssignmentType.CLASS_TEACHER,
@@ -987,7 +988,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         orderBy: { createdAt: "asc" },
       });
       for (const row of classTeacherRows) {
-        if (!row.classArmId) continue;
+        if (!row.classArmId || hardExcluded.has(row.staffId)) continue;
         const list = classTeachersByArm.get(row.classArmId) ?? [];
         if (!list.includes(row.staffId)) list.push(row.staffId);
         classTeachersByArm.set(row.classArmId, list);
@@ -1038,14 +1039,15 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     sittingCategories: ClassLevelCategory[];
     classTeachersOnly: boolean;
   }): Promise<string[]> {
-    const excludedStaffIds = new Set(
-      (
+    const excludedStaffIds = new Set([
+      ...(
         await this.prisma.staffAssignment.findMany({
           where: { assignmentType: { in: options.excludedTypes as AssignmentType[] }, isActive: true },
           select: { staffId: true },
         })
       ).map((a) => a.staffId),
-    );
+      ...(await this.resolveHardExcludedInvigilatorIds()),
+    ]);
 
     if (options.includeNonTeachingStaff && !options.classTeachersOnly) {
       const allStaff = await this.prisma.staffProfile.findMany({
@@ -1069,6 +1071,26 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     });
     const teachingStaffIds = new Set(teachingAssignments.map((a) => a.staffId));
     return [...teachingStaffIds].filter((id) => !excludedStaffIds.has(id));
+  }
+
+  /**
+   * Never invigilate, whatever EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES says:
+   * the Super-Admin (Proprietor — may also hold SUBJECT_TEACHER rows, which
+   * would otherwise pull them into the pool) and any active BURSAR. Mirrors
+   * apps/api's invigilation-eligibility.ts, which backstops manual edits —
+   * keep both in sync.
+   */
+  private async resolveHardExcludedInvigilatorIds(): Promise<string[]> {
+    const rows = await this.prisma.staffProfile.findMany({
+      where: {
+        OR: [
+          { user: { roles: { some: { role: Role.SUPER_ADMIN, isActive: true } } } },
+          { assignments: { some: { assignmentType: AssignmentType.BURSAR, isActive: true } } },
+        ],
+      },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
   }
 
   /** Same active-SUBJECT_TEACHER lookup shape as Step 2's teacher resolution. */
