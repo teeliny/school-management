@@ -11,6 +11,7 @@ import {
   type DayOfWeek,
 } from "@school/types";
 import { apiFetch } from "../../lib/api";
+import { buildExamColumns, formatExamDate } from "../../lib/exam-columns";
 import { buildPeriodColumns, findSpecialPeriod, fridayCutoffColumnIndex, resolvePeriodIndex } from "../../lib/period-columns";
 import { slotSubjectLabel, specialPeriodsForArm, usePeriodStructure, useSpecialPeriods } from "../../lib/use-period-structure";
 import { CollapsibleCard } from "../molecules/collapsible-card";
@@ -407,23 +408,130 @@ export function MyWeeklyDutySection({ staffId }: { staffId: string }) {
   );
 }
 
-function ExamScheduleList({ classArmId, subjectId }: { classArmId: string; subjectId?: string }) {
-  const [rows, setRows] = useState<ExamScheduleItem[]>([]);
+interface ClassExamScheduleItem extends ExamScheduleItem {
+  venue: string | null;
+  assessmentComponent: { id: string; name: string; term: { name: string } };
+}
+
+/**
+ * A class's published exam timetable, read-only — one grid per sitting
+ * (assessment component), most recent first, each laid out like the class
+ * timetable: exam dates down the side, time-range columns across the top
+ * with a Break column (buildExamColumns, the same layout as the planner's
+ * ExamTimetableGrid and the exam timetable PDF).
+ */
+function ExamScheduleList({ classArmId }: { classArmId: string }) {
+  const [rows, setRows] = useState<ClassExamScheduleItem[] | null>(null);
   useEffect(() => {
-    apiFetch<ExamScheduleItem[]>(`/exam-schedules?classArmId=${classArmId}`, { auth: true })
-      .then((all) => setRows(subjectId ? all.filter((r) => r.subject.id === subjectId) : all))
+    apiFetch<ClassExamScheduleItem[]>(`/exam-schedules?classArmId=${classArmId}`, { auth: true })
+      .then(setRows)
       .catch(() => setRows([]));
-  }, [classArmId, subjectId]);
+  }, [classArmId]);
+
+  const sittings = useMemo(() => {
+    const byComponent = new Map<string, ClassExamScheduleItem[]>();
+    for (const row of rows ?? []) {
+      byComponent.set(row.assessmentComponent.id, [...(byComponent.get(row.assessmentComponent.id) ?? []), row]);
+    }
+    const latest = (list: ClassExamScheduleItem[]) => list.reduce((max, r) => (r.date > max ? r.date : max), "");
+    return [...byComponent.values()].sort((a, b) => latest(b).localeCompare(latest(a)));
+  }, [rows]);
+
+  if (!rows) return <p className="text-sm text-muted">Loading…</p>;
+  if (sittings.length === 0) return <p className="text-sm text-muted">No exam schedule published yet.</p>;
 
   return (
-    <ReadOnlyScheduleTable
-      headers={["Subject", "Date", "Time"]}
-      rows={rows.map((e) => ({
-        id: e.id,
-        cells: [e.subject.name, new Date(e.date).toLocaleDateString(), `${e.startTime}–${e.endTime}`],
-      }))}
-      emptyMessage="No exam schedule published yet."
-    />
+    <div className="space-y-5">
+      {sittings.map((sittingRows) => {
+        const component = sittingRows[0]!.assessmentComponent;
+        return (
+          <div key={component.id}>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <div className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                {component.name} · {component.term.name}
+              </div>
+              <a
+                href={`/api/proxy/exam-schedules/pdf?assessmentComponentId=${component.id}&classArmId=${classArmId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11.5px] text-primary underline"
+              >
+                Download PDF
+              </a>
+            </div>
+            <ReadOnlyExamGrid rows={sittingRows} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReadOnlyExamGrid({ rows }: { rows: ClassExamScheduleItem[] }) {
+  const columns = useMemo(() => buildExamColumns(rows), [rows]);
+  const dates = useMemo(() => [...new Set(rows.map((r) => r.date.slice(0, 10)))].sort(), [rows]);
+  const rowsByCell = useMemo(() => {
+    // Several papers can share a slot (elective alternatives), so a list per cell.
+    const map = new Map<string, ClassExamScheduleItem[]>();
+    for (const row of rows) {
+      const key = `${row.date.slice(0, 10)}|${row.startTime}`;
+      map.set(key, [...(map.get(key) ?? []), row]);
+    }
+    return map;
+  }, [rows]);
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="grid gap-1.5" style={{ gridTemplateColumns: `80px repeat(${columns.length}, minmax(110px, 1fr))` }}>
+        <div />
+        {columns.map((col, i) => (
+          <div key={i} className="text-center font-mono text-[9.5px] font-medium text-muted">
+            {col.kind === "break" ? (
+              <>
+                Break
+                <br />
+                {col.startTime}–{col.endTime}
+              </>
+            ) : (
+              `${col.startTime}–${col.endTime}`
+            )}
+          </div>
+        ))}
+        {dates.map((date) => (
+          <div key={date} className="contents">
+            <div className="pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted">{formatExamDate(date)}</div>
+            {columns.map((col, i) => {
+              if (col.kind === "break") {
+                return (
+                  <div
+                    key={i}
+                    className="flex min-h-[52px] items-center justify-center rounded-lg bg-muted/10 text-[10px] font-medium uppercase tracking-wide text-muted"
+                  >
+                    Break
+                  </div>
+                );
+              }
+              const cellRows = rowsByCell.get(`${date}|${col.startTime}`) ?? [];
+              return (
+                <div key={i} className="min-h-[52px] space-y-1">
+                  {cellRows.map((row) => (
+                    <div key={row.id} className="rounded-lg border border-border bg-card-inset p-1.5 text-[11.5px]">
+                      <div className="font-medium leading-tight">{row.subject.name}</div>
+                      {row.endTime !== col.endTime && (
+                        <div className="font-mono text-[10px] text-muted">
+                          {row.startTime}–{row.endTime}
+                        </div>
+                      )}
+                      {row.venue && <div className="text-[10.5px] text-muted">{row.venue}</div>}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

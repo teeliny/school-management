@@ -176,7 +176,13 @@ export class ExamScheduleService {
         classArmId: classArmWhere,
         approvalStatus: filters.approvalStatus ?? TimetableApprovalStatus.APPROVED,
       },
-      include: { classArm: { include: { classLevel: { select: { name: true } } } }, subject: true },
+      include: {
+        classArm: { include: { classLevel: { select: { name: true } } } },
+        subject: true,
+        // Lets read-only views (parent/class-teacher planner) split a class's
+        // papers into one grid per sitting.
+        assessmentComponent: { select: { id: true, name: true, term: { select: { name: true } } } },
+      },
       orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
     return rows.map((row) => ({ ...row, classArm: withDisplayName(row.classArm) }));
