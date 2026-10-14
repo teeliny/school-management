@@ -274,6 +274,16 @@ export function InvigilationGrid({
   return (
     <DndContext onDragEnd={handleDragEnd}>
       <div className="space-y-3">
+        <div className="flex items-center justify-end">
+          <a
+            href={`/api/proxy/invigilation-assignments/pdf?assessmentComponentId=${assessmentComponentId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11.5px] text-primary underline"
+          >
+            Download PDF
+          </a>
+        </div>
         {actionError && <p className="text-[12.5px] text-danger">{actionError}</p>}
         {examDays.map((day) => (
           <section key={day.date} className="rounded-lg border border-border bg-card-inset px-4 py-3">

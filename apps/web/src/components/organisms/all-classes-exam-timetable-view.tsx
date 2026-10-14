@@ -105,6 +105,16 @@ export function AllClassesExamTimetableView({
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end">
+        <a
+          href={`/api/proxy/exam-schedules/pdf?assessmentComponentId=${assessmentComponentId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11.5px] text-primary underline"
+        >
+          Download all classes (PDF)
+        </a>
+      </div>
       {dateKeys.map((date) => {
         const arms = classArmsByDate.get(date) ?? [];
         return (
@@ -138,13 +148,24 @@ export function AllClassesExamTimetableView({
                   <div key={arm.classArmId} className="contents">
                     <div className="flex items-center justify-between gap-1.5 border-b border-border px-2 py-2 text-[12px]">
                       <span className="truncate">{arm.displayName}</span>
-                      <button
-                        type="button"
-                        onClick={() => onViewClass(arm.classArmId)}
-                        className="flex-none text-[10.5px] text-primary underline"
-                      >
-                        Edit
-                      </button>
+                      <span className="flex flex-none gap-1.5">
+                        <a
+                          href={`/api/proxy/exam-schedules/pdf?assessmentComponentId=${assessmentComponentId}&classArmId=${arm.classArmId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10.5px] text-primary underline"
+                          title={`Download ${arm.displayName}'s exam timetable`}
+                        >
+                          PDF
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => onViewClass(arm.classArmId)}
+                          className="text-[10.5px] text-primary underline"
+                        >
+                          Edit
+                        </button>
+                      </span>
                     </div>
                     {columns.map((col, i) => {
                       if (col.kind === "break") {

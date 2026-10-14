@@ -90,7 +90,7 @@ function sameColumns(a: Column[], b: Column[]): boolean {
  * constants above — apps/api and apps/worker don't share a PDF-rendering
  * module).
  */
-function drawWatermark(doc: PDFKit.PDFDocument, schoolName: string): void {
+export function drawWatermark(doc: PDFKit.PDFDocument, schoolName: string): void {
   doc.save();
   doc.rotate(-45, { origin: [doc.page.width / 2, doc.page.height / 2] });
   doc

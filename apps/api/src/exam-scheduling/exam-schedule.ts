@@ -8,10 +8,11 @@ import {
   Param,
   Patch,
   Query,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 import { ClassLevelCategoryGroup, Prisma, TimetableApprovalStatus } from "@prisma/client";
-import { categoryToGroup, timeRangesOverlap } from "@school/types";
+import { buildExamColumns, categoryToGroup, timeRangesOverlap } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -21,6 +22,7 @@ import { Audited } from "../audit/audited.decorator";
 import { UpdateExamScheduleDto } from "./dto/update-exam-schedule.dto";
 import { withDisplayName } from "../academic-structure/class-arm";
 import { resolveSitting } from "./exam-sitting";
+import { pdfFileSlug, renderExamTimetablePdf, type ExamGridPage } from "./exam-pdf.util";
 
 interface ExamConflictCheckInput {
   classArmId: string;
@@ -180,6 +182,80 @@ export class ExamScheduleService {
     return rows.map((row) => ({ ...row, classArm: withDisplayName(row.classArm) }));
   }
 
+  /**
+   * Downloadable exam timetable — APPROVED rows only, through findAll so the
+   * caller gets exactly what they'd see on screen (same parent/section
+   * scoping). With classArmId: that class's Date x Slot grid. Without: the
+   * whole sitting, one page per exam date with Class x Slot.
+   */
+  async buildPdf(
+    filters: { assessmentComponentId: string; classArmId?: string },
+    user?: RequestUser,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const rows = await this.findAll(filters, user);
+    const component = await this.prisma.assessmentComponent.findUniqueOrThrow({
+      where: { id: filters.assessmentComponentId },
+      include: { term: { include: { academicSession: true } } },
+    });
+    const school = await this.prisma.schoolProfile.findFirstOrThrow();
+    const columns = buildExamColumns(rows);
+    const columnIndex = new Map(columns.map((col, i) => [col.kind === "paper" ? col.startTime : `break-${i}`, i]));
+    const label = (row: (typeof rows)[number]) => (row.venue ? `${row.subject.name.trim()} (${row.venue})` : row.subject.name.trim());
+    const dateKey = (row: (typeof rows)[number]) => row.date.toISOString().slice(0, 10);
+    const dates = [...new Set(rows.map(dateKey))].sort();
+    const subtitle = `${component.name}, ${component.term.name}, ${component.term.academicSession.name}`;
+
+    const fill = (rowKeys: string[], rowKeyOf: (row: (typeof rows)[number]) => string, subset: typeof rows) => {
+      const cells: string[][][] = rowKeys.map(() => columns.map(() => []));
+      for (const row of subset) {
+        const r = rowKeys.indexOf(rowKeyOf(row));
+        const c = columnIndex.get(row.startTime);
+        if (r >= 0 && c !== undefined) cells[r]![c]!.push(label(row));
+      }
+      return cells;
+    };
+
+    let title: string;
+    let pages: ExamGridPage[];
+    if (filters.classArmId) {
+      const arm = await this.prisma.classArm.findUnique({
+        where: { id: filters.classArmId },
+        include: { classLevel: { select: { name: true } } },
+      });
+      title = `${arm ? withDisplayName(arm).displayName : "Class"} Exam Timetable`;
+      const rowLabels = dates.map((d) =>
+        new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }),
+      );
+      pages = dates.length > 0 ? [{ rowLabels, cells: fill(dates, dateKey, rows) }] : [];
+    } else {
+      title = "Exam Timetable";
+      pages = dates.map((date) => {
+        const dayRows = rows.filter((r) => dateKey(r) === date);
+        const arms = [...new Map(dayRows.map((r) => [r.classArmId, r.classArm.displayName])).entries()].sort(([, a], [, b]) =>
+          a.localeCompare(b, undefined, { numeric: true }),
+        );
+        return {
+          heading: new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+            timeZone: "UTC",
+          }),
+          rowLabels: arms.map(([, name]) => name),
+          cells: fill(
+            arms.map(([id]) => id),
+            (r) => r.classArmId,
+            dayRows,
+          ),
+        };
+      });
+    }
+
+    const buffer = await renderExamTimetablePdf(title, subtitle, columns, pages, school.name);
+    return { buffer, filename: `${pdfFileSlug(title)}.pdf` };
+  }
+
   // BUILD_PLAN.md §9 Step 6d: drag (date/startTime/endTime) and inline-edit
   // (subjectId/venue) both funnel through this one PATCH — classArmId/
   // assessmentComponentId are deliberately not editable here, same as
@@ -227,6 +303,20 @@ export class ExamScheduleController {
       this.assertCanManage(user);
     }
     return this.service.findAll({ classArmId, assessmentComponentId, approvalStatus }, user);
+  }
+
+  // Declared before any ":id" route. No assertCanManage — same reasoning as
+  // GET /timetable-slots/pdf: it renders exactly the APPROVED rows findAll
+  // already shows this user. classArmId optional: omitted = whole sitting.
+  @Get("pdf")
+  async downloadPdf(
+    @CurrentUser() user: RequestUser,
+    @Query("assessmentComponentId") assessmentComponentId?: string,
+    @Query("classArmId") classArmId?: string,
+  ) {
+    if (!assessmentComponentId) throw new BadRequestException("assessmentComponentId is required");
+    const { buffer, filename } = await this.service.buildPdf({ assessmentComponentId, classArmId }, user);
+    return new StreamableFile(buffer, { type: "application/pdf", disposition: `attachment; filename="${filename}"` });
   }
 
   // BUILD_PLAN.md §9 Step 6d: drag-and-drop/inline-edit in the new

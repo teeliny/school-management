@@ -8,10 +8,11 @@ import {
   Param,
   Patch,
   Query,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 import { InvigilationRole, Prisma, TimetableApprovalStatus } from "@prisma/client";
-import { timeRangesOverlap } from "@school/types";
+import { formatPersonName, timeRangesOverlap } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -24,6 +25,8 @@ import { withDisplayName } from "../academic-structure/class-arm";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { resolveSitting } from "./exam-sitting";
 import { assertInvigilationEligible, findHardExcludedInvigilatorIds } from "./invigilation-eligibility";
+import { ExamDayInvigilationService } from "./exam-day-invigilation";
+import { pdfFileSlug, renderInvigilationRosterPdf, type InvigilationPdfDay } from "./exam-pdf.util";
 import { ReassignInvigilationAssignmentsDto, SwapInvigilationGroupsDto } from "./dto/reassign-invigilation-assignments.dto";
 
 /**
@@ -38,7 +41,10 @@ import { ReassignInvigilationAssignmentsDto, SwapInvigilationGroupsDto } from ".
  */
 @Injectable()
 export class InvigilationAssignmentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly examDayInvigilations: ExamDayInvigilationService,
+  ) {}
 
   async assertNoConflicts(
     staffId: string,
@@ -241,6 +247,66 @@ export class InvigilationAssignmentService {
     });
   }
 
+  /**
+   * Downloadable roster for a sitting, grouped per exam day like the
+   * on-screen grid — APPROVED rows only, through both findAll methods so the
+   * same section scoping applies. Mixed-hall days list names only; per-class
+   * days list each class arm with its invigilator(s).
+   */
+  async buildPdf(assessmentComponentId: string, user?: RequestUser): Promise<{ buffer: Buffer; filename: string }> {
+    const [paperRows, hallRows, component, school] = await Promise.all([
+      this.findAll({ assessmentComponentId }, user),
+      this.examDayInvigilations.findAll({ assessmentComponentId }, user),
+      this.prisma.assessmentComponent.findUniqueOrThrow({
+        where: { id: assessmentComponentId },
+        include: { term: { include: { academicSession: true } } },
+      }),
+      this.prisma.schoolProfile.findFirstOrThrow(),
+    ]);
+
+    const days = new Map<string, InvigilationPdfDay>();
+    const dayFor = (date: Date) => {
+      const key = date.toISOString().slice(0, 10);
+      let day = days.get(key);
+      if (!day) {
+        day = { date: key, hall: [], classes: [] };
+        days.set(key, day);
+      }
+      return day;
+    };
+    for (const row of hallRows) dayFor(row.date).hall.push(formatPersonName(row.staff.user));
+
+    // (date, classArm) -> distinct holder names per role (normally one each).
+    const groups = new Map<string, { day: InvigilationPdfDay; classArm: string; lead: Set<string>; assistant: Set<string> }>();
+    for (const row of paperRows) {
+      const day = dayFor(row.examSchedule.date);
+      const key = `${day.date}|${row.examSchedule.classArmId}`;
+      let group = groups.get(key);
+      if (!group) {
+        group = { day, classArm: row.examSchedule.classArm.displayName, lead: new Set(), assistant: new Set() };
+        groups.set(key, group);
+      }
+      (row.role === InvigilationRole.LEAD ? group.lead : group.assistant).add(formatPersonName(row.staff.user));
+    }
+    for (const group of groups.values()) {
+      group.day.classes.push({
+        classArm: group.classArm,
+        lead: [...group.lead].join(" / ") || "—",
+        assistant: group.assistant.size > 0 ? [...group.assistant].join(" / ") : null,
+      });
+    }
+    const sortedDays = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
+    for (const day of sortedDays) {
+      day.hall.sort((a, b) => a.localeCompare(b));
+      day.classes.sort((a, b) => a.classArm.localeCompare(b.classArm, undefined, { numeric: true }));
+    }
+
+    const title = "Invigilation Roster";
+    const subtitle = `${component.name}, ${component.term.name}, ${component.term.academicSession.name}`;
+    const buffer = await renderInvigilationRosterPdf(title, subtitle, sortedDays, school.name);
+    return { buffer, filename: `${pdfFileSlug(`invigilation-roster-${component.name}`)}.pdf` };
+  }
+
   findExcludedStaffIds() {
     return findHardExcludedInvigilatorIds(this.prisma);
   }
@@ -275,6 +341,15 @@ export class InvigilationAssignmentController {
       this.assertCanManage(user);
     }
     return this.service.findAll({ examScheduleId, staffId, assessmentComponentId, approvalStatus }, user);
+  }
+
+  // Same visibility as the roster itself (staff/admins only, approved rows).
+  @Get("pdf")
+  async downloadPdf(@CurrentUser() user: RequestUser, @Query("assessmentComponentId") assessmentComponentId?: string) {
+    this.assertNotStudentOrParent(user);
+    if (!assessmentComponentId) throw new BadRequestException("assessmentComponentId is required");
+    const { buffer, filename } = await this.service.buildPdf(assessmentComponentId, user);
+    return new StreamableFile(buffer, { type: "application/pdf", disposition: `attachment; filename="${filename}"` });
   }
 
   // Staff the grid's pickers must hide — never eligible to invigilate
