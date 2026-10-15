@@ -1,5 +1,6 @@
 import { BadRequestException, Controller, ForbiddenException, Get, Injectable, Query, UseGuards } from "@nestjs/common";
-import type { ClassLevelCategory } from "@prisma/client";
+import { StudentStatus, type ClassLevelCategory } from "@prisma/client";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { findGradeScaleMatch, formatPersonName, type GradeScaleRow } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -161,16 +162,23 @@ export class BroadsheetService {
     let termIds: string[];
     let academicSessionId: string;
     let periodLabel: string;
+    // Earliest endDate among the terms in scope — a student who has since
+    // left still appears if they completed at least one of them
+    // (studentInTermWhere), so a session broadsheet keeps someone who left
+    // after 2nd term, with their overall averaged over the terms they sat.
+    let earliestTermEnd: Date | null;
 
     if (params.termId) {
       const term = await this.prisma.term.findUniqueOrThrow({ where: { id: params.termId } });
       termIds = [term.id];
+      earliestTermEnd = term.endDate;
       academicSessionId = term.academicSessionId;
       periodLabel = term.name;
     } else {
       const session = await this.prisma.academicSession.findUniqueOrThrow({ where: { id: params.academicSessionId } });
       const terms = await this.prisma.term.findMany({ where: { academicSessionId: session.id } });
       termIds = terms.map((t) => t.id);
+      earliestTermEnd = terms.reduce<Date | null>((min, t) => (!min || t.endDate < min ? t.endDate : min), null);
       academicSessionId = session.id;
       periodLabel = `${session.name} — Overall`;
     }
@@ -248,7 +256,10 @@ export class BroadsheetService {
     if (subjectColumns.length === 0) return emptyResponse;
 
     const students = await this.prisma.studentProfile.findMany({
-      where: { currentClassId: { in: classArmIds } },
+      where: {
+        currentClassId: { in: classArmIds },
+        ...(earliestTermEnd ? studentInTermWhere(earliestTermEnd) : { status: StudentStatus.ACTIVE }),
+      },
       include: { user: { select: { firstName: true, lastName: true } } },
       orderBy: { admissionNumber: "asc" },
     });

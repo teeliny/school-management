@@ -100,7 +100,7 @@ export class OutstandingBalanceService {
         // "now > dueDate"), so this reuses that instead of re-deriving the
         // date comparison here.
         invoices: {
-          where: { status: "OVERDUE", ...(filters.termId ? { termId: filters.termId } : {}) },
+          where: { status: "OVERDUE", voidedAt: null, ...(filters.termId ? { termId: filters.termId } : {}) },
           include: { lineItems: true, payments: true },
         },
       },

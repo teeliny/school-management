@@ -22,8 +22,10 @@ import {
   ReportCommentType,
   TermReportCardStatus,
   TermReportCardType,
+  StudentStatus,
 } from "@prisma/client";
 import { formatPersonName, QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { hashToken } from "../common/crypto/token";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -234,7 +236,7 @@ export class TermReportCardService {
   async classReadiness(classArmId: string, termId: string): Promise<{ totalStudents: number; students: ClassReadinessEntry[] }> {
     const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
     const students = await this.prisma.studentProfile.findMany({
-      where: { currentClassId: classArmId },
+      where: { currentClassId: classArmId, ...studentInTermWhere(term.endDate) },
       include: { user: true },
     });
     const studentIds = students.map((s) => s.id);
@@ -384,9 +386,18 @@ export class TermReportCardService {
       }
     }
 
+    // Cards reached through the PARENT/STUDENT clauses (own wards / self)
+    // are exempt from the left-the-school filter below.
+    const ownStudentIds = new Set<string>();
+
     if (user.roles.includes("PARENT")) {
       const parentProfile = await this.prisma.parentProfile.findUnique({ where: { userId: user.id } });
       if (parentProfile) {
+        const wards = await this.prisma.studentGuardian.findMany({
+          where: { parentId: parentProfile.id },
+          select: { studentId: true },
+        });
+        for (const ward of wards) ownStudentIds.add(ward.studentId);
         orConditions.push({
           status: TermReportCardStatus.PUBLISHED,
           student: {
@@ -399,6 +410,7 @@ export class TermReportCardService {
 
     if (user.roles.includes("STUDENT")) {
       const studentProfile = await this.prisma.studentProfile.findUnique({ where: { userId: user.id } });
+      if (studentProfile) ownStudentIds.add(studentProfile.id);
       if (studentProfile && (!classArmId || studentProfile.currentClassId === classArmId)) {
         orConditions.push({ studentId: studentProfile.id, status: TermReportCardStatus.PUBLISHED });
       }
@@ -408,10 +420,25 @@ export class TermReportCardService {
 
     const cards = await this.prisma.termReportCard.findMany({
       where: { ...scalarFilters, OR: orConditions },
-      include: { student: { select: studentSelect } },
+      include: {
+        student: { select: { ...studentSelect, status: true, inactiveSince: true } },
+        term: { select: { endDate: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
-    return cards.map(withStudentClassArmDisplayName);
+    // Staff keep seeing a student who has since left for every term they
+    // completed (inactiveSince on/after that card's term endDate — same rule
+    // as studentInTermWhere, applied per card since each card has its own
+    // term), and lose them from the term they left in onwards. Done in
+    // memory because Prisma can't compare a column to a related row's.
+    return cards
+      .filter(
+        (card) =>
+          ownStudentIds.has(card.studentId) ||
+          card.student.status === StudentStatus.ACTIVE ||
+          (card.student.inactiveSince !== null && card.student.inactiveSince >= card.term.endDate),
+      )
+      .map(({ term: _term, ...card }) => withStudentClassArmDisplayName(card));
   }
 
   async remove(id: string) {
@@ -466,9 +493,11 @@ export class TermReportCardService {
     if (!filters.classArmId && !filters.academicSessionId) {
       throw new BadRequestException("classArmId or academicSessionId is required");
     }
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: filters.termId }, select: { endDate: true } });
+    const inTerm = studentInTermWhere(term.endDate);
     const studentWhere = filters.classArmId
-      ? { currentClassId: filters.classArmId }
-      : { currentClass: { academicSessionId: filters.academicSessionId } };
+      ? { currentClassId: filters.classArmId, ...inTerm }
+      : { currentClass: { academicSessionId: filters.academicSessionId }, ...inTerm };
     const [totalStudents, generatedStudents] = await Promise.all([
       this.prisma.studentProfile.count({ where: studentWhere }),
       this.prisma.termReportCard.findMany({

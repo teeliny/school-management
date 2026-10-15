@@ -100,7 +100,7 @@ describe("BroadsheetService.build", () => {
     expect(result.scope).toBe("CLASS_ARM");
     expect(result.classArmId).toBe("arm-diamond");
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { currentClassId: { in: ["arm-diamond"] } } }),
+      expect.objectContaining({ where: { currentClassId: { in: ["arm-diamond"] }, status: "ACTIVE" } }),
     );
   });
 

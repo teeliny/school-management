@@ -36,6 +36,9 @@ export class InvoiceOverdueSweepProcessor extends WorkerHost implements OnModule
       where: {
         status: { in: [InvoiceStatus.UNPAID, InvoiceStatus.PARTIAL] },
         dueDate: { lt: new Date() },
+        // A void invoice (student no longer ACTIVE) isn't owed — never
+        // flip it to OVERDUE or chase the parent about it.
+        voidedAt: null,
       },
       include: {
         lineItems: true,

@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ClassLevelCategory, EnrollmentStatus, TermReportCardStatus } from "@prisma/client";
 import { findGradeScaleMatch } from "@school/types";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { assignPositions } from "./position-ranking.util";
 
@@ -62,7 +63,9 @@ export class SubjectTermResultService {
     if (classArmIds.length === 0) return;
 
     const enrollments = await this.prisma.studentSubjectEnrollment.findMany({
-      where: { classArmId: { in: classArmIds }, termId, status: EnrollmentStatus.ACTIVE },
+      // Anyone who left before completing this term drops out of its
+      // results and positions; someone who left later still ranks here.
+      where: { classArmId: { in: classArmIds }, termId, status: EnrollmentStatus.ACTIVE, student: studentInTermWhere(term.endDate) },
       include: { subject: true },
     });
 

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, User as UserIcon, X } from "lucide-react";
 import { formatPersonName, type ClassLevelCategory } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
+import { cn } from "../../lib/cn";
 import type { CurrentUser } from "../../lib/use-current-user";
 import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Button } from "../atoms/button";
@@ -218,6 +219,10 @@ export function PeopleList({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [nameSort, setNameSort] = useState<"asc" | "desc">("asc");
+  // Graduated/withdrawn/suspended students are hidden from everyone but the
+  // Super-Admin (StudentService.findAllForUser ignores includeInactive for
+  // any other role), who sees them flagged at the bottom of the list.
+  const isSuperAdmin = user.roles.includes("SUPER_ADMIN");
 
   // Sequence-guarded: the class-arm default (above) fires a second, filtered
   // fetch shortly after the unfiltered one this effect kicks off on mount —
@@ -228,6 +233,7 @@ export function PeopleList({
   const load = useCallback(() => {
     const seq = ++loadSeq.current;
     const params = new URLSearchParams({ includeSubjects: "true" });
+    if (isSuperAdmin) params.set("includeInactive", "true");
     if (classLevelId) params.set("classLevelId", classLevelId);
     if (classArmId) params.set("classArmId", classArmId);
     apiFetch<StudentListItem[]>(`/students?${params}`, { auth: true })
@@ -237,7 +243,7 @@ export function PeopleList({
       .catch((err) => {
         if (seq === loadSeq.current) setError(err instanceof ApiError ? err.message : "Failed to load students");
       });
-  }, [classLevelId, classArmId]);
+  }, [classLevelId, classArmId, isSuperAdmin]);
 
   useEffect(() => {
     load();
@@ -255,6 +261,8 @@ export function PeopleList({
       return matchesTerm && matchesStatus;
     });
     return [...filtered].sort((a, b) => {
+      const inactiveCmp = Number(a.status !== "ACTIVE") - Number(b.status !== "ACTIVE");
+      if (inactiveCmp !== 0) return inactiveCmp;
       const cmp = formatPersonName(a.user).localeCompare(formatPersonName(b.user));
       return nameSort === "asc" ? cmp : -cmp;
     });
@@ -302,6 +310,7 @@ export function PeopleList({
             ))}
           </SelectContent>
         </Select>
+        {isSuperAdmin && (
         <Select value={statusFilter || "ALL"} onValueChange={(v) => setStatusFilter(v === "ALL" ? "" : v)}>
           <SelectTrigger className="sm:w-44" aria-label="Filter by status">
             <SelectValue placeholder="All statuses" />
@@ -314,6 +323,7 @@ export function PeopleList({
             <SelectItem value="SUSPENDED">Suspended</SelectItem>
           </SelectContent>
         </Select>
+        )}
       </div>
       {students.length === 0 ? (
         <p className="text-sm text-muted">
@@ -352,7 +362,13 @@ export function PeopleList({
               </tr>
             )}
             {filteredStudents?.map((student, index) => (
-              <tr key={student.id} className="border-b border-border/60 last:border-none even:bg-card-inset">
+              <tr
+                key={student.id}
+                className={cn(
+                  "border-b border-border/60 last:border-none even:bg-card-inset",
+                  student.status !== "ACTIVE" && "opacity-60",
+                )}
+              >
                 <td className="py-2.5 pr-4 text-muted">{index + 1}</td>
                 <td className="py-2.5 pr-4 font-mono text-muted">{student.admissionNumber}</td>
                 <td className="py-2.5 pr-4 font-medium">

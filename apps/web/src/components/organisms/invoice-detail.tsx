@@ -25,6 +25,8 @@ interface InvoiceDetailData {
   dueDate: string;
   totalAmount: number;
   outstandingBalance: number;
+  voidedAt: string | null;
+  voidReason: string | null;
   lineItems: InvoiceLineItem[];
   student: { admissionNumber: string; user: { firstName: string; lastName: string } };
   term: { name: string };
@@ -137,8 +139,19 @@ export function InvoiceDetail({
             {invoice.term.name} · due {invoice.dueDate.slice(0, 10)}
           </p>
         </div>
-        <Badge variant={STATUS_VARIANT[invoice.status]}>{invoice.status}</Badge>
+        {invoice.voidedAt ? (
+          <Badge variant="muted">VOID</Badge>
+        ) : (
+          <Badge variant={STATUS_VARIANT[invoice.status]}>{invoice.status}</Badge>
+        )}
       </div>
+
+      {invoice.voidedAt && (
+        <p className="rounded-md bg-card-inset px-3 py-2 text-[12px] text-muted">
+          This invoice is void ({invoice.voidReason ?? "student no longer active"}) — it isn&apos;t owed and doesn&apos;t
+          count toward outstanding fees.
+        </p>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-[12.5px]">

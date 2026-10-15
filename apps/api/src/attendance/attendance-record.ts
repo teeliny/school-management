@@ -7,8 +7,8 @@ import {
   AttendanceSessionKind,
   AttendanceSessionType,
   StaffStatus,
-  StudentStatus,
 } from "@prisma/client";
+import { studentActiveOnDateWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -95,7 +95,7 @@ export class AttendanceRecordService {
     }
 
     const student = await this.prisma.studentProfile.findFirst({
-      where: { id: personId, currentClassId: session.classArmId, status: StudentStatus.ACTIVE },
+      where: { id: personId, currentClassId: session.classArmId, ...studentActiveOnDateWhere(session.date) },
     });
     if (!student) {
       throw new BadRequestException("This student is not active in this class");

@@ -102,8 +102,9 @@ export class DashboardService {
       ? outstandingSchoolWide - (await this.sumOutstandingForTerm(previousTerm.id))
       : null;
 
+    // Void invoices (student no longer ACTIVE) are never pending revenue.
     const invoices = await this.prisma.invoice.findMany({
-      where: { termId },
+      where: { termId, voidedAt: null },
       include: {
         lineItems: true,
         payments: true,
@@ -111,7 +112,7 @@ export class DashboardService {
       },
     });
 
-    const statusGroups = await this.prisma.invoice.groupBy({ by: ["status"], where: { termId }, _count: true });
+    const statusGroups = await this.prisma.invoice.groupBy({ by: ["status"], where: { termId, voidedAt: null }, _count: true });
 
     const reconciliationStuckCount = await this.prisma.payment.count({
       where: {
@@ -135,7 +136,7 @@ export class DashboardService {
 
   private async sumOutstandingForTerm(termId: string): Promise<number> {
     const invoices = await this.prisma.invoice.findMany({
-      where: { termId },
+      where: { termId, voidedAt: null },
       select: { totalAmount: true, lineItems: { select: { amount: true, type: true } }, payments: { select: { amount: true, status: true } } },
     });
     return sumOutstandingBalances(invoices);

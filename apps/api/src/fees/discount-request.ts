@@ -54,6 +54,9 @@ export class DiscountRequestService {
       where: { id: dto.invoiceId },
       include: { lineItems: true, payments: true },
     });
+    if (invoice.voidedAt) {
+      throw new BadRequestException("This invoice is void — there's nothing to discount");
+    }
 
     const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
     const successfulPaymentAmounts = invoice.payments.filter((p) => p.status === "SUCCESSFUL").map((p) => Number(p.amount));
@@ -104,6 +107,7 @@ export class DiscountRequestService {
         where: {
           studentId,
           termId: feeStructure.termId,
+          voidedAt: null,
           lineItems: { some: { type: "FEE", feeStructureId: feeStructure.id } },
         },
         include: { lineItems: true },

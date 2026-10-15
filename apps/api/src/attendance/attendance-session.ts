@@ -13,7 +13,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { subject } from "@casl/ability";
-import { AssignmentType, AttendancePersonType, AttendanceSessionKind, AttendanceSessionType, StaffStatus, StudentStatus } from "@prisma/client";
+import { AssignmentType, AttendancePersonType, AttendanceSessionKind, AttendanceSessionType, StaffStatus } from "@prisma/client";
+import { studentActiveOnDateWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -235,7 +236,9 @@ export class AttendanceSessionService {
 
     if (dto.type === AttendanceSessionType.STUDENT) {
       const students = await this.prisma.studentProfile.findMany({
-        where: { id: { in: personIds }, currentClassId: dto.classArmId, status: StudentStatus.ACTIVE },
+        // Still here on the register's own date — a backdated register for
+        // a day before a student left can still include them.
+        where: { id: { in: personIds }, currentClassId: dto.classArmId, ...studentActiveOnDateWhere(dto.date) },
         select: { id: true },
       });
       this.assertAllFound(personIds, students, "These students are not active in this class");

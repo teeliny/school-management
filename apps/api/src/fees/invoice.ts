@@ -292,6 +292,7 @@ export class InvoiceService {
       totalAmount: Prisma.Decimal;
       lineItems: { amount: Prisma.Decimal; type: string }[];
       payments: { amount: Prisma.Decimal; status: string }[];
+      voidedAt: Date | null;
     },
   >(invoice: T) {
     // Only DISCOUNT-type lines feed the formula — totalAmount is already the
@@ -299,7 +300,11 @@ export class InvoiceService {
     // including them again here would double-count every fee.
     const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
     const successfulPaymentAmounts = invoice.payments.filter((p) => p.status === "SUCCESSFUL").map((p) => Number(p.amount));
-    const outstandingBalance = computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts);
+    // A void invoice owes nothing — reporting 0 keeps every consumer (pay
+    // buttons, balance totals) from treating it as money still due.
+    const outstandingBalance = invoice.voidedAt
+      ? 0
+      : computeOutstandingBalance(Number(invoice.totalAmount), discountAmounts, successfulPaymentAmounts);
     return { ...invoice, outstandingBalance };
   }
 }

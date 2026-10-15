@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Injectable, Post, Query, UseGuards } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
+import { Prisma, StudentStatus } from "@prisma/client";
 import { computeInvoiceStatus, computeOutstandingBalance } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -39,6 +39,9 @@ export class FeeStructureStudentAssignmentService {
       where: { id: dto.studentId },
       include: { currentClass: { select: { classLevelId: true } } },
     });
+    if (student.status !== StudentStatus.ACTIVE) {
+      throw new BadRequestException("Only an active student can be opted into a fee");
+    }
     const classApplies =
       feeStructure.classLevels.length === 0 ||
       feeStructure.classLevels.some((cl) => cl.classLevelId === student.currentClass?.classLevelId);

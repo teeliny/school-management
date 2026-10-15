@@ -75,7 +75,7 @@ export function SubjectCommentPanel({
     search,
     setSearch,
     loadMore,
-  } = usePaginatedStudents({ classArmId });
+  } = usePaginatedStudents({ classArmId, termId: termId || undefined });
 
   const selectedArm = classArmOptions.find((a) => a.id === classArmId) ?? null;
 

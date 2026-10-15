@@ -16,7 +16,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { memoryStorage } from "multer";
-import { AssignmentType, ClassLevelCategory, EnrollmentStatus, Prisma, Role } from "@prisma/client";
+import { AssignmentType, ClassLevelCategory, EnrollmentStatus, InvoiceStatus, Prisma, Role, StudentStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { JwtAuthGuard } from "../../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../../casl/policies.guard";
@@ -29,6 +29,7 @@ import { InvitationService } from "../invitations/invitation.service";
 import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
 import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
 import { activeAssignedClassArmIds, canAccessStudent, hasActiveSchoolWideAssignment } from "../../common/student-access";
+import { studentActiveOnDateWhere, studentInTermWhere } from "../../common/student-status-scope";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../../storage/storage-adapter";
 import { Audited } from "../../audit/audited.decorator";
 import { CreateStudentDto, GuardianInputDto } from "./dto/create-student.dto";
@@ -65,6 +66,13 @@ const STUDENT_LIST_INCLUDE_WITH_SUBJECTS = {
     orderBy: { subject: { name: "asc" } },
   },
 } satisfies Prisma.StudentProfileInclude;
+
+function parseAsOf(value: string | undefined): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new BadRequestException("asOf must be a valid date");
+  return date;
+}
 
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 const MAX_PHOTO_FILE_SIZE_BYTES = 5 * 1024 * 1024;
@@ -327,8 +335,20 @@ export class StudentService {
           bloodGroup: dto.bloodGroup,
           medicalNotes: dto.medicalNotes,
           status: dto.status,
+          // Stamped only on the ACTIVE → non-ACTIVE transition (moving
+          // between two non-ACTIVE statuses keeps the original date), and
+          // cleared on re-activation — see the schema comment.
+          ...(dto.status === StudentStatus.ACTIVE
+            ? { inactiveSince: null }
+            : dto.status !== undefined && existing.status === StudentStatus.ACTIVE
+              ? { inactiveSince: new Date() }
+              : {}),
         },
       });
+
+      if (dto.status !== undefined && dto.status !== existing.status) {
+        await this.syncInvoiceVoidOnStatusChange(tx, id, dto.status);
+      }
 
       if (dto.classArmId) {
         await this.enrollmentService.syncCompulsoryEnrollmentsOnClassAssignment(tx, {
@@ -353,6 +373,32 @@ export class StudentService {
         ...STUDENT_LIST_INCLUDE,
         guardians: { include: { parent: { include: { user: true } } } },
       },
+    });
+  }
+
+  /**
+   * A student leaving ACTIVE (graduated/withdrawn/suspended) voids every
+   * invoice of theirs not yet PAID, so none of it counts toward pending
+   * revenue; setting them back to ACTIVE restores those same invoices.
+   * PAID invoices are never touched — that money was really collected.
+   * Moving between two non-ACTIVE statuses only refreshes the reason text.
+   */
+  private async syncInvoiceVoidOnStatusChange(tx: Tx, studentId: string, status: StudentStatus): Promise<void> {
+    if (status === StudentStatus.ACTIVE) {
+      await tx.invoice.updateMany({
+        where: { studentId, voidedAt: { not: null } },
+        data: { voidedAt: null, voidReason: null },
+      });
+      return;
+    }
+    const voidReason = `Student ${status.toLowerCase()}`;
+    await tx.invoice.updateMany({
+      where: { studentId, voidedAt: { not: null } },
+      data: { voidReason },
+    });
+    await tx.invoice.updateMany({
+      where: { studentId, voidedAt: null, status: { not: InvoiceStatus.PAID } },
+      data: { voidedAt: new Date(), voidReason },
     });
   }
 
@@ -513,6 +559,8 @@ export class StudentService {
       skip?: number;
       take?: number;
       includeSubjects?: boolean;
+      includeInactive?: boolean;
+      asOf?: Date;
     } = {},
   ) {
     const scopeWhere = await this.scopeWhereForUser(user);
@@ -529,8 +577,27 @@ export class StudentService {
     // a caller-supplied classLevelId/classLevelCategory/classArmId silently
     // *replace* that restriction instead of narrowing within it as the
     // filters are documented to do above.
+    // Graduated/withdrawn/suspended students are hidden from the current
+    // roster — only the Super-Admin's own students list opts back in to see
+    // them (flagged, sorted to the bottom via `orderBy` below; ignored for
+    // any other role). A historical roster keeps them for the periods they
+    // were still here: `termId` (gradebook, skills, comments for a past
+    // term) keeps anyone who completed that term, `asOf` (an attendance
+    // register for a past day) anyone who left after that day.
+    const includeInactive = Boolean(filters.includeInactive) && user.roles.includes("SUPER_ADMIN");
+    let statusWhere: Prisma.StudentProfileWhereInput | null = { status: StudentStatus.ACTIVE };
+    if (includeInactive) {
+      statusWhere = null;
+    } else if (filters.termId) {
+      const term = await this.prisma.term.findUniqueOrThrow({ where: { id: filters.termId }, select: { endDate: true } });
+      statusWhere = studentInTermWhere(term.endDate);
+    } else if (filters.asOf) {
+      statusWhere = studentActiveOnDateWhere(filters.asOf);
+    }
+
     const conditions: Prisma.StudentProfileWhereInput[] = [
       scopeWhere,
+      ...(statusWhere ? [statusWhere] : []),
       ...(filters.classArmId ? [{ currentClassId: filters.classArmId }] : []),
       ...(Object.keys(currentClassWhere).length > 0 ? [{ currentClass: currentClassWhere }] : []),
       ...(filters.subjectId && filters.termId
@@ -563,12 +630,15 @@ export class StudentService {
       conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : { AND: conditions };
 
     const include = filters.includeSubjects ? STUDENT_LIST_INCLUDE_WITH_SUBJECTS : STUDENT_LIST_INCLUDE;
+    // StudentStatus is a Postgres enum, which sorts in declaration order —
+    // ACTIVE first, so non-active students land at the bottom.
+    const orderBy: Prisma.StudentProfileOrderByWithRelationInput[] = [{ status: "asc" }, { admissionNumber: "asc" }];
 
     if (filters.take === undefined) {
       return this.prisma.studentProfile.findMany({
         where,
         include,
-        orderBy: { admissionNumber: "asc" },
+        orderBy,
       });
     }
 
@@ -576,7 +646,7 @@ export class StudentService {
       this.prisma.studentProfile.findMany({
         where,
         include,
-        orderBy: { admissionNumber: "asc" },
+        orderBy,
         skip: filters.skip,
         take: filters.take,
       }),
@@ -675,6 +745,8 @@ export class StudentController {
     @Query("skip") skip?: string,
     @Query("take") take?: string,
     @Query("includeSubjects") includeSubjects?: string,
+    @Query("includeInactive") includeInactive?: string,
+    @Query("asOf") asOf?: string,
   ) {
     return this.service.findAllForUser(user, {
       classArmId,
@@ -686,6 +758,8 @@ export class StudentController {
       skip: skip === undefined ? undefined : Number(skip),
       take: take === undefined ? undefined : Number(take),
       includeSubjects: includeSubjects === "true",
+      includeInactive: includeInactive === "true",
+      asOf: parseAsOf(asOf),
     });
   }
 

@@ -104,7 +104,9 @@ export function AttendanceRollCall({
           ? (await apiFetch<StaffProfileItem[]>("/staff-profiles", { auth: true }))
               .filter((s) => s.status === "ACTIVE")
               .map((s) => ({ id: s.id, primaryLabel: formatPersonName(s.user), secondaryLabel: s.employeeId ?? "—" }))
-          : (await apiFetch<StudentListItem[]>(`/students?classArmId=${classArmId}`, { auth: true })).map((s) => ({
+          : // asOf: a backdated register still lists a student who has since
+            // left, as long as they were here on that date.
+            (await apiFetch<StudentListItem[]>(`/students?classArmId=${classArmId}&asOf=${date}`, { auth: true })).map((s) => ({
               id: s.id,
               primaryLabel: formatPersonName(s.user),
               secondaryLabel: s.admissionNumber,

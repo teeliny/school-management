@@ -7,9 +7,9 @@ import {
   AttendanceStatus,
   ClassLevelCategory,
   StaffStatus,
-  StudentStatus,
 } from "@prisma/client";
 import { CLASS_LEVEL_CATEGORIES, computeAttendancePercentage, computeSchoolDaysOpened } from "@school/types";
+import { studentActiveOnDateWhere, studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -66,7 +66,7 @@ export class AttendanceAnalyticsService {
     const opened = await this.schoolDaysOpened(term.startDate, term.endDate);
 
     const students = await this.prisma.studentProfile.findMany({
-      where: { currentClassId: classArmId, status: StudentStatus.ACTIVE },
+      where: { currentClassId: classArmId, ...studentInTermWhere(term.endDate) },
       select: { id: true, admissionNumber: true, user: { select: { firstName: true, lastName: true } } },
       orderBy: { user: { lastName: "asc" } },
     });
@@ -317,7 +317,7 @@ export class AttendanceAnalyticsService {
         name: true,
         classLevel: { select: { name: true, order: true } },
         students: {
-          where: { status: StudentStatus.ACTIVE },
+          where: studentActiveOnDateWhere(date),
           select: {
             id: true,
             admissionNumber: true,

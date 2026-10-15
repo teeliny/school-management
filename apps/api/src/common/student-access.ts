@@ -1,10 +1,11 @@
-import { AssignmentType, ClassLevelCategory } from "@prisma/client";
+import { AssignmentType, ClassLevelCategory, StudentStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { resolvePrincipalHeadteacherCategories } from "./class-level-category-scope";
 
 export interface StudentAccessSubject {
   userId: string | null;
+  status: StudentStatus;
   currentClassId: string | null;
   currentClass: { classLevel: { category: ClassLevelCategory } } | null;
   guardians: { parentId: string }[];
@@ -23,9 +24,16 @@ export async function canAccessStudent(
   student: StudentAccessSubject,
   user: RequestUser,
 ): Promise<boolean> {
-  if (user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN")) return true;
+  if (user.roles.includes("SUPER_ADMIN")) return true;
 
-  if (user.roles.includes("STAFF")) {
+  // A graduated/withdrawn/suspended student is off every staff roster —
+  // only the Super-Admin (above), their own guardians and the student
+  // themselves (below) can still open them.
+  const isActive = student.status === StudentStatus.ACTIVE;
+
+  if (isActive && user.roles.includes("ADMIN")) return true;
+
+  if (isActive && user.roles.includes("STAFF")) {
     if (await hasActiveSchoolWideAssignment(prisma, user.id)) return true;
 
     const categories = resolvePrincipalHeadteacherCategories(user);

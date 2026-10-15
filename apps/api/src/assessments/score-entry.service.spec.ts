@@ -295,13 +295,20 @@ describe("ScoreEntryService.summary", () => {
     prisma.scoreEntry.count = jest.fn().mockResolvedValue(12);
     prisma.assessmentComponent.findUniqueOrThrow.mockResolvedValue({ id: "comp-1", termId: "term-1" });
     prisma.subject.findUniqueOrThrow.mockResolvedValue({ id: "subj-1", parentSubjectId: "group-1" });
+    prisma.term = { findUniqueOrThrow: jest.fn().mockResolvedValue({ endDate: new Date("2026-12-18") }) };
     prisma.studentSubjectEnrollment.findMany.mockResolvedValue(Array.from({ length: 18 }, (_, i) => ({ studentId: `s-${i}` })));
     const service = new ScoreEntryService(prisma as never, {} as never, {} as never, {} as never);
 
     const result = await service.summary({ classArmId: "arm-1", subjectId: "subj-1", assessmentComponentId: "comp-1" });
 
     expect(prisma.studentSubjectEnrollment.findMany).toHaveBeenCalledWith({
-      where: { classArmId: "arm-1", subjectId: { in: ["subj-1", "group-1"] }, termId: "term-1", status: "ACTIVE" },
+      where: {
+        classArmId: "arm-1",
+        subjectId: { in: ["subj-1", "group-1"] },
+        termId: "term-1",
+        status: "ACTIVE",
+        student: { OR: [{ status: "ACTIVE" }, { inactiveSince: { gte: new Date("2026-12-18") } }] },
+      },
       select: { studentId: true },
       distinct: ["studentId"],
     });

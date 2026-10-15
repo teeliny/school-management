@@ -19,6 +19,7 @@ import {
   QUEUE_NAMES,
   type ReportCardGenerationJob,
 } from "@school/types";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
 import { SubjectTermResultService } from "../subject-term-result/subject-term-result.service";
@@ -292,7 +293,13 @@ export class ReportCardProcessor extends WorkerHost {
     const classmateResults =
       reportableResults.length > 0
         ? await this.prisma.subjectTermResult.findMany({
-            where: { termId, OR: reportableResults.map((r) => ({ subjectId: r.subjectId, classArmId: r.classArmId })) },
+            where: {
+              termId,
+              // Classmates who left before completing this term are out of
+              // the low/high, same population as the positions.
+              student: studentInTermWhere(term.endDate),
+              OR: reportableResults.map((r) => ({ subjectId: r.subjectId, classArmId: r.classArmId })),
+            },
             select: { subjectId: true, classArmId: true, totalScore: true },
           })
         : [];

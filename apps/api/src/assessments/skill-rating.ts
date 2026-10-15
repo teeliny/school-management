@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Post, Query, UseGuards } from "@nestjs/common";
 import { AssignmentType, ClassLevelCategory, ReportWindowStatus, SkillGroupValueType } from "@prisma/client";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -136,8 +137,11 @@ export class SkillRatingService {
       },
     };
 
+    // Roster for *that* term — see ReportCommentService.progress.
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: filters.termId }, select: { endDate: true } });
+    const inTerm = studentInTermWhere(term.endDate);
     const [totalStudents, activeItemCount, ratingCounts] = await Promise.all([
-      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId, ...inTerm } }),
       this.prisma.skillAssessmentItem.count({
         where: { academicSessionId: filters.academicSessionId, isActive: true, ...applicableToCategory },
       }),
@@ -145,7 +149,7 @@ export class SkillRatingService {
         by: ["studentId"],
         where: {
           termId: filters.termId,
-          student: { currentClassId: filters.classArmId },
+          student: { currentClassId: filters.classArmId, ...inTerm },
           skillAssessmentItem: { academicSessionId: filters.academicSessionId, isActive: true, ...applicableToCategory },
         },
         _count: { _all: true },

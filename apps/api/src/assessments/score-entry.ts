@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AssessmentComponentStatus, AssignmentType, EnrollmentStatus } from "@prisma/client";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -182,6 +183,10 @@ export class ScoreEntryService {
       where: { id: filters.assessmentComponentId },
     });
     const subject = await this.prisma.subject.findUniqueOrThrow({ where: { id: filters.subjectId } });
+    // Roster for the component's own term — someone who left after
+    // completing it still counts (studentInTermWhere).
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: component.termId }, select: { endDate: true } });
+    const inTerm = studentInTermWhere(term.endDate);
     const [enrolled, enteredCount] = await Promise.all([
       this.prisma.studentSubjectEnrollment.findMany({
         where: {
@@ -189,11 +194,12 @@ export class ScoreEntryService {
           subjectId: { in: coveringEnrollmentSubjectIds(subject) },
           termId: component.termId,
           status: EnrollmentStatus.ACTIVE,
+          student: inTerm,
         },
         select: { studentId: true },
         distinct: ["studentId"],
       }),
-      this.prisma.scoreEntry.count({ where: filters }),
+      this.prisma.scoreEntry.count({ where: { ...filters, student: inTerm } }),
     ]);
     return { totalStudents: enrolled.length, enteredCount };
   }

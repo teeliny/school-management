@@ -209,7 +209,7 @@ describe("PaymentService.recordCash (CASH now requires Super-Admin approval, sam
       /unsettled invoice from an earlier term/,
     );
     expect(prisma.invoice.findMany).toHaveBeenCalledWith({
-      where: { studentId: "student-1", term: { startDate: { lt: CURRENT_TERM_START_DATE } } },
+      where: { studentId: "student-1", voidedAt: null, term: { startDate: { lt: CURRENT_TERM_START_DATE } } },
       include: { lineItems: true, payments: true },
     });
     expect(prisma.payment.create).not.toHaveBeenCalled();

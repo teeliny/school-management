@@ -98,7 +98,7 @@ export function ClassTeacherSkillsPanel({
     search,
     setSearch,
     loadMore,
-  } = usePaginatedStudents({ classArmId });
+  } = usePaginatedStudents({ classArmId, termId: termId || undefined });
 
   const selectedArm = classArmOptions.find((a) => a.id === classArmId) ?? null;
   const selectedTerm = terms.find((t) => t.id === termId) ?? null;

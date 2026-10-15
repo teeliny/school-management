@@ -12,7 +12,7 @@ const OPTIONAL_FEE_STRUCTURE = {
   classLevels: [],
 };
 
-const STUDENT = { id: "student-1", currentClass: { classLevelId: "level-1" } };
+const STUDENT = { id: "student-1", status: "ACTIVE", currentClass: { classLevelId: "level-1" } };
 
 const REGULAR_INVOICE = { id: "regular-invoice-1", dueDate: new Date("2026-09-30") };
 

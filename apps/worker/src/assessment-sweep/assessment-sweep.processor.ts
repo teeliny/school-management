@@ -11,6 +11,7 @@ import {
   TermReportCardType,
 } from "@prisma/client";
 import { QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { SubjectTermResultService } from "../subject-term-result/subject-term-result.service";
 import { computeReportWindowTransitions, computeSweepTransitions } from "./assessment-sweep.util";
@@ -141,7 +142,12 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
     });
 
     const enrollments = await this.prisma.studentSubjectEnrollment.findMany({
-      where: { classArmId: { in: classArms.map((a) => a.id) }, termId, status: EnrollmentStatus.ACTIVE },
+      where: {
+        classArmId: { in: classArms.map((a) => a.id) },
+        termId,
+        status: EnrollmentStatus.ACTIVE,
+        student: studentInTermWhere(term.endDate),
+      },
       select: { studentId: true },
       distinct: ["studentId"],
     });

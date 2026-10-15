@@ -247,7 +247,7 @@ describe("StudentSubjectEnrollmentService.syncEnrollmentsForClassSubject", () =>
 
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { currentClass: { classLevel: { category: ClassLevelCategory.JSS } } },
+        where: { status: "ACTIVE", currentClass: { classLevel: { category: ClassLevelCategory.JSS } } },
       }),
     );
     expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledWith(
@@ -445,6 +445,7 @@ describe("StudentSubjectEnrollmentService.findForStudentAsUser", () => {
 
   const STUDENT_IN_JSS = {
     userId: "student-user-1",
+    status: "ACTIVE",
     currentClassId: "arm-1",
     currentClass: { classLevel: { category: ClassLevelCategory.JSS } },
     guardians: [],

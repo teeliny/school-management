@@ -432,6 +432,14 @@ model StudentProfile {
   bloodGroup      String?
   medicalNotes    String?
   status          StudentStatus @default(ACTIVE)
+  // When the student last left ACTIVE (StudentService.update); null while
+  // ACTIVE. Drives "which terms does a non-active student still belong
+  // to": they stay on a term's rosters/broadsheet/progress counts if they
+  // left on or after that term's endDate, and on a given day's attendance
+  // register if they left after that day (common/student-status-scope.ts).
+  // Cleared on re-activation, so a student who left and came back counts
+  // as present for the gap too — there's no fuller status history.
+  inactiveSince   DateTime?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
@@ -1970,6 +1978,16 @@ model Invoice {
   // the webhook handler resolves an Invoice directly by this value (the
   // gateway echoes it back in every webhook/verify call).
   gatewayPaymentReference String?        @unique
+  // Set when the student leaves ACTIVE (GRADUATED/WITHDRAWN/SUSPENDED) on
+  // every invoice of theirs not yet PAID (StudentService.update), and
+  // cleared again if they're set back to ACTIVE. A void invoice never counts
+  // toward any outstanding/pending-revenue figure and can't take new
+  // payments, discounts or opt-in line items. Kept separate from `status`
+  // (rather than a VOID enum value) because `status` is recomputed from
+  // payments on every write, which would silently un-void it. Payments
+  // already received against a void PARTIAL invoice stay as real revenue.
+  voidedAt                DateTime?
+  voidReason              String?
 
   lineItems               InvoiceLineItem[]
   payments                Payment[]

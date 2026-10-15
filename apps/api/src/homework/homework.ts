@@ -30,6 +30,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { formatPersonName } from "@school/types";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -326,6 +327,9 @@ export class HomeworkService {
       where: { id: homework.subjectId },
       select: { id: true, parentSubjectId: true },
     });
+    // A student who has since left stays on a past term's homework (their
+    // marks/submissions remain visible) but drops off the current one.
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: homework.termId }, select: { endDate: true } });
     return this.prisma.studentSubjectEnrollment.findMany({
       // distinct: a student enrolled in both the group and the child appears once.
       distinct: ["studentId"],
@@ -334,6 +338,7 @@ export class HomeworkService {
         classArmId: homework.classArmId,
         termId: homework.termId,
         status: EnrollmentStatus.ACTIVE,
+        student: studentInTermWhere(term.endDate),
         ...(studentIds ? { studentId: { in: studentIds } } : {}),
       },
       select: {

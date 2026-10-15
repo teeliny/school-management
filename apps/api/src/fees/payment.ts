@@ -120,6 +120,16 @@ export class PaymentService {
     return { sequenceNumber, serialNumber };
   }
 
+  // New payments are refused against a void invoice (InvoiceService's
+  // voidedAt — set when the student left ACTIVE). Anything already in
+  // flight when it was voided (PENDING_APPROVAL, PENDING gateway) still
+  // resolves normally, since that money may really have changed hands.
+  private assertNotVoid(invoice: { voidedAt: Date | null; voidReason: string | null }): void {
+    if (invoice.voidedAt) {
+      throw new BadRequestException(`This invoice is void (${invoice.voidReason ?? "student no longer active"}) and can't take new payments`);
+    }
+  }
+
   /**
    * A student must clear every earlier term's invoice before a payment can
    * be started against a later one — "earlier" is derived from Term.startDate
@@ -131,7 +141,9 @@ export class PaymentService {
    */
   private async assertNoEarlierUnsettledInvoice(studentId: string, termStartDate: Date): Promise<void> {
     const earlierInvoices = await this.prisma.invoice.findMany({
-      where: { studentId, term: { startDate: { lt: termStartDate } } },
+      // A void invoice (student left ACTIVE, later re-activated or not) is
+      // not owed, so it can never block a later term's payment.
+      where: { studentId, voidedAt: null, term: { startDate: { lt: termStartDate } } },
       include: { lineItems: true, payments: true },
     });
 
@@ -168,6 +180,7 @@ export class PaymentService {
       where: { id: dto.invoiceId },
       include: { lineItems: true, payments: true, term: true },
     });
+    this.assertNotVoid(invoice);
     await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
     const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));
@@ -207,6 +220,7 @@ export class PaymentService {
       where: { id: dto.invoiceId },
       include: { lineItems: true, payments: true, term: true, student: { include: { guardians: true } } },
     });
+    this.assertNotVoid(invoice);
     await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
     if (!ability.can("manage", "Invoice")) {
@@ -378,6 +392,7 @@ export class PaymentService {
       where: { id: dto.invoiceId },
       include: { lineItems: true, payments: true, term: true },
     });
+    this.assertNotVoid(invoice);
     await this.assertNoEarlierUnsettledInvoice(invoice.studentId, invoice.term.startDate);
 
     const discountAmounts = invoice.lineItems.filter((li) => li.type === "DISCOUNT").map((li) => Number(li.amount));

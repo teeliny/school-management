@@ -14,7 +14,7 @@ import {
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
-import { ClassLevelCategory, ClassSubject, EnrollmentStatus, Prisma, SubjectType } from "@prisma/client";
+import { ClassLevelCategory, ClassSubject, EnrollmentStatus, Prisma, SubjectType, StudentStatus } from "@prisma/client";
 import { QUEUE_NAMES, type SubjectTermResultRecomputeJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -207,7 +207,7 @@ export class StudentSubjectEnrollmentService {
     if (this.resolveEffectiveType(classSubject) !== SubjectType.COMPULSORY) return;
 
     const students = await this.prisma.studentProfile.findMany({
-      where: { currentClass: { classLevel: { category: classSubject.classLevelCategory } } },
+      where: { status: StudentStatus.ACTIVE, currentClass: { classLevel: { category: classSubject.classLevelCategory } } },
       include: { currentClass: true },
     });
 
@@ -428,6 +428,7 @@ export class StudentSubjectEnrollmentService {
       where: { id: studentId },
       select: {
         userId: true,
+        status: true,
         currentClassId: true,
         currentClass: { select: { classLevel: { select: { category: true } } } },
         guardians: { select: { parentId: true } },

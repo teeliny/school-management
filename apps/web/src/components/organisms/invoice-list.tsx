@@ -35,6 +35,7 @@ interface InvoiceListItem {
   status: InvoiceStatus;
   dueDate: string;
   outstandingBalance: number;
+  voidedAt: string | null;
   term: { id: string; name: string };
   student: { admissionNumber: string; user: { firstName: string; lastName: string } };
 }
@@ -296,7 +297,11 @@ export function InvoiceList({
                 <td className="py-2.5 pr-4 font-mono text-muted">{invoice.dueDate.slice(0, 10)}</td>
                 <td className="py-2.5 pr-4 font-mono">{formatCurrency(invoice.outstandingBalance)}</td>
                 <td className="py-2.5">
-                  <Badge variant={STATUS_VARIANT[invoice.status]}>{invoice.status}</Badge>
+                  {invoice.voidedAt ? (
+                    <Badge variant="muted">VOID</Badge>
+                  ) : (
+                    <Badge variant={STATUS_VARIANT[invoice.status]}>{invoice.status}</Badge>
+                  )}
                 </td>
               </tr>
             ))}

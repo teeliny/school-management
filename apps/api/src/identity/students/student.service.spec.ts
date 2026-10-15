@@ -170,7 +170,7 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
       }),
     );
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
-      expect.not.objectContaining({ where: expect.anything() }),
+      expect.objectContaining({ where: { status: "ACTIVE" } }),
     );
     expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
   });
@@ -181,7 +181,9 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     await service.findAllForUser(staffUser(["PRINCIPAL"]));
 
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { currentClass: { classLevel: { category: { in: ["JSS", "SSS"] } } } } }),
+      expect.objectContaining({
+        where: { AND: [{ currentClass: { classLevel: { category: { in: ["JSS", "SSS"] } } } }, { status: "ACTIVE" }] },
+      }),
     );
     expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
   });
@@ -193,7 +195,12 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
 
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { currentClass: { classLevel: { category: { in: ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"] } } } },
+        where: {
+          AND: [
+            { currentClass: { classLevel: { category: { in: ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"] } } } },
+            { status: "ACTIVE" },
+          ],
+        },
       }),
     );
     expect(prisma.staffAssignment.findMany).not.toHaveBeenCalled();
@@ -211,6 +218,7 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
         where: {
           AND: [
             { currentClass: { classLevel: { category: { in: ["JSS", "SSS"] } } } },
+            { status: "ACTIVE" },
             { currentClass: { classLevelId: "level-jss2" } },
           ],
         },
@@ -218,13 +226,33 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     );
   });
 
-  it("narrows Admin's unscoped list by classLevelId without wrapping in AND (single condition stays unwrapped)", async () => {
+  it("narrows Admin's unscoped (active-only) list by classLevelId", async () => {
     const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
 
     await service.findAllForUser(adminUser, { classLevelId: "level-jss2" });
 
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { currentClass: { classLevelId: "level-jss2" } } }),
+      expect.objectContaining({ where: { AND: [{ status: "ACTIVE" }, { currentClass: { classLevelId: "level-jss2" } }] } }),
+    );
+  });
+
+  it("lets only the Super-Admin opt in to non-active students, sorted after active ones", async () => {
+    const superAdmin: RequestUser = { id: "sa-1", roles: ["SUPER_ADMIN"], assignmentTypes: [] };
+
+    await service.findAllForUser(superAdmin, { includeInactive: true });
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: undefined, orderBy: [{ status: "asc" }, { admissionNumber: "asc" }] }),
+    );
+  });
+
+  it("ignores includeInactive for anyone but the Super-Admin", async () => {
+    const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+    await service.findAllForUser(adminUser, { includeInactive: true });
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { status: "ACTIVE" } }),
     );
   });
 
@@ -235,7 +263,7 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     await service.findAllForUser(staffUser());
 
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { currentClassId: { in: ["arm-1"] } } }),
+      expect.objectContaining({ where: { AND: [{ currentClassId: { in: ["arm-1"] } }, { status: "ACTIVE" }] } }),
     );
   });
 
@@ -252,14 +280,23 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
   it("narrows to actively-enrolled students when subjectId and termId are both supplied (gradebook roster)", async () => {
     const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
 
+    prisma.term = { findUniqueOrThrow: jest.fn().mockResolvedValue({ endDate: new Date("2026-12-18") }) };
+
     await service.findAllForUser(adminUser, { subjectId: "subj-1", termId: "term-1" });
 
+    // termId also makes this that term's roster — a student who left on or
+    // after its endDate (completed it) still appears.
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          subjectEnrollments: {
-            some: { subjectId: "subj-1", termId: "term-1", status: "ACTIVE" },
-          },
+          AND: [
+            { OR: [{ status: "ACTIVE" }, { inactiveSince: { gte: new Date("2026-12-18") } }] },
+            {
+              subjectEnrollments: {
+                some: { subjectId: "subj-1", termId: "term-1", status: "ACTIVE" },
+              },
+            },
+          ],
         },
       }),
     );
@@ -271,7 +308,41 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     await service.findAllForUser(adminUser, { subjectId: "subj-1" });
 
     expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
-      expect.not.objectContaining({ where: expect.anything() }),
+      expect.objectContaining({ where: { status: "ACTIVE" } }),
     );
+  });
+});
+
+describe("StudentService — invoice void on status change", () => {
+  function build() {
+    const tx = { invoice: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) } };
+    const service = new StudentService({} as never, {} as never, {} as never, {} as never, {} as never);
+    const sync = (status: string) =>
+      (service as unknown as { syncInvoiceVoidOnStatusChange: (t: unknown, id: string, s: string) => Promise<void> })
+        .syncInvoiceVoidOnStatusChange(tx, "student-1", status);
+    return { tx, sync };
+  }
+
+  it("voids every not-yet-PAID invoice when a student leaves ACTIVE, leaving PAID ones alone", async () => {
+    const { tx, sync } = build();
+
+    await sync("WITHDRAWN");
+
+    expect(tx.invoice.updateMany).toHaveBeenCalledWith({
+      where: { studentId: "student-1", voidedAt: null, status: { not: "PAID" } },
+      data: { voidedAt: expect.any(Date), voidReason: "Student withdrawn" },
+    });
+  });
+
+  it("restores the student's void invoices when they're set back to ACTIVE", async () => {
+    const { tx, sync } = build();
+
+    await sync("ACTIVE");
+
+    expect(tx.invoice.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.invoice.updateMany).toHaveBeenCalledWith({
+      where: { studentId: "student-1", voidedAt: { not: null } },
+      data: { voidedAt: null, voidReason: null },
+    });
   });
 });

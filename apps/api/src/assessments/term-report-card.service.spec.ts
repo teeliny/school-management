@@ -389,6 +389,27 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
     );
   });
 
+  it("keeps a since-departed student's cards for the terms they completed, but not the term they left in", async () => {
+    const user: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["CLASS_TEACHER"] };
+    staffAssignments.activeAssignedClassArmIds.mockResolvedValue(["arm-1"]);
+    const leftOn = new Date("2027-04-20"); // after 2nd term ends, before 3rd term ends
+    const card = (id: string, termEnd: string) => ({
+      id,
+      studentId: "student-gone",
+      term: { endDate: new Date(termEnd) },
+      student: { status: "WITHDRAWN", inactiveSince: leftOn, currentClass: null },
+    });
+    prisma.termReportCard.findMany.mockResolvedValue([
+      card("card-t1", "2026-12-18"),
+      card("card-t2", "2027-04-16"),
+      card("card-t3", "2027-07-30"),
+    ]);
+
+    const result = await service.findForUser(user, {});
+
+    expect(result.map((c) => c.id)).toEqual(["card-t1", "card-t2"]);
+  });
+
   it("scopes STAFF (class/subject teacher) to their assigned class arms, any status", async () => {
     const user: RequestUser = { id: "user-1", roles: ["STAFF"], assignmentTypes: ["CLASS_TEACHER"] };
     staffAssignments.activeAssignedClassArmIds.mockResolvedValue(["arm-1", "arm-2"]);

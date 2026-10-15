@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Post, Query, UseGuards } from "@nestjs/common";
 import { AssessmentComponentStatus, AssignmentType, ReportCommentType, ReportWindowStatus } from "@prisma/client";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -200,14 +201,18 @@ export class ReportCommentService {
     commentType: ReportCommentType;
     subjectId?: string;
   }) {
+    // Roster for *that* term — someone who left after completing it still
+    // counts (studentInTermWhere), so a past term's progress doesn't shift.
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: filters.termId }, select: { endDate: true } });
+    const inTerm = studentInTermWhere(term.endDate);
     const [totalStudents, completedCount] = await Promise.all([
-      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId } }),
+      this.prisma.studentProfile.count({ where: { currentClassId: filters.classArmId, ...inTerm } }),
       this.prisma.reportComment.count({
         where: {
           termId: filters.termId,
           commentType: filters.commentType,
           subjectId: filters.subjectId ?? null,
-          student: { currentClassId: filters.classArmId },
+          student: { currentClassId: filters.classArmId, ...inTerm },
         },
       }),
     ]);

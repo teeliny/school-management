@@ -28,7 +28,9 @@ const PAGE_SIZE = 25;
  * roster to students with an ACTIVE StudentSubjectEnrollment for that
  * subject/term — the gradebook passes both so an elective (GENERAL/
  * DEPARTMENT) subject only lists students who actually opted in, not the
- * whole class arm.
+ * whole class arm. `termId` on its own also makes it that term's roster: a
+ * student who has since left (graduated/withdrawn/suspended) still appears
+ * for a term they completed, and drops off from the term they left in.
  * `search` is debounced 300ms before it triggers a request; changing the
  * scope or the debounced search resets to the first page.
  */
