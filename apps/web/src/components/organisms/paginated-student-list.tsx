@@ -1,7 +1,7 @@
 "use client";
 
 import { Search } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Input } from "../atoms/input";
 import { useInfiniteScroll } from "../../lib/use-infinite-scroll";
 
@@ -40,7 +40,19 @@ export function PaginatedStudentList({
   emptyMessage?: string;
   className?: string;
 }) {
-  const sentinelRef = useInfiniteScroll({ onLoadMore, hasMore, loading });
+  // Observe against the list's own scroll container when it has one (the
+  // gradebook's default `max-h-[420px] overflow-auto`) — with `root: null`
+  // the sentinel sits clipped inside a nested scroller, which mobile
+  // browsers don't reliably report as intersecting, so scrolling to the
+  // bottom never loaded the next page. Same fix as invoice-list.tsx (state
+  // via callback ref so `root` isn't one render stale). Callers that
+  // override `className` to `max-h-none` (Skills & Comments panels) scroll
+  // with the page, so they keep the viewport root — using the
+  // non-scrolling container there would make the sentinel always visible.
+  const [container, setContainer] = useState<HTMLDivElement | null>(null);
+  const scrollRoot =
+    container && /(auto|scroll)/.test(getComputedStyle(container).overflowY) ? container : null;
+  const sentinelRef = useInfiniteScroll({ onLoadMore, hasMore, loading, root: scrollRoot });
 
   return (
     <div className="space-y-2.5">
@@ -59,7 +71,7 @@ export function PaginatedStudentList({
       {!error && studentCount === 0 && !loading && <p className="text-sm text-muted">{emptyMessage}</p>}
 
       {studentCount > 0 && (
-        <div className={className}>
+        <div ref={setContainer} className={className}>
           {children}
           <div ref={sentinelRef} />
           {loading && <p className="py-2 text-center text-[11.5px] text-muted">Loading…</p>}
