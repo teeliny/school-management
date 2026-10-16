@@ -281,6 +281,7 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
     const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
 
     prisma.term = { findUniqueOrThrow: jest.fn().mockResolvedValue({ endDate: new Date("2026-12-18") }) };
+    prisma.subject = { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "subj-1", parentSubjectId: null }) };
 
     await service.findAllForUser(adminUser, { subjectId: "subj-1", termId: "term-1" });
 
@@ -293,7 +294,31 @@ describe("StudentService.findAllForUser — STAFF row-level scoping", () => {
             { OR: [{ status: "ACTIVE" }, { inactiveSince: { gte: new Date("2026-12-18") } }] },
             {
               subjectEnrollments: {
-                some: { subjectId: "subj-1", termId: "term-1", status: "ACTIVE" },
+                some: { subjectId: { in: ["subj-1"] }, termId: "term-1", status: "ACTIVE" },
+              },
+            },
+          ],
+        },
+      }),
+    );
+  });
+
+  it("matches the group parent's enrollment for a child subject (students are enrolled in the group, not each child)", async () => {
+    const adminUser: RequestUser = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+    prisma.term = { findUniqueOrThrow: jest.fn().mockResolvedValue({ endDate: new Date("2026-12-18") }) };
+    prisma.subject = { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "child-1", parentSubjectId: "group-1" }) };
+
+    await service.findAllForUser(adminUser, { subjectId: "child-1", termId: "term-1" });
+
+    expect(prisma.studentProfile.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          AND: [
+            { OR: [{ status: "ACTIVE" }, { inactiveSince: { gte: new Date("2026-12-18") } }] },
+            {
+              subjectEnrollments: {
+                some: { subjectId: { in: ["child-1", "group-1"] }, termId: "term-1", status: "ACTIVE" },
               },
             },
           ],

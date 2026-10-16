@@ -26,7 +26,7 @@ import { CurrentUser } from "../../auth/current-user.decorator";
 import type { RequestUser } from "../../auth/jwt.strategy";
 import { UserService } from "../users/user.service";
 import { InvitationService } from "../invitations/invitation.service";
-import { StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
+import { coveringEnrollmentSubjectIds, StudentSubjectEnrollmentService } from "../../subjects/student-subject-enrollment";
 import { resolvePrincipalHeadteacherCategories } from "../../common/class-level-category-scope";
 import { activeAssignedClassArmIds, canAccessStudent, hasActiveSchoolWideAssignment } from "../../common/student-access";
 import { studentActiveOnDateWhere, studentInTermWhere } from "../../common/student-status-scope";
@@ -595,16 +595,30 @@ export class StudentService {
       statusWhere = studentActiveOnDateWhere(filters.asOf);
     }
 
+    // A child of a group subject (e.g. Basic Science under Basic Science and
+    // Technology) has no enrollments of its own — students are enrolled in
+    // the group — so match the parent's enrollment too, same as
+    // ScoreEntryService.summary does.
+    const enrollmentSubjectIds =
+      filters.subjectId && filters.termId
+        ? coveringEnrollmentSubjectIds(
+            await this.prisma.subject.findUniqueOrThrow({
+              where: { id: filters.subjectId },
+              select: { id: true, parentSubjectId: true },
+            }),
+          )
+        : null;
+
     const conditions: Prisma.StudentProfileWhereInput[] = [
       scopeWhere,
       ...(statusWhere ? [statusWhere] : []),
       ...(filters.classArmId ? [{ currentClassId: filters.classArmId }] : []),
       ...(Object.keys(currentClassWhere).length > 0 ? [{ currentClass: currentClassWhere }] : []),
-      ...(filters.subjectId && filters.termId
+      ...(enrollmentSubjectIds
         ? [
             {
               subjectEnrollments: {
-                some: { subjectId: filters.subjectId, termId: filters.termId, status: EnrollmentStatus.ACTIVE },
+                some: { subjectId: { in: enrollmentSubjectIds }, termId: filters.termId, status: EnrollmentStatus.ACTIVE },
               },
             },
           ]
