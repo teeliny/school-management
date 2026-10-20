@@ -84,6 +84,7 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
               <StatCard
                 label="Outstanding balance"
                 value={formatCurrency(finance.outstandingSchoolWide)}
+                concealed
                 trend={
                   finance.outstandingTrendVsLastTerm === null
                     ? undefined

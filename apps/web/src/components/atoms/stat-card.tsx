@@ -1,4 +1,7 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { cn } from "../../lib/cn";
 
 export interface StatCardTrend {
@@ -20,6 +23,10 @@ const toneClass = {
  * balance, etc.). `tone` carries alert coloring for exception-style stats
  * (e.g. a gateway-reconciliation count > 0); `onClick` backs the "links to
  * list on click" behavior Super-Admin's payment reconciliation queue needs.
+ * `concealed` masks the value (and trend, which leaks the amount too) until
+ * the viewer clicks the eye toggle — for sensitive money figures like the
+ * school-wide outstanding fees, so they aren't on screen by default. Don't
+ * combine it with `onClick` (the toggle is itself a button).
  */
 export function StatCard({
   label,
@@ -28,6 +35,7 @@ export function StatCard({
   trend,
   tone = "default",
   onClick,
+  concealed = false,
   className,
 }: {
   label: string;
@@ -36,8 +44,11 @@ export function StatCard({
   trend?: StatCardTrend;
   tone?: "default" | "danger" | "warning";
   onClick?: () => void;
+  concealed?: boolean;
   className?: string;
 }) {
+  const [revealed, setRevealed] = useState(false);
+  const masked = concealed && !revealed;
   const Comp = onClick ? "button" : "div";
   return (
     <Comp
@@ -51,8 +62,19 @@ export function StatCard({
     >
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
       <div className="mt-1 flex items-baseline gap-2">
-        <span className="font-display text-[26px] font-semibold leading-none">{value}</span>
-        {trend && (
+        <span className="font-display text-[26px] font-semibold leading-none">{masked ? "••••••••" : value}</span>
+        {concealed && (
+          <button
+            type="button"
+            onClick={() => setRevealed((r) => !r)}
+            aria-label={revealed ? `Hide ${label}` : `Show ${label}`}
+            title={revealed ? "Hide" : "Click to reveal"}
+            className="self-center rounded p-0.5 text-muted transition hover:text-foreground"
+          >
+            {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        )}
+        {trend && !masked && (
           <span
             className={cn(
               "font-mono text-[11px] font-medium",

@@ -145,6 +145,7 @@ export function SuperAdminDashboard({ user }: { user: CurrentUser }) {
               <StatCard
                 label="Outstanding fees"
                 value={formatCurrency(finance.outstandingSchoolWide)}
+                concealed
                 trend={
                   finance.outstandingTrendVsLastTerm === null
                     ? undefined
