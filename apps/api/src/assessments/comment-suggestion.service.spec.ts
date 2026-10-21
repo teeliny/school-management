@@ -20,6 +20,8 @@ function setup(opts: { gender?: "MALE" | "FEMALE" | null; llmEnabled?: boolean; 
     skillRating: { findMany: jest.fn().mockResolvedValue([]) },
     studentSubjectEnrollment: { findMany: jest.fn().mockResolvedValue([{ subjectId: "math" }, { subjectId: "eng" }]) },
     subjectTermResult: { findMany: jest.fn().mockResolvedValue([{ subjectId: "math" }, { subjectId: "eng" }]) },
+    classArm: { findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "arm-1", classLevel: { category: "SSS" } }) },
+    reportWindow: { findFirst: jest.fn().mockResolvedValue({ status: "OPEN" }) },
   };
   const reportComments = { authorize: jest.fn().mockResolvedValue("staff-1") };
   const broadsheet = {
@@ -76,6 +78,17 @@ describe("CommentSuggestionService.suggest", () => {
     for (const s of res.suggestions) expect(mentionsOnlyBand(s, "VERY_GOOD")).toBe(true);
   });
 
+  it.each([["no window", null], ["a DRAFT window", { status: "DRAFT" }], ["a CLOSED window", { status: "CLOSED" }]])(
+    "PRINCIPAL: a non-override user gets 409 and nothing is generated when there is %s",
+    async (_label, window) => {
+      const { service, prisma, broadsheet, llm } = setup({ llmEnabled: true });
+      prisma.reportWindow.findFirst.mockResolvedValue(window);
+      await expect(service.suggest(dto(), USER, false)).rejects.toThrow("report window is open");
+      expect(broadsheet.build).not.toHaveBeenCalled();
+      expect(llm.generate).not.toHaveBeenCalled();
+    },
+  );
+
   it("PRINCIPAL: refuses with 409 while any enrolled subject lacks a result", async () => {
     const { service, prisma } = setup();
     prisma.subjectTermResult.findMany.mockResolvedValue([{ subjectId: "math" }]);
@@ -126,6 +139,35 @@ describe("CommentSuggestionService.suggest", () => {
     expect(res.suggestions.join(" ")).toMatch(/punctuality|neatness/);
     for (const s of res.suggestions) expect(s).not.toMatch(/\b(he|she|him|her|his)\b/i);
   });
+
+  it("CLASS_TEACHER: a class teacher gets nothing while the report window isn't OPEN", async () => {
+    const { service, prisma, llm } = setup({ llmEnabled: true });
+    prisma.reportWindow.findFirst.mockResolvedValue({ status: "CLOSED" });
+    await expect(service.suggest(dto({ commentType: "CLASS_TEACHER" }), USER, false)).rejects.toThrow(
+      "report window is open",
+    );
+    expect(prisma.skillRating.findMany).not.toHaveBeenCalled();
+    expect(llm.generate).not.toHaveBeenCalled();
+  });
+
+  it.each([["no window", null], ["a CLOSED window", { status: "CLOSED" }]])(
+    "override users (Principal/Admin) still get suggestions with %s",
+    async (_label, window) => {
+      const { service, prisma } = setup();
+      prisma.reportWindow.findFirst.mockResolvedValue(window);
+      prisma.skillRating.findMany.mockResolvedValue([
+        {
+          rating: "EXCELLENT",
+          skillAssessmentItem: { name: "Punctuality", order: 1, group: { order: 1, valueType: SkillGroupValueType.RATING } },
+        },
+      ]);
+      const teacher = await service.suggest(dto({ commentType: "CLASS_TEACHER" }), USER, true);
+      const principal = await service.suggest(dto(), USER, true);
+      expect(teacher.suggestions).toHaveLength(5);
+      expect(principal.suggestions).toHaveLength(5);
+      expect(prisma.reportWindow.findFirst).not.toHaveBeenCalled();
+    },
+  );
 
   it("CLASS_TEACHER: 400 when nothing is rated yet", async () => {
     const { service } = setup();

@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   Injectable,
   Param,
@@ -11,9 +10,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { AssignmentType, ClassLevelCategory, ReportWindowStatus } from "@prisma/client";
-import { AbilityFactory } from "../casl/ability.factory";
-import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
+import { ClassLevelCategory, ReportWindowStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
@@ -21,9 +18,7 @@ import { CheckPolicies } from "../casl/check-policies.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { Audited } from "../audit/audited.decorator";
-import { CreateReportWindowDto, EnsureReportWindowDto, UpdateReportWindowDto } from "./dto/report-window.dto";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import { CreateReportWindowDto, UpdateReportWindowDto } from "./dto/report-window.dto";
 
 @Injectable()
 export class ReportWindowService {
@@ -49,41 +44,6 @@ export class ReportWindowService {
     return this.prisma.reportWindow.delete({ where: { id } });
   }
 
-  /**
-   * Returns the report window for this term + class group, creating it
-   * first when none exists, so class teachers aren't blocked waiting for an
-   * Admin to configure one. The new window is OPEN from now until the term's
-   * end date, or for 14 days if the term has already ended, so the sweep
-   * doesn't close it immediately. Admins can still edit, force-close or
-   * delete it like any other window. An existing window, whatever its
-   * status, is returned untouched.
-   */
-  async ensure(termId: string, classLevelCategory: ClassLevelCategory, userId: string) {
-    const existing = await this.prisma.reportWindow.findUnique({
-      where: { termId_classLevelCategory: { termId, classLevelCategory } },
-    });
-    if (existing) return existing;
-
-    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
-    const now = new Date();
-    const inputClosesAt = term.endDate > now ? term.endDate : new Date(now.getTime() + 14 * DAY_MS);
-    // upsert rather than create: two class teachers in the same class group
-    // opening the panel at once must not trip the (termId, classLevelCategory)
-    // unique index.
-    return this.prisma.reportWindow.upsert({
-      where: { termId_classLevelCategory: { termId, classLevelCategory } },
-      create: {
-        termId,
-        classLevelCategory,
-        inputOpensAt: now,
-        inputClosesAt,
-        status: ReportWindowStatus.OPEN,
-        createdByUserId: userId,
-      },
-      update: {},
-    });
-  }
-
   forceOpen(id: string) {
     return this.prisma.reportWindow.update({ where: { id }, data: { status: ReportWindowStatus.OPEN } });
   }
@@ -96,33 +56,7 @@ export class ReportWindowService {
 @Controller("report-windows")
 @UseGuards(JwtAuthGuard, PoliciesGuard)
 export class ReportWindowController {
-  constructor(
-    private readonly service: ReportWindowService,
-    private readonly prisma: PrismaService,
-    private readonly staffAssignments: StaffAssignmentService,
-    private readonly abilityFactory: AbilityFactory,
-  ) {}
-
-  // Called by the class-teacher Skills & Comments panel when no window
-  // exists yet. Allowed for that class arm's class teacher, or anyone who
-  // can manage report windows.
-  @Post("ensure")
-  @Audited("ReportWindow")
-  async ensure(@Body() dto: EnsureReportWindowDto, @CurrentUser() user: RequestUser) {
-    const arm = await this.prisma.classArm.findUniqueOrThrow({
-      where: { id: dto.classArmId },
-      include: { classLevel: true },
-    });
-    if (!this.abilityFactory.createForUser(user).can("manage", "ReportWindow")) {
-      const assignment = await this.staffAssignments.findActiveAssignment({
-        userId: user.id,
-        assignmentType: AssignmentType.CLASS_TEACHER,
-        classArmId: arm.id,
-      });
-      if (!assignment) throw new ForbiddenException("You are not the class teacher for this class");
-    }
-    return this.service.ensure(dto.termId, arm.classLevel.category, user.id);
-  }
+  constructor(private readonly service: ReportWindowService) {}
 
   @Post()
   @CheckPolicies((ability) => ability.can("manage", "ReportWindow"))

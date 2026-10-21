@@ -163,6 +163,8 @@ export function PrincipalCommentPanel({
     load();
   }, [load]);
 
+  // Everyone who can use this panel (Principal/Headteacher/Vice-Principal,
+  // Admin, Super-Admin) can generate regardless of the report window.
   // Auto-fetched only when the student has no saved comment yet (otherwise
   // the "Suggest comments" button fetches on demand), so re-opening a
   // finished student never costs a generation. The API refuses (409) until
@@ -350,7 +352,10 @@ export function PrincipalCommentPanel({
               Principal / Headteacher comment
             </Label>
             <div className="flex items-center gap-2">
-              {!suggestion && !suggestionLoading && !suggestionNote && commentLoadedFor === `${studentId}:${termId}` && (
+              {!suggestion &&
+                !suggestionLoading &&
+                !suggestionNote &&
+                commentLoadedFor === `${studentId}:${termId}` && (
                 <Button type="button" size="sm" variant="outline" onClick={() => fetchSuggestions(0)}>
                   Suggest comments
                 </Button>

@@ -8,7 +8,13 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import { EnrollmentStatus, ReportCommentType, SkillGroupValueType, SkillRatingValue } from "@prisma/client";
+import {
+  EnrollmentStatus,
+  ReportCommentType,
+  ReportWindowStatus,
+  SkillGroupValueType,
+  SkillRatingValue,
+} from "@prisma/client";
 import {
   containsHarshWording,
   forbiddenPronounRegex,
@@ -81,6 +87,14 @@ export class CommentSuggestionService {
     const firstName = student.user.firstName.trim();
     const pronouns = pronounsFor(student.user.gender);
     const ctx = { firstName, pronouns, seed: `${dto.studentId}:${dto.termId}:${dto.attempt ?? 0}` };
+
+    // A class teacher only gets suggestions while the class group's report
+    // window is OPEN. Override users (Principal/Headteacher/Vice-Principal,
+    // Admin, Super-Admin: CASL "manage ReportComment") can generate whatever
+    // the window's state, matching how they can already write comments.
+    if (!isOverride) {
+      await this.assertReportWindowOpen(dto.termId, student.currentClassId);
+    }
 
     if (dto.commentType === "CLASS_TEACHER") {
       const skills = await this.skillSummary(dto);
@@ -158,6 +172,27 @@ export class CommentSuggestionService {
       satisfactory: rated.filter((r) => r.rating === SkillRatingValue.GOOD).map((r) => r.name),
       weak: rated.filter((r) => WEAK.includes(r.rating)).map((r) => r.name),
     };
+  }
+
+  /**
+   * For non-override users, suggestions are only generated while the class
+   * group's report window is OPEN. Nothing ever creates a window here: no
+   * window (or a DRAFT/CLOSED one) simply means no suggestions.
+   */
+  private async assertReportWindowOpen(termId: string, classArmId: string | null): Promise<void> {
+    if (!classArmId) {
+      throw new BadRequestException("Student has no current class");
+    }
+    const arm = await this.prisma.classArm.findUniqueOrThrow({
+      where: { id: classArmId },
+      include: { classLevel: true },
+    });
+    const window = await this.prisma.reportWindow.findFirst({
+      where: { termId, classLevelCategory: arm.classLevel.category },
+    });
+    if (window?.status !== ReportWindowStatus.OPEN) {
+      throw new ConflictException("Suggested comments are only available while the report window is open");
+    }
   }
 
   /**

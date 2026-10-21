@@ -146,19 +146,8 @@ export function ClassTeacherSkillsPanel({
         { auth: true },
       ),
     ])
-      .then(async ([windows, items, nextRatings, nextComments, commentSummary, ratingSummary]) => {
-        let window = windows[0] ?? null;
-        // No window configured yet for this term + class group: the API
-        // creates an OPEN one (class teacher or Admin only), so teachers
-        // aren't blocked waiting for an Admin.
-        if (!window) {
-          window = await apiFetch<{ status: ReportWindowStatus }>("/report-windows/ensure", {
-            method: "POST",
-            auth: true,
-            body: { termId, classArmId },
-          }).catch(() => null);
-        }
-        setWindowStatus(window?.status ?? null);
+      .then(([windows, items, nextRatings, nextComments, commentSummary, ratingSummary]) => {
+        setWindowStatus(windows[0]?.status ?? null);
         setSkillItems(items);
         setRatings(nextRatings);
         setComments(nextComments);
@@ -223,6 +212,11 @@ export function ClassTeacherSkillsPanel({
   }, [skillItems]);
 
   const readOnly = !isAdmin && windowStatus !== "OPEN";
+  // A class teacher only gets generated comments while the report window is
+  // OPEN; Admin/Principal-level users (isAdmin) can generate whatever its
+  // state, same as their override on writing. The panel never creates or
+  // opens a window itself.
+  const canGenerate = isAdmin || windowStatus === "OPEN";
 
   function refreshProgress() {
     if (!classArmId || !termId || !selectedTerm) return;
@@ -316,7 +310,7 @@ export function ClassTeacherSkillsPanel({
   // both when the teacher rates the last skill and when the page loads with
   // students rated in an earlier session.
   useEffect(() => {
-    if (readOnly) return;
+    if (!canGenerate) return;
     let queued = false;
     for (const student of students) {
       if (autoAttempted.current.has(student.id)) continue;
@@ -328,7 +322,7 @@ export function ClassTeacherSkillsPanel({
     }
     if (queued) pumpAutoQueue();
     // isFullyRated/pumpAutoQueue are plain functions over the state listed here.
-  }, [students, ratingDrafts, commentDrafts, skillItems, readOnly]);
+  }, [students, ratingDrafts, commentDrafts, skillItems, canGenerate]);
 
   // `commentOverride` is the freshly generated comment when auto-saving,
   // since the commentDrafts state update hasn't rendered yet.
@@ -530,14 +524,14 @@ export function ClassTeacherSkillsPanel({
                     )}
                   </div>
                   {/* Only needed when a comment already existed, so nothing was auto-generated */}
-                  {!suggestions[student.id]?.items.length &&
+                  {canGenerate &&
+                    !suggestions[student.id]?.items.length &&
                     !suggestions[student.id]?.loading &&
                     isFullyRated(student.id) && (
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
-                        disabled={readOnly}
                         onClick={() => suggest(student.id, 0)}
                       >
                         Suggest comments
@@ -548,12 +542,13 @@ export function ClassTeacherSkillsPanel({
                   id={`cts-comment-${student.id}`}
                   className="mt-1"
                   rows={2}
-                  // Locked until every skill is rated; the comment is then
-                  // generated from those ratings and auto-saved. If no skill
-                  // items are configured, the comment stays free-form.
-                  disabled={readOnly || (skillItems.length > 0 && !isFullyRated(student.id))}
+                  // When generation is possible: locked until every skill is
+                  // rated, then generated from those ratings and auto-saved.
+                  // With no skill items configured, the comment stays
+                  // free-form.
+                  disabled={readOnly || (canGenerate && skillItems.length > 0 && !isFullyRated(student.id))}
                   placeholder={
-                    skillItems.length > 0 && !isFullyRated(student.id)
+                    canGenerate && skillItems.length > 0 && !isFullyRated(student.id)
                       ? "Rate all skills above to generate this comment"
                       : undefined
                   }
@@ -564,7 +559,7 @@ export function ClassTeacherSkillsPanel({
                   <p className="mt-1 text-[11.5px] text-danger">{suggestions[student.id]!.error}</p>
                 )}
                 <CommentSuggestions
-                  suggestions={suggestions[student.id]?.items ?? []}
+                  suggestions={canGenerate ? (suggestions[student.id]?.items ?? []) : []}
                   selected={commentDrafts[student.id] ?? ""}
                   source={suggestions[student.id]?.source}
                   loading={suggestions[student.id]?.loading}
