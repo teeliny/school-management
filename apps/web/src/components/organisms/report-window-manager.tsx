@@ -42,6 +42,7 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
 
   const [inputOpensAt, setInputOpensAt] = useState("");
   const [inputClosesAt, setInputClosesAt] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     if (!termId || !classLevelCategory) {
@@ -56,6 +57,9 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
   }, [termId, classLevelCategory]);
 
   useEffect(() => {
+    setEditingId(null);
+    setInputOpensAt("");
+    setInputClosesAt("");
     load();
   }, [load]);
 
@@ -75,23 +79,40 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
     setInputClosesAt(toDatetimeLocalInputValue(existing.inputClosesAt));
   }
 
+  function startEdit(window: ReportWindowItem) {
+    setError(null);
+    setEditingId(window.id);
+    setInputOpensAt(toDatetimeLocalInputValue(window.inputOpensAt));
+    setInputClosesAt(toDatetimeLocalInputValue(window.inputClosesAt));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setInputOpensAt("");
+    setInputClosesAt("");
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
+    const dates = {
+      inputOpensAt: fromDatetimeLocalInputValue(inputOpensAt),
+      inputClosesAt: fromDatetimeLocalInputValue(inputClosesAt),
+    };
     try {
-      await apiFetch("/report-windows", {
-        method: "POST",
-        auth: true,
-        body: {
-          termId,
-          classLevelCategory,
-          inputOpensAt: fromDatetimeLocalInputValue(inputOpensAt),
-          inputClosesAt: fromDatetimeLocalInputValue(inputClosesAt),
-        },
-      });
-      setInputOpensAt("");
-      setInputClosesAt("");
+      // Editing changes the dates only; status is still set with Open/Close
+      // (or by the sweep for a DRAFT window reaching its open date).
+      if (editingId) {
+        await apiFetch(`/report-windows/${editingId}`, { method: "PATCH", auth: true, body: dates });
+      } else {
+        await apiFetch("/report-windows", {
+          method: "POST",
+          auth: true,
+          body: { termId, classLevelCategory, ...dates },
+        });
+      }
+      cancelEdit();
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong");
@@ -157,6 +178,15 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
                 </span>
                 <div className="flex items-center gap-1.5">
                   <Badge variant={STATUS_VARIANT[window.status]}>{window.status}</Badge>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={editingId === window.id}
+                    onClick={() => startEdit(window)}
+                  >
+                    Edit
+                  </Button>
                   <Button type="button" variant="outline" size="sm" onClick={() => transition(window.id, "force-open")}>
                     Open
                   </Button>
@@ -169,6 +199,9 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
             {windows.length === 0 && <EmptyState icon={CalendarClock} title="No report window for this term/class group yet" className="py-6" />}
           </div>
 
+          {/* One window per term + class group: the form creates it when
+              there is none, and otherwise only appears to edit it. */}
+          {(windows.length === 0 || editingId) && (
           <form onSubmit={handleSubmit} className="grid grid-cols-3 gap-3">
             {existingWindows.length > 0 && (
               <div className="col-span-3">
@@ -205,10 +238,18 @@ export function ReportWindowManager({ terms }: { terms: TermOption[] }) {
               value={inputClosesAt}
               onChange={(e) => setInputClosesAt(e.target.value)}
             />
-            <Button type="submit" disabled={submitting} className="self-end">
-              {submitting ? "Creating…" : "Create window"}
-            </Button>
+            <div className="flex items-end gap-2">
+              <Button type="submit" disabled={submitting} className="flex-1">
+                {submitting ? "Saving…" : editingId ? "Save changes" : "Create window"}
+              </Button>
+              {editingId && (
+                <Button type="button" variant="outline" onClick={cancelEdit}>
+                  Cancel
+                </Button>
+              )}
+            </div>
           </form>
+          )}
         </>
       )}
       {!windows && <p className="text-sm text-muted">Select a term and class group to manage its report window.</p>}
