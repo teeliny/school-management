@@ -11,6 +11,8 @@ import { ReportWindowController, ReportWindowService } from "./report-window";
 import { SkillRatingController, SkillRatingService } from "./skill-rating";
 import { ReportCommentController, ReportCommentService } from "./report-comment";
 import { BroadsheetController, BroadsheetService } from "./broadsheet";
+import { CommentSuggestionController, CommentSuggestionService } from "./comment-suggestion";
+import { CommentLlmGenerator } from "./comment-llm";
 import { StaffAssignmentsModule } from "../staff-assignments/staff-assignments.module";
 import { SubjectModule } from "../subjects/subject.module";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -37,6 +39,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     ReportWindowController,
     SkillRatingController,
     ReportCommentController,
+    CommentSuggestionController,
     BroadsheetController,
   ],
   providers: [
@@ -49,6 +52,8 @@ import { NotificationsModule } from "../notifications/notifications.module";
     ReportWindowService,
     SkillRatingService,
     ReportCommentService,
+    CommentSuggestionService,
+    CommentLlmGenerator,
     BroadsheetService,
   ],
   // BroadsheetService is consumed directly by DashboardModule's Principal/

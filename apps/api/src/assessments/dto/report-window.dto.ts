@@ -20,3 +20,11 @@ export class CreateReportWindowDto {
 }
 
 export class UpdateReportWindowDto extends PartialType(CreateReportWindowDto) {}
+
+export class EnsureReportWindowDto {
+  @IsUUID()
+  termId!: string;
+
+  @IsUUID()
+  classArmId!: string;
+}

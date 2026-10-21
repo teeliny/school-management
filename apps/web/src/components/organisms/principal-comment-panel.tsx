@@ -7,6 +7,8 @@ import { Label } from "../atoms/label";
 import { Textarea } from "../atoms/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { StudentCombobox } from "../molecules/student-combobox";
+import { CommentSuggestions } from "../molecules/comment-suggestions";
+import { BAND_LABELS, type CommentSuggestionResponse } from "@school/types";
 
 interface ClassArmOption {
   id: string;
@@ -70,6 +72,15 @@ export function PrincipalCommentPanel({
   const [broadsheet, setBroadsheet] = useState<BroadsheetResponse | null>(null);
   const [scoresLoading, setScoresLoading] = useState(false);
   const [scoresError, setScoresError] = useState<string | null>(null);
+  // `${studentId}:${termId}` once that pair's saved comment has loaded —
+  // suggestions wait for it so their prefill can't race (and lose to, or
+  // clobber) the saved comment.
+  const [commentLoadedFor, setCommentLoadedFor] = useState<string | null>(null);
+  const [savedCommentEmpty, setSavedCommentEmpty] = useState(false);
+  const [suggestion, setSuggestion] = useState<CommentSuggestionResponse | null>(null);
+  const [suggestionAttempt, setSuggestionAttempt] = useState(0);
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [suggestionNote, setSuggestionNote] = useState<string | null>(null);
 
   useEffect(() => {
     setStudentId("");
@@ -133,6 +144,7 @@ export function PrincipalCommentPanel({
   );
 
   const load = useCallback(() => {
+    setCommentLoadedFor(null);
     if (!studentId || !termId) {
       setComment("");
       return;
@@ -141,6 +153,8 @@ export function PrincipalCommentPanel({
       .then((comments) => {
         const match = comments.find((c) => c.commentType === "PRINCIPAL");
         setComment(match?.comment ?? "");
+        setSavedCommentEmpty(!match?.comment.trim());
+        setCommentLoadedFor(`${studentId}:${termId}`);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load comment"));
   }, [studentId, termId]);
@@ -148,6 +162,45 @@ export function PrincipalCommentPanel({
   useEffect(() => {
     load();
   }, [load]);
+
+  // Auto-fetched only when the student has no saved comment yet (otherwise
+  // the "Suggest comments" button fetches on demand), so re-opening a
+  // finished student never costs a generation. The API refuses (409) until
+  // every enrolled subject has a result, which shows as a note instead.
+  // Suggestion #1 only fills the box when no comment exists yet.
+  const fetchSuggestions = useCallback(
+    (attempt: number) => {
+      if (!studentId || !termId) return;
+      setSuggestionLoading(true);
+      setSuggestionNote(null);
+      apiFetch<CommentSuggestionResponse>("/report-comments/suggestions", {
+        method: "POST",
+        auth: true,
+        body: { studentId, termId, commentType: "PRINCIPAL", attempt },
+      })
+        .then((res) => {
+          setSuggestion(res);
+          setComment((current) => (current.trim() ? current : (res.suggestions[0] ?? "")));
+        })
+        .catch((err) => {
+          setSuggestion(null);
+          if (err instanceof ApiError && err.status === 409) {
+            setSuggestionNote("Suggested comments become available once all of this student's results are complete.");
+          } else {
+            setSuggestionNote(err instanceof ApiError ? err.message : "Failed to generate suggested comments");
+          }
+        })
+        .finally(() => setSuggestionLoading(false));
+    },
+    [studentId, termId],
+  );
+
+  useEffect(() => {
+    setSuggestion(null);
+    setSuggestionNote(null);
+    setSuggestionAttempt(0);
+    if (commentLoadedFor === `${studentId}:${termId}` && savedCommentEmpty) fetchSuggestions(0);
+  }, [commentLoadedFor, savedCommentEmpty, studentId, termId, fetchSuggestions]);
 
   const loadProgress = useCallback(() => {
     if (!classArmId || !termId) {
@@ -278,6 +331,9 @@ export function PrincipalCommentPanel({
                       {scoreRow.overallPosition != null && (
                         <span className="ml-2 font-sans text-muted">(Position {scoreRow.overallPosition})</span>
                       )}
+                      {suggestion?.band && (
+                        <span className="ml-2 font-sans text-muted">· {BAND_LABELS[suggestion.band]}</span>
+                      )}
                     </td>
                   </tr>
                 </tbody>
@@ -294,6 +350,11 @@ export function PrincipalCommentPanel({
               Principal / Headteacher comment
             </Label>
             <div className="flex items-center gap-2">
+              {!suggestion && !suggestionLoading && !suggestionNote && commentLoadedFor === `${studentId}:${termId}` && (
+                <Button type="button" size="sm" variant="outline" onClick={() => fetchSuggestions(0)}>
+                  Suggest comments
+                </Button>
+              )}
               {saveState === "saving" && <span className="text-[11px] text-muted">Saving…</span>}
               {saveState === "saved" && <span className="text-[11px] text-success">Saved</span>}
               {saveState === "error" && <span className="text-[11px] text-danger">Failed</span>}
@@ -303,6 +364,20 @@ export function PrincipalCommentPanel({
             </div>
           </div>
           <Textarea id="pc-comment" rows={3} value={comment} onChange={(e) => setComment(e.target.value)} />
+          {suggestionNote && <p className="mt-1 text-[11.5px] text-muted">{suggestionNote}</p>}
+          {suggestionLoading && !suggestion && <p className="mt-1 text-[11.5px] text-muted">Generating suggestions…</p>}
+          <CommentSuggestions
+            suggestions={suggestion?.suggestions ?? []}
+            selected={comment}
+            source={suggestion?.source}
+            loading={suggestionLoading}
+            onSelect={setComment}
+            onRegenerate={() => {
+              const next = suggestionAttempt + 1;
+              setSuggestionAttempt(next);
+              fetchSuggestions(next);
+            }}
+          />
         </div>
       )}
 

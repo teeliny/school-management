@@ -40,6 +40,20 @@ export class ReportCommentService {
    * override.
    */
   async write(dto: CreateReportCommentDto, user: RequestUser, isOverride: boolean) {
+    const authorStaffId = await this.authorize(dto, user, isOverride);
+    return this.save(dto, authorStaffId);
+  }
+
+  /**
+   * Throws unless `user` may write this comment, and returns the staffId to
+   * record as its author. Shared with CommentSuggestionService, so nobody
+   * sees suggestions for a comment they couldn't save.
+   */
+  async authorize(
+    dto: Pick<CreateReportCommentDto, "studentId" | "termId" | "commentType" | "subjectId">,
+    user: RequestUser,
+    isOverride: boolean,
+  ): Promise<string | null> {
     this.assertSubjectIdConsistency(dto.commentType, dto.subjectId);
 
     let authorStaffId: string | null = null;
@@ -144,7 +158,10 @@ export class ReportCommentService {
       }
       authorStaffId = vicePrincipal.staffId;
     }
+    return authorStaffId;
+  }
 
+  private async save(dto: CreateReportCommentDto, authorStaffId: string | null) {
     // SUBJECT (non-null subjectId) can use the compound-unique upsert
     // directly. CLASS_TEACHER/PRINCIPAL (subjectId always null) can't — a
     // standard unique index can't match on NULL, so Prisma's own typing

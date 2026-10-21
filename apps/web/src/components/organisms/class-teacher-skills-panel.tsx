@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { formatPersonName } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { usePaginatedStudents } from "../../lib/use-paginated-students";
@@ -10,6 +11,7 @@ import { Badge, type BadgeVariant } from "../atoms/badge";
 import { Textarea } from "../atoms/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../molecules/select";
 import { Input } from "../atoms/input";
+import { CommentSuggestions } from "../molecules/comment-suggestions";
 import { PaginatedStudentList } from "./paginated-student-list";
 
 interface ClassArmOption {
@@ -54,8 +56,23 @@ interface ProgressSummary {
   totalStudents: number;
   completedCount: number;
 }
+interface SuggestionResponse {
+  suggestions: string[];
+  source: "template" | "llm";
+}
+interface SuggestionState {
+  items: string[];
+  source?: "template" | "llm";
+  attempt: number;
+  loading: boolean;
+  error?: string;
+}
 
 const RATINGS: RatingValue[] = ["EXCELLENT", "VERY_GOOD", "GOOD", "FAIR", "POOR"];
+// How many students' comments may be generating at once. A fully rated
+// roster opened for the first time would otherwise fire every request in
+// parallel.
+const AUTO_GENERATE_CONCURRENCY = 2;
 const WINDOW_VARIANT: Record<ReportWindowStatus, BadgeVariant> = {
   DRAFT: "muted",
   OPEN: "success",
@@ -88,6 +105,7 @@ export function ClassTeacherSkillsPanel({
   const [error, setError] = useState<string | null>(null);
   const [commentProgress, setCommentProgress] = useState<ProgressSummary | null>(null);
   const [ratingProgress, setRatingProgress] = useState<ProgressSummary | null>(null);
+  const [suggestions, setSuggestions] = useState<Record<string, SuggestionState>>({});
 
   const {
     students,
@@ -128,8 +146,19 @@ export function ClassTeacherSkillsPanel({
         { auth: true },
       ),
     ])
-      .then(([windows, items, nextRatings, nextComments, commentSummary, ratingSummary]) => {
-        setWindowStatus(windows[0]?.status ?? null);
+      .then(async ([windows, items, nextRatings, nextComments, commentSummary, ratingSummary]) => {
+        let window = windows[0] ?? null;
+        // No window configured yet for this term + class group: the API
+        // creates an OPEN one (class teacher or Admin only), so teachers
+        // aren't blocked waiting for an Admin.
+        if (!window) {
+          window = await apiFetch<{ status: ReportWindowStatus }>("/report-windows/ensure", {
+            method: "POST",
+            auth: true,
+            body: { termId, classArmId },
+          }).catch(() => null);
+        }
+        setWindowStatus(window?.status ?? null);
         setSkillItems(items);
         setRatings(nextRatings);
         setComments(nextComments);
@@ -139,10 +168,25 @@ export function ClassTeacherSkillsPanel({
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load skills & comments"));
   }, [classArmId, termId, selectedArm, selectedTerm]);
 
+  // Latest drafts for code that runs after an await (auto-generate, then
+  // auto-save), which would otherwise read the drafts from when it started.
+  const ratingDraftsRef = useRef(ratingDrafts);
+  ratingDraftsRef.current = ratingDrafts;
+  const commentDraftsRef = useRef(commentDrafts);
+  commentDraftsRef.current = commentDrafts;
+  // Students already queued for auto-generation in this class/term, so each
+  // is attempted at most once.
+  const autoAttempted = useRef(new Set<string>());
+  const autoQueue = useRef<string[]>([]);
+  const autoActive = useRef(0);
+
   useEffect(() => {
     setRatingDrafts({});
     setCommentDrafts({});
     setSaveState({});
+    setSuggestions({});
+    autoAttempted.current = new Set();
+    autoQueue.current = [];
     load();
   }, [load]);
 
@@ -196,10 +240,102 @@ export function ClassTeacherSkillsPanel({
       .catch(() => undefined);
   }
 
-  async function saveStudent(studentId: string) {
+  // RATING-type drafts currently in the form (saved or not) — what the
+  // class-teacher comment suggestions are generated from.
+  function ratedSkills(studentId: string) {
+    return Object.entries(ratingDraftsRef.current[studentId] ?? {})
+      .filter(([itemId, value]) => {
+        const item = skillItems.find((i) => i.id === itemId);
+        return item?.group.valueType === "RATING" && (RATINGS as string[]).includes(value);
+      })
+      .map(([skillAssessmentItemId, rating]) => ({ skillAssessmentItemId, rating }));
+  }
+
+  // Every skill item for the class group has a value (rating or range
+  // text): the point at which the comment is unlocked and auto-generated.
+  function isFullyRated(studentId: string, drafts = ratingDrafts) {
+    return skillItems.length > 0 && skillItems.every((item) => (drafts[studentId]?.[item.id] ?? "").trim() !== "");
+  }
+
+  // Suggestion #1 only fills the comment box when it's empty, so it never
+  // overwrites a comment. Returns the suggestions, or null on failure.
+  async function suggest(studentId: string, attempt: number): Promise<SuggestionResponse | null> {
+    setSuggestions((s) => ({
+      ...s,
+      [studentId]: { items: s[studentId]?.items ?? [], source: s[studentId]?.source, attempt, loading: true },
+    }));
+    try {
+      const res = await apiFetch<SuggestionResponse>("/report-comments/suggestions", {
+        method: "POST",
+        auth: true,
+        body: { studentId, termId, commentType: "CLASS_TEACHER", skillRatings: ratedSkills(studentId), attempt },
+      });
+      setSuggestions((s) => ({
+        ...s,
+        [studentId]: { items: res.suggestions, source: res.source, attempt, loading: false },
+      }));
+      setCommentDrafts((s) => (s[studentId]?.trim() ? s : { ...s, [studentId]: res.suggestions[0] ?? "" }));
+      return res;
+    } catch (err) {
+      setSuggestions((s) => ({
+        ...s,
+        [studentId]: {
+          items: s[studentId]?.items ?? [],
+          source: s[studentId]?.source,
+          attempt,
+          loading: false,
+          error: err instanceof ApiError ? err.message : "Failed to generate comments",
+        },
+      }));
+      return null;
+    }
+  }
+
+  // Generates and then auto-saves (ratings + comment) once a student is
+  // fully rated and has no comment. The teacher can still edit and re-save.
+  // Skips the save if the teacher typed a comment while it was generating.
+  async function autoGenerate(studentId: string) {
+    const res = await suggest(studentId, 0);
+    const first = res?.suggestions[0];
+    if (!first || commentDraftsRef.current[studentId]?.trim()) return;
+    await saveStudent(studentId, first);
+  }
+
+  function pumpAutoQueue() {
+    while (autoActive.current < AUTO_GENERATE_CONCURRENCY && autoQueue.current.length > 0) {
+      const studentId = autoQueue.current.shift()!;
+      autoActive.current += 1;
+      void autoGenerate(studentId).finally(() => {
+        autoActive.current -= 1;
+        pumpAutoQueue();
+      });
+    }
+  }
+
+  // Queues every on-screen student who is fully rated but has no comment —
+  // both when the teacher rates the last skill and when the page loads with
+  // students rated in an earlier session.
+  useEffect(() => {
+    if (readOnly) return;
+    let queued = false;
+    for (const student of students) {
+      if (autoAttempted.current.has(student.id)) continue;
+      if (!(student.id in commentDrafts) || commentDrafts[student.id]?.trim()) continue;
+      if (!isFullyRated(student.id)) continue;
+      autoAttempted.current.add(student.id);
+      autoQueue.current.push(student.id);
+      queued = true;
+    }
+    if (queued) pumpAutoQueue();
+    // isFullyRated/pumpAutoQueue are plain functions over the state listed here.
+  }, [students, ratingDrafts, commentDrafts, skillItems, readOnly]);
+
+  // `commentOverride` is the freshly generated comment when auto-saving,
+  // since the commentDrafts state update hasn't rendered yet.
+  async function saveStudent(studentId: string, commentOverride?: string) {
     setSaveState((s) => ({ ...s, [studentId]: "saving" }));
     try {
-      const ratingCalls = Object.entries(ratingDrafts[studentId] ?? {})
+      const ratingCalls = Object.entries(ratingDraftsRef.current[studentId] ?? {})
         .filter(([, value]) => value !== "")
         .map(([skillAssessmentItemId, value]) => {
           const item = skillItems.find((i) => i.id === skillAssessmentItemId);
@@ -216,7 +352,7 @@ export function ClassTeacherSkillsPanel({
             },
           });
         });
-      const comment = commentDrafts[studentId] ?? "";
+      const comment = commentOverride ?? commentDraftsRef.current[studentId] ?? "";
       const commentCall = comment.trim()
         ? [
             apiFetch("/report-comments", {
@@ -381,14 +517,60 @@ export function ClassTeacherSkillsPanel({
               )}
 
               <div className="mt-3">
-                <Label htmlFor={`cts-comment-${student.id}`}>Class-teacher comment</Label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor={`cts-comment-${student.id}`} className="mb-0">
+                      Class-teacher comment
+                    </Label>
+                    {suggestions[student.id]?.loading && (
+                      <span className="flex items-center gap-1 text-[11px] text-muted" role="status">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                        Generating…
+                      </span>
+                    )}
+                  </div>
+                  {/* Only needed when a comment already existed, so nothing was auto-generated */}
+                  {!suggestions[student.id]?.items.length &&
+                    !suggestions[student.id]?.loading &&
+                    isFullyRated(student.id) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={readOnly}
+                        onClick={() => suggest(student.id, 0)}
+                      >
+                        Suggest comments
+                      </Button>
+                    )}
+                </div>
                 <Textarea
                   id={`cts-comment-${student.id}`}
                   className="mt-1"
                   rows={2}
-                  disabled={readOnly}
+                  // Locked until every skill is rated; the comment is then
+                  // generated from those ratings and auto-saved. If no skill
+                  // items are configured, the comment stays free-form.
+                  disabled={readOnly || (skillItems.length > 0 && !isFullyRated(student.id))}
+                  placeholder={
+                    skillItems.length > 0 && !isFullyRated(student.id)
+                      ? "Rate all skills above to generate this comment"
+                      : undefined
+                  }
                   value={commentDrafts[student.id] ?? ""}
                   onChange={(e) => setCommentDrafts((s) => ({ ...s, [student.id]: e.target.value }))}
+                />
+                {suggestions[student.id]?.error && (
+                  <p className="mt-1 text-[11.5px] text-danger">{suggestions[student.id]!.error}</p>
+                )}
+                <CommentSuggestions
+                  suggestions={suggestions[student.id]?.items ?? []}
+                  selected={commentDrafts[student.id] ?? ""}
+                  source={suggestions[student.id]?.source}
+                  loading={suggestions[student.id]?.loading}
+                  disabled={readOnly}
+                  onSelect={(comment) => setCommentDrafts((s) => ({ ...s, [student.id]: comment }))}
+                  onRegenerate={() => suggest(student.id, (suggestions[student.id]?.attempt ?? 0) + 1)}
                 />
               </div>
             </div>

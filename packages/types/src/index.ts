@@ -17,3 +17,4 @@ export * from "./person-name";
 // `next build` failed pulling in MonnifyAdapter via a single CLASS_LEVEL_
 // CATEGORIES import. apps/api/apps/worker (the only real consumers) import
 // gateway symbols from "@school/types/payment-gateways" instead.
+export * from "./report-comment-suggestions";

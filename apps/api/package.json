@@ -18,6 +18,7 @@
     "seed:demo:lite": "node dist/seed-demo-data-lite.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "@aws-sdk/client-s3": "^3.1101.0",
     "@aws-sdk/s3-request-presigner": "^3.1101.0",
     "@casl/ability": "^6.7.0",
@@ -40,8 +41,8 @@
     "argon2": "^0.41.0",
     "bullmq": "^5.81.3",
     "class-transformer": "^0.5.1",
-    "csv-parse": "^5.6.0",
     "class-validator": "^0.14.1",
+    "csv-parse": "^5.6.0",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.0",
     "multer": "^2.0.2",
@@ -55,7 +56,8 @@
     "resend": "^4.0.0",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.0",
-    "svix": "^1.42.0"
+    "svix": "^1.42.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.0",
