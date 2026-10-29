@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Wallet } from "lucide-react";
+import { Download, Wallet } from "lucide-react";
 import { formatPersonName, type ClassLevelCategory, type ClassLevelCategoryGroup } from "@school/types";
 import { apiFetch, ApiError } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
@@ -109,17 +109,24 @@ export function OutstandingBalancesList({
     apiFetch<ClassLevelOption[]>("/class-levels", { auth: true }).then(setClassLevels).catch(() => setClassLevels([]));
   }, []);
 
+  const filterParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (termId !== ALL_TERMS) params.set("termId", termId);
+    if (classLevelId !== ALL_CLASS_LEVELS) params.set("classLevelId", classLevelId);
+    if (canFilterBySection && section !== ALL_SECTIONS) params.set("classLevelCategoryGroup", section);
+    if (excusedFilter !== "ALL") params.set("isExcused", String(excusedFilter === "EXCUSED"));
+    if (search) params.set("search", search);
+    return params;
+  }, [termId, classLevelId, canFilterBySection, section, excusedFilter, search]);
+
   const loadPage = useCallback(
     (skip: number) => {
       const thisRequest = ++requestId.current;
       setLoading(true);
       setError(null);
-      const params = new URLSearchParams({ skip: String(skip), take: String(PAGE_SIZE) });
-      if (termId !== ALL_TERMS) params.set("termId", termId);
-      if (classLevelId !== ALL_CLASS_LEVELS) params.set("classLevelId", classLevelId);
-      if (canFilterBySection && section !== ALL_SECTIONS) params.set("classLevelCategoryGroup", section);
-      if (excusedFilter !== "ALL") params.set("isExcused", String(excusedFilter === "EXCUSED"));
-      if (search) params.set("search", search);
+      const params = filterParams();
+      params.set("skip", String(skip));
+      params.set("take", String(PAGE_SIZE));
       apiFetch<OutstandingBalancesPage>(`/outstanding-balances?${params.toString()}`, { auth: true })
         .then((res) => {
           if (thisRequest !== requestId.current) return;
@@ -134,8 +141,15 @@ export function OutstandingBalancesList({
           if (thisRequest === requestId.current) setLoading(false);
         });
     },
-    [termId, classLevelId, canFilterBySection, section, excusedFilter, search],
+    [filterParams],
   );
+
+  // Same filters as the on-screen list, unpaginated; the server re-sorts by
+  // class level then last name (OutstandingBalanceService.buildExportPdf).
+  function downloadPdf() {
+    const query = filterParams().toString();
+    window.open(`/api/proxy/outstanding-balances/export.pdf${query ? `?${query}` : ""}`, "_blank");
+  }
 
   // `loadPage`'s own deps mirror every filter here, so its identity already
   // changes exactly when a reset-to-page-0 is needed.
@@ -277,6 +291,13 @@ export function OutstandingBalancesList({
             className="mt-1"
           />
         </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button type="button" variant="outline" size="sm" onClick={downloadPdf} disabled={total === 0}>
+          <Download className="mr-1.5 h-3.5 w-3.5" />
+          Download PDF
+        </Button>
       </div>
 
       {rows.length === 0 && loading ? (
