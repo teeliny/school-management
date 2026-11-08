@@ -1,4 +1,4 @@
-import { buildIncomeReport, rankMostAbsentStaff } from "./dashboard.util";
+import { buildAssessmentProgress, buildIncomeReport, rankMostAbsentStaff, type AssessmentProgressInput } from "./dashboard.util";
 
 describe("rankMostAbsentStaff", () => {
   const directory = new Map([
@@ -109,5 +109,166 @@ describe("buildIncomeReport", () => {
 
   it("returns zeroed totals and empty breakdowns for an empty date range", () => {
     expect(buildIncomeReport([])).toEqual({ totalIncome: 0, totalCount: 0, dailyIncome: [], byMethod: [], byGateway: [] });
+  });
+});
+
+describe("buildAssessmentProgress", () => {
+  function baseInput(overrides: Partial<AssessmentProgressInput> = {}): AssessmentProgressInput {
+    return {
+      classArms: [
+        { id: "arm-jss1a", name: "A", classLevelId: "lvl-jss1", classLevel: { name: "JSS 1", order: 7, category: "JSS" } },
+      ],
+      studentCountByArm: new Map([["arm-jss1a", 3]]),
+      components: [
+        { id: "exam", type: "EXAM", name: "Exam", sequence: 1, status: "OPEN", classLevelCategory: "JSS" },
+        { id: "ca1", type: "CA", name: "CA 1", sequence: 1, status: "CLOSED", classLevelCategory: "JSS" },
+        { id: "nursery-ca", type: "CA", name: "CA 1", sequence: 1, status: "OPEN", classLevelCategory: "NURSERY" },
+      ],
+      classSubjects: [
+        {
+          classLevelCategory: "JSS",
+          subject: { id: "maths", name: "Mathematics", isGroup: false, isActive: true, childSubjects: [] },
+          levelStatuses: [],
+          termStatuses: [],
+        },
+      ],
+      enrollments: [
+        { studentId: "s1", subjectId: "maths", classArmId: "arm-jss1a" },
+        { studentId: "s2", subjectId: "maths", classArmId: "arm-jss1a" },
+        { studentId: "s3", subjectId: "maths", classArmId: "arm-jss1a" },
+      ],
+      scoreCountByKey: new Map([
+        ["arm-jss1a:maths:ca1", 3],
+        ["arm-jss1a:maths:exam", 1],
+      ]),
+      comments: [],
+      skillItems: [],
+      skillRatings: [],
+      assignments: [],
+      ...overrides,
+    };
+  }
+
+  it("counts score entries per component in CA → MID_TERM → EXAM order, only for the class's own category", () => {
+    const [cls] = buildAssessmentProgress(baseInput());
+    expect(cls!.subjects).toHaveLength(1);
+    expect(cls!.subjects[0]).toMatchObject({ subjectName: "Mathematics", total: 3 });
+    expect(cls!.subjects[0]!.components.map((c) => [c.componentId, c.completed])).toEqual([
+      ["ca1", 3],
+      ["exam", 1],
+    ]);
+  });
+
+  it("flattens a group subject into its children, covering a group enrollment/assignment for each child", () => {
+    const [cls] = buildAssessmentProgress(
+      baseInput({
+        classSubjects: [
+          {
+            classLevelCategory: "JSS",
+            subject: {
+              id: "bst",
+              name: "Basic Science and Technology",
+              isGroup: true,
+              isActive: true,
+              childSubjects: [
+                { id: "bsci", name: "Basic Science", isActive: true },
+                { id: "ict", name: "ICT", isActive: true },
+                { id: "old", name: "Retired", isActive: false },
+              ],
+            },
+            levelStatuses: [],
+            termStatuses: [],
+          },
+        ],
+        enrollments: [
+          { studentId: "s1", subjectId: "bst", classArmId: "arm-jss1a" },
+          { studentId: "s2", subjectId: "bst", classArmId: "arm-jss1a" },
+        ],
+        assignments: [
+          { assignmentType: "SUBJECT_TEACHER", classArmId: "arm-jss1a", subjectId: "ict", staffId: "t1", staffName: "EZE CHIDI" },
+        ],
+      }),
+    );
+    expect(cls!.subjects.map((s) => [s.subjectName, s.total, s.teachers.map((t) => t.name)])).toEqual([
+      ["Basic Science", 2, []],
+      ["ICT", 2, ["EZE CHIDI"]],
+    ]);
+  });
+
+  it("drops subjects disabled for the class level, disabled for the term, or with nobody enrolled", () => {
+    const subject = (id: string) => ({ id, name: id, isGroup: false, isActive: true, childSubjects: [] });
+    const [cls] = buildAssessmentProgress(
+      baseInput({
+        classSubjects: [
+          { classLevelCategory: "JSS", subject: subject("level-off"), levelStatuses: [{ classLevelId: "lvl-jss1" }], termStatuses: [] },
+          { classLevelCategory: "JSS", subject: subject("term-off"), levelStatuses: [], termStatuses: [{ subjectId: "term-off" }] },
+          { classLevelCategory: "JSS", subject: subject("nobody"), levelStatuses: [], termStatuses: [] },
+          { classLevelCategory: "JSS", subject: subject("other-level-off"), levelStatuses: [{ classLevelId: "lvl-jss2" }], termStatuses: [] },
+        ],
+        enrollments: ["level-off", "term-off", "other-level-off"].map((subjectId) => ({
+          studentId: "s1",
+          subjectId,
+          classArmId: "arm-jss1a",
+        })),
+      }),
+    );
+    expect(cls!.subjects.map((s) => s.subjectId)).toEqual(["other-level-off"]);
+  });
+
+  it("only counts a student's skills as complete once every applicable item is rated", () => {
+    const [cls] = buildAssessmentProgress(
+      baseInput({
+        skillItems: [
+          { id: "neat", categories: [] },
+          { id: "punctual", categories: ["JSS", "SSS"] },
+          { id: "counting", categories: ["RECEPTION"] },
+        ],
+        skillRatings: [
+          { studentId: "s1", classArmId: "arm-jss1a", skillAssessmentItemId: "neat" },
+          { studentId: "s1", classArmId: "arm-jss1a", skillAssessmentItemId: "punctual" },
+          { studentId: "s2", classArmId: "arm-jss1a", skillAssessmentItemId: "neat" },
+        ],
+      }),
+    );
+    expect(cls!.skills).toEqual({ completed: 1, total: 3 });
+  });
+
+  it("returns null skills when no item applies to the class's category", () => {
+    const [cls] = buildAssessmentProgress(baseInput({ skillItems: [{ id: "counting", categories: ["RECEPTION"] }] }));
+    expect(cls!.skills).toBeNull();
+  });
+
+  it("counts comments per type and attaches the class teacher and the section's principal-comment owner", () => {
+    const [cls] = buildAssessmentProgress(
+      baseInput({
+        comments: [
+          { studentId: "s1", classArmId: "arm-jss1a", commentType: "CLASS_TEACHER" },
+          { studentId: "s2", classArmId: "arm-jss1a", commentType: "CLASS_TEACHER" },
+          { studentId: "s1", classArmId: "arm-jss1a", commentType: "PRINCIPAL" },
+        ],
+        assignments: [
+          { assignmentType: "CLASS_TEACHER", classArmId: "arm-jss1a", subjectId: null, staffId: "ct", staffName: "OKOYE ADA" },
+          { assignmentType: "PRINCIPAL", classArmId: null, subjectId: null, staffId: "p", staffName: "ADEYEMI BOLA" },
+          { assignmentType: "HEADTEACHER", classArmId: null, subjectId: null, staffId: "h", staffName: "NWOSU EMEKA" },
+        ],
+      }),
+    );
+    expect(cls!.classTeacherComments).toEqual({ completed: 2, total: 3 });
+    expect(cls!.principalComments).toEqual({ completed: 1, total: 3 });
+    expect(cls!.classTeachers.map((t) => t.name)).toEqual(["OKOYE ADA"]);
+    expect(cls!.principalCommentOwners.map((t) => t.name)).toEqual(["ADEYEMI BOLA"]);
+  });
+
+  it("orders classes by class level order, then arm name", () => {
+    const classes = buildAssessmentProgress(
+      baseInput({
+        classArms: [
+          { id: "b", name: "B", classLevelId: "l7", classLevel: { name: "JSS 1", order: 7, category: "JSS" } },
+          { id: "c", name: "A", classLevelId: "l8", classLevel: { name: "JSS 2", order: 8, category: "JSS" } },
+          { id: "a", name: "A", classLevelId: "l7", classLevel: { name: "JSS 1", order: 7, category: "JSS" } },
+        ],
+      }),
+    );
+    expect(classes.map((c) => c.className)).toEqual(["JSS 1 A", "JSS 1 B", "JSS 2 A"]);
   });
 });

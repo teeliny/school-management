@@ -1,5 +1,16 @@
 import { AttendanceStatus, ClassLevelCategoryGroup, Gender, InvoiceStatus, PaymentGatewayProvider, PaymentMethod, ScheduleScope } from "@prisma/client";
-import { categoryToGroup, computeAttendancePercentage, computeOutstandingBalance, type ClassLevelCategory } from "@school/types";
+import {
+  categoryToGroup,
+  computeAttendancePercentage,
+  computeOutstandingBalance,
+  type AssessmentProgressClass,
+  type AssessmentProgressComponentStatus,
+  type AssessmentProgressComponentType,
+  type AssessmentProgressStaff,
+  type AssessmentProgressSubject,
+  type ClassLevelCategory,
+  type ProgressCount,
+} from "@school/types";
 import type { BroadsheetRow } from "../assessments/broadsheet";
 
 /**
@@ -540,4 +551,202 @@ export function buildIncomeReport(payments: PaymentForIncome[]): IncomeReport {
     byMethod: [...byMethod.values()].sort((a, b) => b.total - a.total),
     byGateway: [...byGateway.values()].sort((a, b) => b.total - a.total),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Assessment progress (GET /dashboard/assessment-progress)
+// ---------------------------------------------------------------------------
+
+export interface ProgressClassArmInput {
+  id: string;
+  name: string;
+  classLevelId: string;
+  classLevel: { name: string; order: number; category: ClassLevelCategory };
+}
+export interface ProgressComponentInput {
+  id: string;
+  type: AssessmentProgressComponentType;
+  name: string;
+  sequence: number;
+  status: AssessmentProgressComponentStatus;
+  classLevelCategory: ClassLevelCategory;
+}
+/** A ClassSubject row with its sparse disable overrides already narrowed to the inactive ones (and to this term, for termStatuses). */
+export interface ProgressClassSubjectInput {
+  classLevelCategory: ClassLevelCategory;
+  subject: {
+    id: string;
+    name: string;
+    isGroup: boolean;
+    isActive: boolean;
+    childSubjects: { id: string; name: string; isActive: boolean }[];
+  };
+  levelStatuses: { classLevelId: string }[];
+  termStatuses: { subjectId: string }[];
+}
+export interface ProgressAssignmentInput {
+  assignmentType: "SUBJECT_TEACHER" | "CLASS_TEACHER" | "PRINCIPAL" | "HEADTEACHER";
+  classArmId: string | null;
+  subjectId: string | null;
+  staffId: string;
+  staffName: string;
+}
+export interface AssessmentProgressInput {
+  classArms: ProgressClassArmInput[];
+  /** classArmId -> term roster size (studentInTermWhere). */
+  studentCountByArm: Map<string, number>;
+  components: ProgressComponentInput[];
+  classSubjects: ProgressClassSubjectInput[];
+  enrollments: { studentId: string; subjectId: string; classArmId: string }[];
+  /** `${classArmId}:${subjectId}:${componentId}` -> ScoreEntry count. */
+  scoreCountByKey: Map<string, number>;
+  comments: { studentId: string; classArmId: string; commentType: "CLASS_TEACHER" | "PRINCIPAL" }[];
+  /** Active items only; an empty `categories` means the item's group applies to every category. */
+  skillItems: { id: string; categories: ClassLevelCategory[] }[];
+  skillRatings: { studentId: string; classArmId: string; skillAssessmentItemId: string }[];
+  assignments: ProgressAssignmentInput[];
+}
+
+const COMPONENT_TYPE_ORDER: Record<AssessmentProgressComponentType, number> = { CA: 0, MID_TERM: 1, EXAM: 2 };
+
+function dedupeStaff(rows: ProgressAssignmentInput[]): AssessmentProgressStaff[] {
+  const byId = new Map<string, AssessmentProgressStaff>();
+  for (const row of rows) byId.set(row.staffId, { staffId: row.staffId, name: row.staffName });
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Cross-joins already-fetched rows into per-class completion counts. Subject
+ * rows are always *scoreable* subjects — a group (isGroup) ClassSubject is
+ * flattened into its childSubjects (CLAUDE.md's group-subject rule), and a
+ * child is covered by an enrollment/assignment against its group too
+ * (coveringEnrollmentSubjectIds' rule). A subject is dropped when it's
+ * disabled outright, disabled for this ClassLevel (ClassSubjectLevelStatus)
+ * or for this term (ClassSubjectTermStatus, on either the child or its
+ * group), or has nobody enrolled — there's nothing to complete then.
+ */
+export function buildAssessmentProgress(input: AssessmentProgressInput): AssessmentProgressClass[] {
+  const enrolledByArmSubject = new Map<string, Set<string>>();
+  for (const e of input.enrollments) {
+    const key = `${e.classArmId}:${e.subjectId}`;
+    const set = enrolledByArmSubject.get(key) ?? new Set<string>();
+    set.add(e.studentId);
+    enrolledByArmSubject.set(key, set);
+  }
+
+  const commentedByArmType = new Map<string, Set<string>>();
+  for (const c of input.comments) {
+    const key = `${c.classArmId}:${c.commentType}`;
+    const set = commentedByArmType.get(key) ?? new Set<string>();
+    set.add(c.studentId);
+    commentedByArmType.set(key, set);
+  }
+
+  // classArmId -> studentId -> rated item ids
+  const ratedByArmStudent = new Map<string, Map<string, Set<string>>>();
+  for (const r of input.skillRatings) {
+    const byStudent = ratedByArmStudent.get(r.classArmId) ?? new Map<string, Set<string>>();
+    const items = byStudent.get(r.studentId) ?? new Set<string>();
+    items.add(r.skillAssessmentItemId);
+    byStudent.set(r.studentId, items);
+    ratedByArmStudent.set(r.classArmId, byStudent);
+  }
+
+  const principalOwners = dedupeStaff(input.assignments.filter((a) => a.assignmentType === "PRINCIPAL"));
+  const headteacherOwners = dedupeStaff(input.assignments.filter((a) => a.assignmentType === "HEADTEACHER"));
+
+  const arms = [...input.classArms].sort(
+    (a, b) => a.classLevel.order - b.classLevel.order || a.name.localeCompare(b.name),
+  );
+
+  return arms.map((arm): AssessmentProgressClass => {
+    const category = arm.classLevel.category;
+    const totalStudents = input.studentCountByArm.get(arm.id) ?? 0;
+
+    const components = input.components
+      .filter((c) => c.classLevelCategory === category)
+      .sort((a, b) => COMPONENT_TYPE_ORDER[a.type] - COMPONENT_TYPE_ORDER[b.type] || a.sequence - b.sequence);
+
+    const subjects: AssessmentProgressSubject[] = [];
+    for (const cs of input.classSubjects) {
+      if (cs.classLevelCategory !== category) continue;
+      if (!cs.subject.isActive) continue;
+      if (cs.levelStatuses.some((s) => s.classLevelId === arm.classLevelId)) continue;
+      const termDisabled = new Set(cs.termStatuses.map((s) => s.subjectId));
+      if (termDisabled.has(cs.subject.id)) continue;
+
+      const scoreables = cs.subject.isGroup
+        ? cs.subject.childSubjects.filter((c) => c.isActive)
+        : [{ id: cs.subject.id, name: cs.subject.name }];
+
+      for (const subject of scoreables) {
+        if (termDisabled.has(subject.id)) continue;
+        const coveringIds = subject.id === cs.subject.id ? [subject.id] : [subject.id, cs.subject.id];
+
+        const enrolled = new Set<string>();
+        for (const id of coveringIds) {
+          for (const studentId of enrolledByArmSubject.get(`${arm.id}:${id}`) ?? []) enrolled.add(studentId);
+        }
+        if (enrolled.size === 0) continue;
+
+        const teachers = dedupeStaff(
+          input.assignments.filter(
+            (a) =>
+              a.assignmentType === "SUBJECT_TEACHER" &&
+              a.classArmId === arm.id &&
+              a.subjectId !== null &&
+              coveringIds.includes(a.subjectId),
+          ),
+        );
+
+        subjects.push({
+          subjectId: subject.id,
+          subjectName: subject.name,
+          teachers,
+          total: enrolled.size,
+          components: components.map((c) => ({
+            componentId: c.id,
+            type: c.type,
+            name: c.name,
+            status: c.status,
+            completed: Math.min(input.scoreCountByKey.get(`${arm.id}:${subject.id}:${c.id}`) ?? 0, enrolled.size),
+          })),
+        });
+      }
+    }
+    subjects.sort((a, b) => a.subjectName.localeCompare(b.subjectName));
+
+    const applicableItemIds = input.skillItems
+      .filter((item) => item.categories.length === 0 || item.categories.includes(category))
+      .map((item) => item.id);
+    let skills: ProgressCount | null = null;
+    if (applicableItemIds.length > 0) {
+      const byStudent = ratedByArmStudent.get(arm.id) ?? new Map<string, Set<string>>();
+      let completed = 0;
+      for (const rated of byStudent.values()) {
+        if (applicableItemIds.every((id) => rated.has(id))) completed += 1;
+      }
+      skills = { completed: Math.min(completed, totalStudents), total: totalStudents };
+    }
+
+    const countComments = (type: "CLASS_TEACHER" | "PRINCIPAL"): ProgressCount => ({
+      completed: Math.min(commentedByArmType.get(`${arm.id}:${type}`)?.size ?? 0, totalStudents),
+      total: totalStudents,
+    });
+
+    return {
+      classArmId: arm.id,
+      className: `${arm.classLevel.name} ${arm.name}`,
+      classLevelCategory: category,
+      totalStudents,
+      classTeachers: dedupeStaff(
+        input.assignments.filter((a) => a.assignmentType === "CLASS_TEACHER" && a.classArmId === arm.id),
+      ),
+      principalCommentOwners: categoryToGroup(category) === "JSS_SSS" ? principalOwners : headteacherOwners,
+      classTeacherComments: countComments("CLASS_TEACHER"),
+      principalComments: countComments("PRINCIPAL"),
+      skills,
+      subjects,
+    };
+  });
 }

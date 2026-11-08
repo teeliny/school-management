@@ -50,6 +50,17 @@ export class DashboardController {
     return this.service.scoreEntryCompletion(user, termId, classLevelCategory);
   }
 
+  @Get("assessment-progress")
+  assessmentProgress(
+    @CurrentUser() user: RequestUser,
+    @Query("termId") termId: string,
+    @Query("section") section?: string,
+    @Query("classLevelCategory") classLevelCategory?: string,
+    @Query("classArmId") classArmId?: string,
+  ) {
+    return this.service.assessmentProgress(user, { termId, section, classLevelCategory, classArmId });
+  }
+
   @Get("attendance-insights")
   attendanceInsights(@CurrentUser() user: RequestUser, @Query("termId") termId: string, @Query("classArmId") classArmId?: string) {
     return classArmId

@@ -28,6 +28,7 @@ import {
   Settings,
   History,
   Menu,
+  ListChecks,
   type LucideIcon,
 } from "lucide-react";
 import { formatPersonName, personInitials } from "@school/types";
@@ -240,6 +241,18 @@ const NAV_SECTIONS: { eyebrow: string; items: NavItem[] }[] = [
           isAdmin ||
           ["CLASS_TEACHER", "SUBJECT_TEACHER", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some(
             (t) => user.assignmentTypes.includes(t),
+          ),
+      },
+      {
+        href: "/assessment-progress",
+        label: "Assessment progress",
+        icon: ListChecks,
+        // Counts-only completion view — same audience as the API's gate
+        // (DashboardService.resolveAssessmentProgressCategories).
+        visible: ({ isAdmin, user }) =>
+          isAdmin ||
+          ["REGISTRAR", "PRINCIPAL", "HEADTEACHER", "VICE_PRINCIPAL"].some((t) =>
+            user.assignmentTypes.includes(t),
           ),
       },
       { href: "/report-cards", label: "Report Cards", icon: FileText },

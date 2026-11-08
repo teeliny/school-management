@@ -6,13 +6,17 @@ import {
   AttendanceSessionType,
   ClassLevelCategory,
   ClassLevelCategoryGroup,
+  EnrollmentStatus,
   PaymentGatewayProvider,
   PaymentMethod,
   PaymentStatus,
+  ReportCommentType,
   StaffStatus,
   StudentStatus,
 } from "@prisma/client";
-import { computeSchoolDaysOpened, formatPersonName } from "@school/types";
+import { computeSchoolDaysOpened, formatPersonName, groupToCategories, type AssessmentProgressResponse } from "@school/types";
+import { studentInTermWhere } from "../common/student-status-scope";
+import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
@@ -22,6 +26,7 @@ import {
   aggregateClassDailyTrend,
   aggregateSchoolAttendance,
   bucketInvitationsByWeek,
+  buildAssessmentProgress,
   buildIncomeReport,
   buildScoreEntryCompletionRows,
   computeGenderSplit,
@@ -38,6 +43,7 @@ import {
   sumOutstandingBalances,
   summarizeStudentAttendance,
   tallyInvoicesByStatus,
+  type ProgressAssignmentInput,
 } from "./dashboard.util";
 
 /**
@@ -296,6 +302,219 @@ export class DashboardService {
     const countByKey = new Map(counts.map((c) => [`${c.classArmId}:${c.subjectId}:${c.assessmentComponentId}`, c._count]));
 
     return buildScoreEntryCompletionRows(classArms, subjects, openComponents, countByKey);
+  }
+
+  /**
+   * Completion counts (never a student list) for every assessment/comment a
+   * term report card needs — each non-DRAFT CA/MID_TERM/EXAM component per
+   * scoreable subject, skills, class-teacher and principal comments — per
+   * class arm, with the owning teacher(s) attached so the web page can also
+   * regroup it by subject or by teacher. School-wide for Super-Admin/Admin/
+   * Registrar; Principal/VP/Headteacher are held to their own section
+   * (resolvePrincipalHeadteacherCategories). `section`/`classLevelCategory`
+   * narrow further and are intersected with that scope, never widen it.
+   * Roster is the term's (studentInTermWhere), and subject rows come from
+   * ACTIVE StudentSubjectEnrollment, minus ClassSubjectLevelStatus/
+   * ClassSubjectTermStatus disables (see buildAssessmentProgress). A handful
+   * of batched queries for the whole scope, not one per cell.
+   */
+  async assessmentProgress(
+    user: RequestUser,
+    params: { termId: string; section?: string; classLevelCategory?: string; classArmId?: string },
+  ): Promise<AssessmentProgressResponse> {
+    const categories = this.resolveAssessmentProgressCategories(user, params.section, params.classLevelCategory);
+    if (!params.termId) throw new BadRequestException("termId is required");
+
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: params.termId } });
+    const empty: AssessmentProgressResponse = { termId: term.id, termName: term.name, classes: [] };
+    if (categories.length === 0) return empty;
+
+    const classArms = await this.prisma.classArm.findMany({
+      where: {
+        academicSessionId: term.academicSessionId,
+        classLevel: { category: { in: categories } },
+        ...(params.classArmId ? { id: params.classArmId } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        classLevelId: true,
+        classLevel: { select: { name: true, order: true, category: true } },
+      },
+    });
+    if (classArms.length === 0) return empty;
+    const armIds = classArms.map((a) => a.id);
+    const armCategories = [...new Set(classArms.map((a) => a.classLevel.category))];
+    const inTerm = studentInTermWhere(term.endDate);
+
+    const [studentCounts, components, classSubjects, enrollments, scoreCounts, comments, skillItems, skillRatings, assignments] =
+      await Promise.all([
+        this.prisma.studentProfile.groupBy({
+          by: ["currentClassId"],
+          where: { currentClassId: { in: armIds }, ...inTerm },
+          _count: { _all: true },
+        }),
+        this.prisma.assessmentComponent.findMany({
+          where: {
+            termId: term.id,
+            classLevelCategory: { in: armCategories },
+            status: { not: AssessmentComponentStatus.DRAFT },
+          },
+          select: { id: true, type: true, name: true, sequence: true, status: true, classLevelCategory: true },
+        }),
+        this.prisma.classSubject.findMany({
+          where: { classLevelCategory: { in: armCategories } },
+          select: {
+            classLevelCategory: true,
+            subject: {
+              select: {
+                id: true,
+                name: true,
+                isGroup: true,
+                isActive: true,
+                childSubjects: { select: { id: true, name: true, isActive: true } },
+              },
+            },
+            levelStatuses: { where: { isActive: false }, select: { classLevelId: true } },
+            termStatuses: { where: { termId: term.id, isActive: false }, select: { subjectId: true } },
+          },
+        }),
+        this.prisma.studentSubjectEnrollment.findMany({
+          where: { classArmId: { in: armIds }, termId: term.id, status: EnrollmentStatus.ACTIVE, student: inTerm },
+          select: { studentId: true, subjectId: true, classArmId: true },
+        }),
+        this.prisma.scoreEntry.groupBy({
+          by: ["classArmId", "subjectId", "assessmentComponentId"],
+          where: { classArmId: { in: armIds }, assessmentComponent: { termId: term.id }, student: inTerm },
+          _count: true,
+        }),
+        this.prisma.reportComment.findMany({
+          where: {
+            termId: term.id,
+            commentType: { in: [ReportCommentType.CLASS_TEACHER, ReportCommentType.PRINCIPAL] },
+            student: { currentClassId: { in: armIds }, ...inTerm },
+          },
+          select: { studentId: true, commentType: true, student: { select: { currentClassId: true } } },
+        }),
+        this.prisma.skillAssessmentItem.findMany({
+          where: { academicSessionId: term.academicSessionId, isActive: true },
+          select: { id: true, group: { select: { classLevelCategories: { select: { classLevelCategory: true } } } } },
+        }),
+        this.prisma.skillRating.findMany({
+          where: {
+            termId: term.id,
+            student: { currentClassId: { in: armIds }, ...inTerm },
+            skillAssessmentItem: { academicSessionId: term.academicSessionId, isActive: true },
+          },
+          select: { studentId: true, skillAssessmentItemId: true, student: { select: { currentClassId: true } } },
+        }),
+        this.prisma.staffAssignment.findMany({
+          where: {
+            academicSessionId: term.academicSessionId,
+            isActive: true,
+            assignmentType: {
+              in: [
+                AssignmentType.SUBJECT_TEACHER,
+                AssignmentType.CLASS_TEACHER,
+                AssignmentType.PRINCIPAL,
+                AssignmentType.HEADTEACHER,
+              ],
+            },
+            staff: { status: StaffStatus.ACTIVE },
+          },
+          select: {
+            assignmentType: true,
+            classArmId: true,
+            subjectId: true,
+            staffId: true,
+            staff: { select: { user: { select: { firstName: true, lastName: true } } } },
+          },
+        }),
+      ]);
+
+    const classes = buildAssessmentProgress({
+      classArms,
+      studentCountByArm: new Map(
+        studentCounts.flatMap((c) => (c.currentClassId ? [[c.currentClassId, c._count._all] as const] : [])),
+      ),
+      components: components.map((c) => ({
+        ...c,
+        status: c.status as Exclude<AssessmentComponentStatus, "DRAFT">,
+      })),
+      classSubjects,
+      enrollments,
+      scoreCountByKey: new Map(
+        scoreCounts.map((c) => [`${c.classArmId}:${c.subjectId}:${c.assessmentComponentId}`, c._count]),
+      ),
+      comments: comments.flatMap((c) =>
+        c.student.currentClassId
+          ? [{ studentId: c.studentId, classArmId: c.student.currentClassId, commentType: c.commentType as "CLASS_TEACHER" | "PRINCIPAL" }]
+          : [],
+      ),
+      skillItems: skillItems.map((item) => ({
+        id: item.id,
+        categories: item.group.classLevelCategories.map((c) => c.classLevelCategory),
+      })),
+      skillRatings: skillRatings.flatMap((r) =>
+        r.student.currentClassId
+          ? [{ studentId: r.studentId, classArmId: r.student.currentClassId, skillAssessmentItemId: r.skillAssessmentItemId }]
+          : [],
+      ),
+      assignments: assignments.map((a) => ({
+        assignmentType: a.assignmentType as ProgressAssignmentInput["assignmentType"],
+        classArmId: a.classArmId,
+        subjectId: a.subjectId,
+        staffId: a.staffId,
+        staffName: formatPersonName(a.staff.user),
+      })),
+    });
+
+    return { termId: term.id, termName: term.name, classes };
+  }
+
+  /**
+   * Who may call assessmentProgress, and which categories they get. A
+   * school-wide caller asking for a filter combination that matches nothing
+   * (e.g. section=JSS_SSS&classLevelCategory=NURSERY) just gets no classes;
+   * a section-scoped caller asking for anything outside their section is a
+   * 403, so they can't mistake "out of scope" for "nothing outstanding".
+   */
+  private resolveAssessmentProgressCategories(
+    user: RequestUser,
+    section?: string,
+    classLevelCategory?: string,
+  ): ClassLevelCategory[] {
+    const isSchoolWide =
+      user.roles.includes("SUPER_ADMIN") || user.roles.includes("ADMIN") || user.assignmentTypes.includes("REGISTRAR");
+    const scoped = resolvePrincipalHeadteacherCategories(user);
+    if (!isSchoolWide && !scoped) {
+      throw new ForbiddenException(
+        "Only Super-Admin, Admin, Registrar, Principal, Vice Principal or Headteacher can view assessment progress",
+      );
+    }
+
+    let categories: ClassLevelCategory[] = scoped ?? Object.values(ClassLevelCategory);
+    const requested: ClassLevelCategory[][] = [];
+    if (section !== undefined && section !== "") {
+      if (!(Object.values(ClassLevelCategoryGroup) as string[]).includes(section)) {
+        throw new BadRequestException("section must be JSS_SSS or CRECHE_NURSERY_PRIMARY");
+      }
+      requested.push(groupToCategories(section as ClassLevelCategoryGroup) as ClassLevelCategory[]);
+    }
+    if (classLevelCategory !== undefined && classLevelCategory !== "") {
+      if (!(Object.values(ClassLevelCategory) as string[]).includes(classLevelCategory)) {
+        throw new BadRequestException("Invalid classLevelCategory");
+      }
+      requested.push([classLevelCategory as ClassLevelCategory]);
+    }
+    for (const filter of requested) {
+      const narrowed = categories.filter((c) => filter.includes(c));
+      if (scoped && narrowed.length === 0) {
+        throw new ForbiddenException("That section is outside your assigned section");
+      }
+      categories = narrowed;
+    }
+    return categories;
   }
 
   /**
