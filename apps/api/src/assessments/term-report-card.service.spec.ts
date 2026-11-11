@@ -4,7 +4,13 @@ import type { RequestUser } from "../auth/jwt.strategy";
 
 function buildPrismaMock() {
   return {
-    termReportCard: { findUniqueOrThrow: jest.fn(), update: jest.fn(), findMany: jest.fn(), upsert: jest.fn() },
+    termReportCard: {
+      findUniqueOrThrow: jest.fn(),
+      update: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
     parentProfile: { findUnique: jest.fn() },
     studentProfile: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), findMany: jest.fn() },
     term: { findUniqueOrThrow: jest.fn() },
@@ -464,6 +470,119 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
         where: {
           OR: [{ student: { currentClass: { classLevel: { category: { in: ["CRECHE", "RECEPTION", "NURSERY", "PRIMARY"] } } } } }],
         },
+      }),
+    );
+  });
+});
+
+describe("TermReportCardService.publishAll (Report Cards page \"Publish all\")", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let notifications: { notify: jest.Mock };
+  let service: TermReportCardService;
+  const END_DATE = new Date("2025-12-18");
+
+  function card(id: string, reportType: TermReportCardType) {
+    return {
+      id,
+      studentId: `student-${id}`,
+      termId: "term-1",
+      reportType,
+      status: TermReportCardStatus.READY,
+      student: { user: { firstName: "Ada", lastName: id } },
+      term: { name: "1st Term" },
+    };
+  }
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    notifications = buildNotificationsMock();
+    service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      buildQueueMock() as never,
+      notifications as never,
+    );
+    prisma.term.findUniqueOrThrow.mockResolvedValue({ id: "term-1", academicSessionId: "session-1", endDate: END_DATE });
+  });
+
+  it("publishes every READY, unflagged, in-term card for the requested scope", async () => {
+    prisma.termReportCard.findMany.mockResolvedValue([card("a", TermReportCardType.MID_TERM), card("b", TermReportCardType.MID_TERM)]);
+
+    const result = await service.publishAll({ termId: "term-1", reportType: TermReportCardType.MID_TERM, classArmId: "arm-1" });
+
+    expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          termId: "term-1",
+          status: TermReportCardStatus.READY,
+          reportType: TermReportCardType.MID_TERM,
+          needsRegeneration: false,
+          student: { currentClassId: "arm-1", OR: [{ status: "ACTIVE" }, { inactiveSince: { gte: END_DATE } }] },
+        },
+      }),
+    );
+    expect(prisma.termReportCard.update).toHaveBeenCalledTimes(2);
+    expect(prisma.termReportCard.update).toHaveBeenCalledWith({
+      where: { id: "a" },
+      data: { status: TermReportCardStatus.PUBLISHED, publishedAt: expect.any(Date) },
+    });
+    expect(result).toEqual({ publishedCount: 2, skipped: [], needsRegenerationCount: 0, leftSchoolCount: 0 });
+    // MID_TERM publishes never notify.
+    expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
+  it("reports how many were held back for needing regeneration or for a student who left", async () => {
+    prisma.termReportCard.findMany.mockResolvedValue([]);
+    prisma.termReportCard.count.mockResolvedValueOnce(3).mockResolvedValueOnce(2);
+
+    const result = await service.publishAll({ termId: "term-1" });
+
+    expect(result).toEqual({ publishedCount: 0, skipped: [], needsRegenerationCount: 3, leftSchoolCount: 2 });
+    expect(prisma.termReportCard.update).not.toHaveBeenCalled();
+  });
+
+  it("skips (doesn't force-publish) a FULL_TERM card that fails the FR4.7 gate, and notifies guardians for one that passes", async () => {
+    prisma.termReportCard.findMany.mockResolvedValue([card("ok", TermReportCardType.FULL_TERM), card("bad", TermReportCardType.FULL_TERM)]);
+    prisma.studentProfile.findUniqueOrThrow.mockResolvedValue({ currentClass: { id: "arm-1" } });
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([{ subjectId: "subj-1" }]);
+    prisma.subjectTermResult.findMany.mockResolvedValue([{ subjectId: "subj-1" }]);
+    prisma.skillAssessmentItem.findMany.mockResolvedValue([]);
+    prisma.skillRating.findMany.mockResolvedValue([]);
+    prisma.reportComment.findFirst
+      .mockResolvedValueOnce({ id: "ct" }) // "ok": class teacher
+      .mockResolvedValueOnce({ id: "pr" }) // "ok": principal
+      .mockResolvedValueOnce(null); // "bad": class teacher missing
+    prisma.studentGuardian.findMany.mockResolvedValue([{ parent: { userId: "guardian-1" } }]);
+
+    const result = await service.publishAll({ termId: "term-1", reportType: TermReportCardType.FULL_TERM });
+
+    expect(result.publishedCount).toBe(1);
+    expect(result.skipped).toEqual([{ id: "bad", studentName: expect.any(String), reason: "Missing CLASS_TEACHER comment" }]);
+    expect(prisma.termReportCard.update).toHaveBeenCalledTimes(1);
+    expect(prisma.termReportCard.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "ok" } }));
+    expect(notifications.notify).toHaveBeenCalledWith("guardian-1", "REPORT_CARD_PUBLISHED", expect.anything());
+  });
+});
+
+describe("TermReportCardService.findForUser — type/status/needs-regeneration filters", () => {
+  it("passes reportType, status and needsRegeneration through to the query", async () => {
+    const prisma = buildPrismaMock();
+    const service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      buildQueueMock() as never,
+      buildNotificationsMock() as never,
+    );
+    prisma.termReportCard.findMany.mockResolvedValue([]);
+
+    await service.findForUser(
+      { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] },
+      { termId: "term-1", reportType: TermReportCardType.MID_TERM, status: TermReportCardStatus.READY, needsRegeneration: true },
+    );
+
+    expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { termId: "term-1", reportType: "MID_TERM", status: "READY", needsRegeneration: true },
       }),
     );
   });

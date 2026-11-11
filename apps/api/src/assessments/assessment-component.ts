@@ -11,9 +11,16 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { AssessmentComponentStatus, ClassLevelCategory } from "@prisma/client";
+import {
+  AssessmentComponentStatus,
+  AssessmentComponentType,
+  ClassLevelCategory,
+  TermReportCardStatus,
+  TermReportCardType,
+} from "@prisma/client";
 import { isStructureComplete } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
+import { studentInTermWhere } from "../common/student-status-scope";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { PoliciesGuard } from "../casl/policies.guard";
 import { CheckPolicies } from "../casl/check-policies.decorator";
@@ -86,11 +93,34 @@ export class AssessmentComponentService {
     });
   }
 
-  forcePublish(id: string) {
-    return this.prisma.assessmentComponent.update({
+  /**
+   * Manual twin of the worker sweep's CLOSED->PUBLISHED step — including,
+   * for the MID_TERM component, publishing that class group's READY mid-term
+   * report cards (same rule as AssessmentSweepProcessor.publishMidTermReports:
+   * skip needsRegeneration and students who left before the term ended).
+   */
+  async forcePublish(id: string) {
+    const component = await this.prisma.assessmentComponent.update({
       where: { id },
       data: { status: AssessmentComponentStatus.PUBLISHED },
     });
+    if (component.type === AssessmentComponentType.MID_TERM) {
+      const term = await this.prisma.term.findUniqueOrThrow({ where: { id: component.termId } });
+      await this.prisma.termReportCard.updateMany({
+        where: {
+          termId: component.termId,
+          reportType: TermReportCardType.MID_TERM,
+          status: TermReportCardStatus.READY,
+          needsRegeneration: false,
+          student: {
+            currentClass: { classLevel: { category: component.classLevelCategory } },
+            ...studentInTermWhere(term.endDate),
+          },
+        },
+        data: { status: TermReportCardStatus.PUBLISHED, publishedAt: new Date() },
+      });
+    }
+    return component;
   }
 }
 

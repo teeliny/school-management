@@ -7,7 +7,7 @@ function buildPrismaMock() {
     term: { findUniqueOrThrow: jest.fn() },
     classArm: { findMany: jest.fn() },
     studentSubjectEnrollment: { findMany: jest.fn() },
-    termReportCard: { upsert: jest.fn() },
+    termReportCard: { upsert: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     reportWindow: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
   };
 }
@@ -153,6 +153,50 @@ describe("AssessmentSweepProcessor.process (orchestration)", () => {
     await processor.process({} as never);
 
     expect(reportCardQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("publishes the group's READY mid-term report cards when the MID_TERM component reaches its publishAt", async () => {
+    prisma.assessmentComponent.findMany
+      .mockResolvedValueOnce([
+        buildComponent({ id: "midterm", type: AssessmentComponentType.MID_TERM, status: AssessmentComponentStatus.CLOSED }),
+      ])
+      .mockResolvedValueOnce([
+        buildComponent({ id: "midterm", type: AssessmentComponentType.MID_TERM, status: AssessmentComponentStatus.PUBLISHED }),
+      ]);
+    const endDate = new Date("2025-12-18");
+    prisma.term.findUniqueOrThrow.mockResolvedValue({ id: "term-1", academicSessionId: "session-1", endDate });
+
+    await processor.process({} as never);
+
+    expect(prisma.termReportCard.updateMany).toHaveBeenCalledWith({
+      where: {
+        termId: "term-1",
+        reportType: "MID_TERM",
+        status: "READY",
+        needsRegeneration: false,
+        student: {
+          currentClass: { classLevel: { category: "JSS" } },
+          OR: [{ status: "ACTIVE" }, { inactiveSince: { gte: endDate } }],
+        },
+      },
+      data: { status: "PUBLISHED", publishedAt: expect.any(Date) },
+    });
+    // Publishing isn't closing — no fresh generation is enqueued.
+    expect(reportCardQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("does not publish report cards when a non-MID_TERM component publishes", async () => {
+    prisma.assessmentComponent.findMany
+      .mockResolvedValueOnce([
+        buildComponent({ id: "ca", type: AssessmentComponentType.CA, status: AssessmentComponentStatus.CLOSED }),
+      ])
+      .mockResolvedValueOnce([
+        buildComponent({ id: "ca", type: AssessmentComponentType.CA, status: AssessmentComponentStatus.PUBLISHED }),
+      ]);
+
+    await processor.process({} as never);
+
+    expect(prisma.termReportCard.updateMany).not.toHaveBeenCalled();
   });
 
   it("also transitions a due ReportWindow in the same tick", async () => {

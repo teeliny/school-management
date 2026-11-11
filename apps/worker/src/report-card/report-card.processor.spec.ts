@@ -24,7 +24,7 @@ function buildFullPrismaMock() {
     studentGuardian: { findFirst: jest.fn().mockResolvedValue(null) },
     schoolHoliday: { findMany: jest.fn().mockResolvedValue([]) },
     attendanceRecord: { count: jest.fn().mockResolvedValue(0) },
-    termReportCard: { update: jest.fn() },
+    termReportCard: { update: jest.fn(), findUnique: jest.fn() },
   };
 }
 
@@ -197,6 +197,62 @@ describe("ReportCardProcessor.process — MID_TERM (only the MID_TERM component,
       }),
     );
     expect(prisma.termReportCard.update.mock.calls[0][0].data).not.toHaveProperty("overallRemark");
+  });
+
+  describe("auto-publish once the MID_TERM component is PUBLISHED", () => {
+    const ACTIVE_STUDENT = { ...STUDENT, status: "ACTIVE", inactiveSince: null };
+
+    function mockOneScoredSubject(componentStatus: string) {
+      prisma.assessmentComponent.findFirst.mockResolvedValue({
+        id: "comp-midterm",
+        type: AssessmentComponentType.MID_TERM,
+        status: componentStatus,
+        maxScore: 20,
+      });
+      prisma.studentSubjectEnrollment.findMany.mockResolvedValue([
+        { subjectId: "subj-math", subject: { isGroup: false, name: "Mathematics", childSubjects: [] } },
+      ]);
+      prisma.scoreEntry.findMany.mockResolvedValue([{ subjectId: "subj-math", score: 18 }]);
+    }
+    const run = () =>
+      processor.process({ data: { studentId: "student-1", termId: "term-1", reportType: "MID_TERM" } } as never);
+
+    it("lands on PUBLISHED (keeping the original publishedAt) when regenerated after the publish time", async () => {
+      prisma.studentProfile.findUniqueOrThrow.mockResolvedValue(ACTIVE_STUDENT);
+      mockOneScoredSubject("PUBLISHED");
+      const originalPublishedAt = new Date("2025-11-11T10:00:00Z");
+      prisma.termReportCard.findUnique.mockResolvedValue({ publishedAt: originalPublishedAt });
+
+      await run();
+
+      const data = prisma.termReportCard.update.mock.calls[0][0].data;
+      expect(data.status).toBe("PUBLISHED");
+      expect(data.publishedAt).toBe(originalPublishedAt);
+    });
+
+    it("stays READY while the MID_TERM component isn't PUBLISHED yet", async () => {
+      prisma.studentProfile.findUniqueOrThrow.mockResolvedValue(ACTIVE_STUDENT);
+      mockOneScoredSubject("CLOSED");
+
+      await run();
+
+      const data = prisma.termReportCard.update.mock.calls[0][0].data;
+      expect(data.status).toBe("READY");
+      expect(data).not.toHaveProperty("publishedAt");
+    });
+
+    it("never auto-publishes a student who left before the term ended", async () => {
+      prisma.studentProfile.findUniqueOrThrow.mockResolvedValue({
+        ...STUDENT,
+        status: "WITHDRAWN",
+        inactiveSince: new Date("2025-10-01"),
+      });
+      mockOneScoredSubject("PUBLISHED");
+
+      await run();
+
+      expect(prisma.termReportCard.update.mock.calls[0][0].data.status).toBe("READY");
+    });
   });
 
   it("renders a grouped subject as one weighted-average row, not one row per child", async () => {

@@ -4,6 +4,7 @@ import { Processor, WorkerHost } from "@nestjs/bullmq";
 import type { Job } from "bullmq";
 import QRCode from "qrcode";
 import {
+  AssessmentComponentStatus,
   AssessmentComponentType,
   AttendancePersonType,
   AttendanceSessionType,
@@ -19,7 +20,7 @@ import {
   QUEUE_NAMES,
   type ReportCardGenerationJob,
 } from "@school/types";
-import { studentInTermWhere } from "../common/student-status-scope";
+import { isStudentInTerm, studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
 import { SubjectTermResultService } from "../subject-term-result/subject-term-result.service";
@@ -190,12 +191,30 @@ export class ReportCardProcessor extends WorkerHost {
     await this.storage.put(key, pdfBuffer, "application/pdf");
     const pdfUrl = await this.storage.getSignedUrl(key, SIGNED_URL_TTL_SECONDS);
 
+    // Once the MID_TERM component has reached its publishAt (status
+    // PUBLISHED — the sweep publishes every READY card at that moment), a
+    // card that finishes (re)generating afterwards is published straight
+    // away too. Without this, regenerating an already-published mid-term
+    // report silently unpublished it (regenerate() flips it to GENERATING,
+    // and this used to always land it back on READY), so parents lost
+    // access until someone clicked Publish again. A student who left before
+    // the term ended is never auto-published.
+    const autoPublish =
+      midTermComponent.status === AssessmentComponentStatus.PUBLISHED && isStudentInTerm(student, term.endDate);
+    const existing = autoPublish
+      ? await this.prisma.termReportCard.findUnique({
+          where: { studentId_termId_reportType: { studentId, termId, reportType: "MID_TERM" } },
+          select: { publishedAt: true },
+        })
+      : null;
+
     await this.prisma.termReportCard.update({
       where: { studentId_termId_reportType: { studentId, termId, reportType: "MID_TERM" } },
       data: {
         pdfUrl,
         scoresSnapshot: snapshot as never,
-        status: TermReportCardStatus.READY,
+        status: autoPublish ? TermReportCardStatus.PUBLISHED : TermReportCardStatus.READY,
+        ...(autoPublish ? { publishedAt: existing?.publishedAt ?? generatedAt } : {}),
         generatedAt,
         overallScore: snapshot.overallPercentage,
         overallGrade: snapshot.overallGrade,

@@ -74,6 +74,7 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
     }
     const aggregationCandidateGroups = new Map<string, Group>();
     const midTermClosedGroups = new Map<string, Group>();
+    const midTermPublishedGroups = new Map<string, Group>();
 
     for (const transition of transitions) {
       const component = components.find((c) => c.id === transition.componentId);
@@ -98,6 +99,12 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
         const key = `${group.termId}:${group.classLevelCategory}`;
         midTermClosedGroups.set(key, group);
       }
+
+      if (transition.nextStatus === AssessmentComponentStatus.PUBLISHED && component.type === AssessmentComponentType.MID_TERM) {
+        const group: Group = { termId: component.termId, classLevelCategory: component.classLevelCategory };
+        const key = `${group.termId}:${group.classLevelCategory}`;
+        midTermPublishedGroups.set(key, group);
+      }
     }
 
     for (const { termId, classLevelCategory } of aggregationCandidateGroups.values()) {
@@ -116,6 +123,10 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
       await this.enqueueMidTermReports(termId, classLevelCategory);
     }
 
+    for (const { termId, classLevelCategory } of midTermPublishedGroups.values()) {
+      await this.publishMidTermReports(termId, classLevelCategory);
+    }
+
     const reportWindows = await this.prisma.reportWindow.findMany({
       where: { status: { in: [ReportWindowStatus.DRAFT, ReportWindowStatus.OPEN] } },
     });
@@ -132,6 +143,34 @@ export class AssessmentSweepProcessor extends WorkerHost implements OnModuleInit
         `Sweep transitioned ${transitions.length} assessment component(s), ${windowTransitions.length} report window(s)`,
       );
     }
+  }
+
+  /**
+   * The MID_TERM component's publishAt is the moment mid-term reports go out
+   * to parents: publish every READY card for that (term, class group) in one
+   * go. Mid-term publishing has no completeness gate beyond READY (same as
+   * TermReportCardService.publish in the api) and sends no notification.
+   * Skipped: a card flagged needsRegeneration (its PDF is known-stale — it
+   * publishes itself once regenerated, see ReportCardProcessor.generateMidTerm),
+   * a card still GENERATING (likewise publishes itself when it finishes), and
+   * a student who left before the term ended.
+   */
+  private async publishMidTermReports(termId: string, classLevelCategory: ClassLevelCategory): Promise<void> {
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
+    const { count } = await this.prisma.termReportCard.updateMany({
+      where: {
+        termId,
+        reportType: TermReportCardType.MID_TERM,
+        status: TermReportCardStatus.READY,
+        needsRegeneration: false,
+        student: {
+          currentClass: { classLevel: { category: classLevelCategory } },
+          ...studentInTermWhere(term.endDate),
+        },
+      },
+      data: { status: TermReportCardStatus.PUBLISHED, publishedAt: new Date() },
+    });
+    this.logger.log(`Auto-published ${count} mid-term report card(s) for ${classLevelCategory}, term ${termId}`);
   }
 
   private async enqueueMidTermReports(termId: string, classLevelCategory: ClassLevelCategory): Promise<void> {

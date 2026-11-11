@@ -21,3 +21,11 @@ export function studentInTermWhere(termEndDate: Date): Prisma.StudentProfileWher
 export function studentActiveOnDateWhere(date: Date): Prisma.StudentProfileWhereInput {
   return { OR: [{ status: StudentStatus.ACTIVE }, { inactiveSince: { gt: date } }] };
 }
+
+/** In-memory twin of studentInTermWhere, for a student row that's already loaded. */
+export function isStudentInTerm(
+  student: { status: StudentStatus; inactiveSince: Date | null },
+  termEndDate: Date,
+): boolean {
+  return student.status === StudentStatus.ACTIVE || (student.inactiveSince !== null && student.inactiveSince >= termEndDate);
+}

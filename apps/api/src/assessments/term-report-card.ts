@@ -38,6 +38,25 @@ import { NotificationService } from "../notifications/notification";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { GenerateTermReportCardDto } from "./dto/generate-term-report-card.dto";
 import { GenerateClassReportCardsDto } from "./dto/generate-class-report-cards.dto";
+import { PublishAllReportCardsDto } from "./dto/publish-all-report-cards.dto";
+
+export interface ReportCardListFilters {
+  studentId?: string;
+  termId?: string;
+  classArmId?: string;
+  reportType?: TermReportCardType;
+  status?: TermReportCardStatus;
+  needsRegeneration?: boolean;
+}
+
+/** Reads an optional enum query param, rejecting a value that isn't one of the enum's members. */
+function parseEnumQuery<T extends string>(value: string | undefined, values: Record<string, T>, name: string): T | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (!(Object.values(values) as string[]).includes(value)) {
+    throw new BadRequestException(`Invalid ${name}: ${value}`);
+  }
+  return value as T;
+}
 
 interface ClassReadinessEntry {
   studentId: string;
@@ -159,8 +178,24 @@ export class TermReportCardService {
     if (reportCard.reportType === TermReportCardType.FULL_TERM) {
       await this.assertFullTermPublishGate(reportCard.studentId, reportCard.termId);
     }
+    return this.markPublished(reportCard);
+  }
+
+  /**
+   * The write + guardian notification shared by publish() and publishAll().
+   * Callers have already checked status (READY) and, for FULL_TERM, the
+   * FR4.7 gate. MID_TERM publishes send no notification (unchanged from the
+   * original single-card flow).
+   */
+  private async markPublished(reportCard: {
+    id: string;
+    studentId: string;
+    reportType: TermReportCardType;
+    student: { user: { firstName: string; lastName: string } };
+    term: { name: string };
+  }) {
     const updated = await this.prisma.termReportCard.update({
-      where: { id },
+      where: { id: reportCard.id },
       data: { status: TermReportCardStatus.PUBLISHED, publishedAt: new Date() },
     });
 
@@ -179,6 +214,68 @@ export class TermReportCardService {
     }
 
     return updated;
+  }
+
+  /**
+   * "Publish all" on the Report Cards page: publishes every READY card in
+   * the given term (narrowed by the list's own type/class/student filters)
+   * in one action instead of N Publish clicks. Same per-card rules as
+   * publish(): a FULL_TERM card still has to pass the FR4.7 gate — one that
+   * doesn't is skipped with its reason, never force-published. Also skipped:
+   * a card flagged needsRegeneration (its PDF is known-stale — regenerate
+   * it first), and a student who left the school before the term ended
+   * (studentInTermWhere), whose report shouldn't go out to parents.
+   */
+  async publishAll(dto: PublishAllReportCardsDto) {
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: dto.termId } });
+    const studentWhere: Prisma.StudentProfileWhereInput = {
+      ...(dto.classArmId ? { currentClassId: dto.classArmId } : {}),
+    };
+    const baseWhere: Prisma.TermReportCardWhereInput = {
+      termId: dto.termId,
+      status: TermReportCardStatus.READY,
+      ...(dto.reportType ? { reportType: dto.reportType } : {}),
+      ...(dto.studentId ? { studentId: dto.studentId } : {}),
+    };
+
+    const [candidates, needsRegenerationCount, leftSchoolCount] = await Promise.all([
+      this.prisma.termReportCard.findMany({
+        where: {
+          ...baseWhere,
+          needsRegeneration: false,
+          student: { ...studentWhere, ...studentInTermWhere(term.endDate) },
+        },
+        include: { student: { include: { user: true } }, term: true },
+      }),
+      this.prisma.termReportCard.count({
+        where: { ...baseWhere, needsRegeneration: true, student: studentWhere },
+      }),
+      this.prisma.termReportCard.count({
+        where: {
+          ...baseWhere,
+          needsRegeneration: false,
+          student: { ...studentWhere, NOT: studentInTermWhere(term.endDate) },
+        },
+      }),
+    ]);
+
+    let publishedCount = 0;
+    const skipped: { id: string; studentName: string; reason: string }[] = [];
+    for (const card of candidates) {
+      if (card.reportType === TermReportCardType.FULL_TERM) {
+        try {
+          await this.assertFullTermPublishGate(card.studentId, card.termId);
+        } catch (error) {
+          if (!(error instanceof BadRequestException)) throw error;
+          skipped.push({ id: card.id, studentName: formatPersonName(card.student.user), reason: error.message });
+          continue;
+        }
+      }
+      await this.markPublished(card);
+      publishedCount++;
+    }
+
+    return { publishedCount, skipped, needsRegenerationCount, leftSchoolCount };
   }
 
   private async assertFullTermPublishGate(studentId: string, termId: string): Promise<void> {
@@ -336,8 +433,17 @@ export class TermReportCardService {
    * parent. Each clause keeps its own status filter (STAFF: any status;
    * PARENT/STUDENT: published-only).
    */
-  async findForUser(user: RequestUser, filters: { studentId?: string; termId?: string; classArmId?: string }) {
-    const { classArmId, ...scalarFilters } = filters;
+  async findForUser(user: RequestUser, filters: ReportCardListFilters) {
+    const { classArmId, studentId, termId, reportType, status, needsRegeneration } = filters;
+    // Only the filters actually supplied — an undefined key would still be
+    // harmless to Prisma, but keeps the where clause readable in tests/logs.
+    const scalarFilters: Prisma.TermReportCardWhereInput = {
+      ...(studentId ? { studentId } : {}),
+      ...(termId ? { termId } : {}),
+      ...(reportType ? { reportType } : {}),
+      ...(status ? { status } : {}),
+      ...(needsRegeneration !== undefined ? { needsRegeneration } : {}),
+    };
     const studentSelect = {
       admissionNumber: true,
       user: { select: { firstName: true, lastName: true } },
@@ -539,8 +645,24 @@ export class TermReportCardController {
     @Query("studentId") studentId?: string,
     @Query("termId") termId?: string,
     @Query("classArmId") classArmId?: string,
+    @Query("reportType") reportType?: string,
+    @Query("status") status?: string,
+    @Query("needsRegeneration") needsRegeneration?: string,
   ) {
-    return this.service.findForUser(user, { studentId, termId, classArmId });
+    return this.service.findForUser(user, {
+      studentId,
+      termId,
+      classArmId,
+      reportType: parseEnumQuery(reportType, TermReportCardType, "reportType"),
+      status: parseEnumQuery(status, TermReportCardStatus, "status"),
+      needsRegeneration: needsRegeneration === undefined || needsRegeneration === "" ? undefined : needsRegeneration === "true",
+    });
+  }
+
+  @Post("publish-all")
+  @CheckPolicies((ability) => ability.can("manage", "TermReportCard"))
+  publishAll(@Body() dto: PublishAllReportCardsDto) {
+    return this.service.publishAll(dto);
   }
 
   @Get("progress")

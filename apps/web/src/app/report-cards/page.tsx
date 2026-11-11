@@ -13,7 +13,11 @@ import { Button } from "../../components/atoms/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/molecules/select";
 import { StudentCombobox } from "../../components/molecules/student-combobox";
 import { ReportCardList } from "../../components/organisms/report-card-list";
-import { ReportCardFilters, REPORT_CARD_FILTER_ALL as ALL } from "../../components/organisms/report-card-filters";
+import {
+  ReportCardFilters,
+  REPORT_CARD_FILTER_ALL as ALL,
+  REPORT_CARD_FILTER_NEEDS_REGENERATION,
+} from "../../components/organisms/report-card-filters";
 import { ParentReportCardSection } from "../../components/organisms/parent-report-card-section";
 import { StaffReportCardSection } from "../../components/organisms/staff-report-card-section";
 
@@ -64,6 +68,8 @@ function ReportCardsPageInner() {
   const [studentFilter, setStudentFilter] = useState(searchParams.get("studentId") ?? ALL);
   const [termFilter, setTermFilter] = useState(ALL);
   const [classArmFilter, setClassArmFilter] = useState(ALL);
+  const [reportTypeFilter, setReportTypeFilter] = useState(ALL);
+  const [statusFilter, setStatusFilter] = useState(ALL);
   const [progress, setProgress] = useState<ProgressSummary | null>(null);
   const [classReadiness, setClassReadiness] = useState<ClassReadiness | null>(null);
   const [generatingClass, setGeneratingClass] = useState(false);
@@ -341,6 +347,10 @@ function ReportCardsPageInner() {
             onStudentFilterChange={setStudentFilter}
             termFilter={termFilter}
             onTermFilterChange={setTermFilter}
+            reportTypeFilter={reportTypeFilter}
+            onReportTypeFilterChange={setReportTypeFilter}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
           />
 
           {progress && (
@@ -353,6 +363,11 @@ function ReportCardsPageInner() {
             studentId={studentFilter === ALL ? "" : studentFilter}
             termId={termFilter === ALL ? "" : termFilter}
             classArmId={classArmFilter === ALL ? "" : classArmFilter}
+            reportType={reportTypeFilter === ALL ? "" : reportTypeFilter}
+            status={statusFilter === ALL || statusFilter === REPORT_CARD_FILTER_NEEDS_REGENERATION ? "" : statusFilter}
+            needsRegenerationOnly={statusFilter === REPORT_CARD_FILTER_NEEDS_REGENERATION}
+            showPublishAll={canManageReports}
+            onPublished={() => setRefreshKey((k) => k + 1)}
             terms={terms}
             canManage={canManageReports}
             canDelete={isSuperAdmin}

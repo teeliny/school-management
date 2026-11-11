@@ -37,6 +37,12 @@ interface TermOption {
   id: string;
   name: string;
 }
+interface PublishAllResult {
+  publishedCount: number;
+  skipped: { id: string; studentName: string; reason: string }[];
+  needsRegenerationCount: number;
+  leftSchoolCount: number;
+}
 
 const STATUS_VARIANT: Record<ReportStatus, BadgeVariant> = {
   GENERATING: "muted",
@@ -72,10 +78,29 @@ function friendlyPublishError(message: string): string {
   return message;
 }
 
+function summarizePublishAll(result: PublishAllResult): string {
+  const parts = [`Published ${result.publishedCount} report card(s).`];
+  if (result.needsRegenerationCount > 0) {
+    parts.push(`${result.needsRegenerationCount} not published because they need regeneration — regenerate them first.`);
+  }
+  if (result.leftSchoolCount > 0) {
+    parts.push(`${result.leftSchoolCount} not published because the student left before the term ended.`);
+  }
+  if (result.skipped.length > 0) {
+    parts.push(`${result.skipped.length} full-term report(s) skipped because they're incomplete (see below).`);
+  }
+  return parts.join(" ");
+}
+
 export function ReportCardList({
   studentId,
   termId,
   classArmId,
+  reportType = "",
+  status = "",
+  needsRegenerationOnly = false,
+  showPublishAll = false,
+  onPublished,
   terms,
   canManage,
   canDelete,
@@ -84,6 +109,13 @@ export function ReportCardList({
   studentId: string;
   termId: string;
   classArmId: string;
+  reportType?: string;
+  status?: string;
+  needsRegenerationOnly?: boolean;
+  // Admin-tier Report Cards page only — publishes every READY card matching
+  // the current filters (term required) via POST /term-report-cards/publish-all.
+  showPublishAll?: boolean;
+  onPublished?: () => void;
   terms: TermOption[];
   canManage: boolean;
   canDelete: boolean;
@@ -96,12 +128,18 @@ export function ReportCardList({
   const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [confirmPublishAll, setConfirmPublishAll] = useState(false);
+  const [publishingAll, setPublishingAll] = useState(false);
+  const [publishAllResult, setPublishAllResult] = useState<PublishAllResult | null>(null);
 
   const load = useCallback(() => {
     const params = new URLSearchParams();
     if (studentId) params.set("studentId", studentId);
     if (termId) params.set("termId", termId);
     if (classArmId) params.set("classArmId", classArmId);
+    if (reportType) params.set("reportType", reportType);
+    if (status) params.set("status", status);
+    if (needsRegenerationOnly) params.set("needsRegeneration", "true");
     const qs = params.toString();
     apiFetch<TermReportCardItem[]>(`/term-report-cards${qs ? `?${qs}` : ""}`, { auth: true })
       .then((data) => {
@@ -109,7 +147,12 @@ export function ReportCardList({
         setLoadError(null);
       })
       .catch((err) => setLoadError(err instanceof ApiError ? err.message : "Failed to load report cards"));
-  }, [studentId, termId, classArmId]);
+  }, [studentId, termId, classArmId, reportType, status, needsRegenerationOnly]);
+
+  // A new filter scope makes the previous publish-all summary misleading.
+  useEffect(() => {
+    setPublishAllResult(null);
+  }, [studentId, termId, classArmId, reportType, status, needsRegenerationOnly]);
 
   useEffect(() => {
     load();
@@ -125,6 +168,31 @@ export function ReportCardList({
       setActionError(err instanceof ApiError ? friendlyPublishError(err.message) : "Failed to publish report card");
     } finally {
       setPublishing((s) => ({ ...s, [id]: false }));
+    }
+  }
+
+  async function publishAll() {
+    setPublishingAll(true);
+    setActionError(null);
+    try {
+      const result = await apiFetch<PublishAllResult>("/term-report-cards/publish-all", {
+        method: "POST",
+        auth: true,
+        body: {
+          termId,
+          ...(reportType ? { reportType } : {}),
+          ...(classArmId ? { classArmId } : {}),
+          ...(studentId ? { studentId } : {}),
+        },
+      });
+      setPublishAllResult(result);
+      setConfirmPublishAll(false);
+      load();
+      onPublished?.();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Failed to publish report cards");
+    } finally {
+      setPublishingAll(false);
     }
   }
 
@@ -165,8 +233,63 @@ export function ReportCardList({
   if (loadError) return <p className="text-sm text-danger">{loadError}</p>;
   if (!cards) return <p className="text-sm text-muted">Loading…</p>;
 
+  const publishableCount = cards.filter((c) => c.status === "READY" && !c.needsRegeneration).length;
+  const flaggedReadyCount = cards.filter((c) => c.status === "READY" && c.needsRegeneration).length;
+  const scopeLabel = [
+    termLabel(termId),
+    reportType === "MID_TERM" ? "mid-term" : reportType === "FULL_TERM" ? "full-term" : "mid-term and full-term",
+  ].join(" · ");
+
   return (
     <div>
+      {showPublishAll && canManage && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[12.5px] text-muted">
+            {termId
+              ? `${publishableCount} report card(s) ready to publish in this view${
+                  flaggedReadyCount > 0 ? ` · ${flaggedReadyCount} need regeneration first` : ""
+                }`
+              : "Pick a term to publish report cards in bulk."}
+          </p>
+          <AlertDialog open={confirmPublishAll} onOpenChange={setConfirmPublishAll}>
+            <AlertDialogTrigger asChild>
+              <Button type="button" size="sm" disabled={!termId || publishableCount === 0 || publishingAll}>
+                {publishingAll ? "Publishing…" : `Publish all${termId && publishableCount > 0 ? ` (${publishableCount})` : ""}`}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogTitle className="text-lg font-semibold">Publish {publishableCount} report card(s)?</AlertDialogTitle>
+              <AlertDialogDescription className="mt-2 text-sm text-muted">
+                Every ready report card matching the current filters ({scopeLabel}) will be published and parents will be
+                able to see it straight away. Reports that need regeneration, belong to a student who left before the term
+                ended, or (full-term) are still missing results, skills or comments are skipped.
+              </AlertDialogDescription>
+              <div className="mt-4 flex justify-end gap-2">
+                <AlertDialogCancel asChild>
+                  <Button variant="outline">Cancel</Button>
+                </AlertDialogCancel>
+                <Button disabled={publishingAll} onClick={publishAll}>
+                  {publishingAll ? "Publishing…" : "Publish all"}
+                </Button>
+              </div>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      )}
+      {publishAllResult && (
+        <div className="mb-3 rounded-md border border-success/30 bg-success-bg px-3 py-2 text-sm text-success">
+          <p>{summarizePublishAll(publishAllResult)}</p>
+          {publishAllResult.skipped.length > 0 && (
+            <ul className="mt-1 max-h-[250px] list-disc overflow-y-auto pl-5 text-[12px]">
+              {publishAllResult.skipped.map((s) => (
+                <li key={s.id}>
+                  {s.studentName}: {friendlyPublishError(s.reason)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {actionError && (
         <div className="mb-2 flex items-start justify-between gap-3 rounded-md border border-danger/30 bg-danger-bg px-3 py-2 text-sm text-danger">
           <span>{actionError}</span>

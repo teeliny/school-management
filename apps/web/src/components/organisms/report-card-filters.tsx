@@ -7,6 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { StudentCombobox } from "../molecules/student-combobox";
 
 export const REPORT_CARD_FILTER_ALL = "__all__";
+// Not a TermReportCardStatus — a pseudo-status for the Status filter that
+// maps to `needsRegeneration=true` on the API (a flagged card can be READY or
+// PUBLISHED, so it isn't a status of its own).
+export const REPORT_CARD_FILTER_NEEDS_REGENERATION = "__needs_regeneration__";
 
 interface ClassArmOption {
   id: string;
@@ -43,6 +47,10 @@ export function ReportCardFilters({
   onStudentFilterChange,
   termFilter,
   onTermFilterChange,
+  reportTypeFilter,
+  onReportTypeFilterChange,
+  statusFilter,
+  onStatusFilterChange,
 }: {
   classArms: ClassArmOption[];
   classArmFilter: string;
@@ -51,6 +59,10 @@ export function ReportCardFilters({
   onStudentFilterChange: (value: string) => void;
   termFilter: string;
   onTermFilterChange: (value: string) => void;
+  reportTypeFilter: string;
+  onReportTypeFilterChange: (value: string) => void;
+  statusFilter: string;
+  onStatusFilterChange: (value: string) => void;
 }) {
   const [academicSessions, setAcademicSessions] = useState<AcademicSessionOption[]>([]);
   const [sessionId, setSessionId] = useState("");
@@ -95,7 +107,7 @@ export function ReportCardFilters({
   }, [classArmFilter, onStudentFilterChange]);
 
   return (
-    <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <div>
         <Label htmlFor="filter-class-arm">Class arm</Label>
         <Select value={classArmFilter} onValueChange={onClassArmFilterChange}>
@@ -163,6 +175,37 @@ export function ReportCardFilters({
                 {term.name}
               </SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <Label htmlFor="filter-report-type">Report type</Label>
+        <Select value={reportTypeFilter} onValueChange={onReportTypeFilterChange}>
+          <SelectTrigger id="filter-report-type" className="mt-1">
+            <SelectValue placeholder="All types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={REPORT_CARD_FILTER_ALL}>All types</SelectItem>
+            <SelectItem value="MID_TERM">Mid-term</SelectItem>
+            <SelectItem value="FULL_TERM">Full-term</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <Label htmlFor="filter-status">Status</Label>
+        <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+          <SelectTrigger id="filter-status" className="mt-1">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={REPORT_CARD_FILTER_ALL}>All statuses</SelectItem>
+            <SelectItem value="READY">Ready (not published)</SelectItem>
+            <SelectItem value="PUBLISHED">Published</SelectItem>
+            <SelectItem value={REPORT_CARD_FILTER_NEEDS_REGENERATION}>Needs regeneration</SelectItem>
+            <SelectItem value="GENERATING">Generating</SelectItem>
+            <SelectItem value="FAILED">Failed</SelectItem>
           </SelectContent>
         </Select>
       </div>
