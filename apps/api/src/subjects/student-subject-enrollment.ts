@@ -14,7 +14,15 @@ import {
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
-import { ClassLevelCategory, ClassSubject, EnrollmentStatus, Prisma, SubjectType, StudentStatus } from "@prisma/client";
+import {
+  ClassLevelCategory,
+  ClassSubject,
+  EnrollmentStatus,
+  Prisma,
+  SubjectType,
+  StudentStatus,
+  TermReportCardStatus,
+} from "@prisma/client";
 import { QUEUE_NAMES, type SubjectTermResultRecomputeJob } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -95,11 +103,21 @@ export class StudentSubjectEnrollmentService {
       include: { subject: true },
     });
 
+    // A per-student exemption (StudentSubjectExemption, created by drop())
+    // overrides COMPULSORY — without this check every profile save would
+    // silently reactivate a compulsory subject the student was excused from.
+    const exemptSubjectIds = new Set(
+      (
+        await tx.studentSubjectExemption.findMany({ where: { studentId: params.studentId }, select: { subjectId: true } })
+      ).map((e) => e.subjectId),
+    );
+
     for (const classSubject of classSubjects) {
       if (!classSubject.subject.isActive) continue;
 
       const effectiveType = this.resolveEffectiveType(classSubject);
       if (effectiveType !== SubjectType.COMPULSORY) continue;
+      if (exemptSubjectIds.has(classSubject.subjectId)) continue;
 
       const status = await tx.classSubjectTermStatus.findUnique({
         where: {
@@ -210,10 +228,20 @@ export class StudentSubjectEnrollmentService {
       where: { status: StudentStatus.ACTIVE, currentClass: { classLevel: { category: classSubject.classLevelCategory } } },
       include: { currentClass: true },
     });
+    // Same per-student exemption override as the class-assignment sync.
+    const exemptStudentIds = new Set(
+      (
+        await this.prisma.studentSubjectExemption.findMany({
+          where: { subjectId: classSubject.subjectId },
+          select: { studentId: true },
+        })
+      ).map((e) => e.studentId),
+    );
 
     for (const student of students) {
       const classArm = student.currentClass;
       if (!classArm) continue;
+      if (exemptStudentIds.has(student.id)) continue;
 
       const term = await this.prisma.term.findFirst({
         where: { academicSessionId: classArm.academicSessionId, isCurrent: true },
@@ -401,19 +429,169 @@ export class StudentSubjectEnrollmentService {
     return { enrolled, failed };
   }
 
-  drop(id: string) {
-    return this.prisma.studentSubjectEnrollment.update({
+  /**
+   * Drops one enrollment. Beyond the status flip:
+   *  - a COMPULSORY subject also records a StudentSubjectExemption, so the
+   *    compulsory auto-enroll syncs don't reactivate it later;
+   *  - the student's SubjectTermResult rows for the subject (and a group's
+   *    children) in that term are deleted — the full-term report lists every
+   *    SubjectTermResult for the student+term regardless of enrollment, same
+   *    reason the class-change path above deletes them;
+   *  - any already-generated report card for that student+term is flagged
+   *    needsRegeneration (the subject list it printed is now wrong), which
+   *    is what surfaces ReportCardListing's Regenerate button.
+   */
+  async drop(id: string) {
+    const enrollment = await this.prisma.studentSubjectEnrollment.findUnique({
       where: { id },
-      data: { status: EnrollmentStatus.DROPPED },
+      include: {
+        classArm: { include: { classLevel: true } },
+        subject: { select: { childSubjects: { select: { id: true } } } },
+      },
+    });
+    if (!enrollment) throw new NotFoundException("Subject enrollment not found");
+    const { classArm, subject, ...row } = enrollment;
+    if (row.status === EnrollmentStatus.DROPPED) return { ...row, exempted: false, reportCardsFlagged: 0 };
+
+    const classSubject = await this.prisma.classSubject.findUnique({
+      where: {
+        classLevelCategory_subjectId: { classLevelCategory: classArm.classLevel.category, subjectId: row.subjectId },
+      },
+    });
+    const exempted = this.resolveEffectiveType(classSubject) === SubjectType.COMPULSORY;
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.studentSubjectEnrollment.update({
+        where: { id },
+        data: { status: EnrollmentStatus.DROPPED },
+      });
+      if (exempted) {
+        await tx.studentSubjectExemption.upsert({
+          where: { studentId_subjectId: { studentId: row.studentId, subjectId: row.subjectId } },
+          create: { studentId: row.studentId, subjectId: row.subjectId },
+          update: {},
+        });
+      }
+      await tx.subjectTermResult.deleteMany({
+        where: {
+          studentId: row.studentId,
+          termId: row.termId,
+          subjectId: { in: [row.subjectId, ...subject.childSubjects.map((c) => c.id)] },
+        },
+      });
+      const reportCardsFlagged = await this.flagReportCardsForRegeneration(tx, row.studentId, row.termId, "Subject dropped");
+      return { ...updated, exempted, reportCardsFlagged };
     });
   }
 
-  findForStudent(studentId: string, filters: { academicSessionId?: string; termId?: string }) {
-    return this.prisma.studentSubjectEnrollment.findMany({
-      where: { studentId, academicSessionId: filters.academicSessionId, termId: filters.termId },
-      include: { subject: true },
-      orderBy: { createdAt: "asc" },
+  /**
+   * Undoes drop(): reactivates a DROPPED enrollment. A GENERAL/DEPARTMENT
+   * subject goes through enroll() unchanged (department/term/level gates
+   * included). A COMPULSORY one can't — enroll() rejects compulsory opt-in —
+   * so it's handled here: same per-term/per-level applicability gates, the
+   * StudentSubjectExemption is removed so the auto-enroll syncs own it
+   * again, and a recompute is queued the same way enroll() does. Either way
+   * the term's existing report cards are flagged for regeneration.
+   */
+  async restore(id: string) {
+    const enrollment = await this.prisma.studentSubjectEnrollment.findUnique({
+      where: { id },
+      include: { classArm: { include: { classLevel: true } } },
     });
+    if (!enrollment) throw new NotFoundException("Subject enrollment not found");
+    const { classArm, ...row } = enrollment;
+    if (row.status === EnrollmentStatus.ACTIVE) return { ...row, reportCardsFlagged: 0 };
+
+    const classSubject = await this.prisma.classSubject.findUnique({
+      where: {
+        classLevelCategory_subjectId: { classLevelCategory: classArm.classLevel.category, subjectId: row.subjectId },
+      },
+    });
+    if (!classSubject) throw new NotFoundException("This subject is no longer assigned to that class");
+
+    const target = {
+      studentId: row.studentId,
+      subjectId: row.subjectId,
+      classArmId: row.classArmId,
+      academicSessionId: row.academicSessionId,
+      termId: row.termId,
+    };
+
+    if (this.resolveEffectiveType(classSubject) !== SubjectType.COMPULSORY) {
+      const restored = await this.enroll(target);
+      const reportCardsFlagged = await this.flagReportCardsForRegeneration(
+        this.prisma,
+        row.studentId,
+        row.termId,
+        "Subject restored",
+      );
+      return { ...restored, reportCardsFlagged };
+    }
+
+    await this.classSubjectTermStatus.assertActiveForTerm({
+      subjectId: row.subjectId,
+      classLevelCategory: classArm.classLevel.category,
+      termId: row.termId,
+    });
+    await this.classSubjectLevelStatus.assertActiveForClassLevel({
+      subjectId: row.subjectId,
+      classLevelCategory: classArm.classLevel.category,
+      classLevelId: classArm.classLevelId,
+    });
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.studentSubjectExemption.deleteMany({ where: { studentId: row.studentId, subjectId: row.subjectId } });
+      const restored = await tx.studentSubjectEnrollment.update({
+        where: { id },
+        data: { status: EnrollmentStatus.ACTIVE },
+      });
+      const reportCardsFlagged = await this.flagReportCardsForRegeneration(tx, row.studentId, row.termId, "Subject restored");
+      return { ...restored, reportCardsFlagged };
+    });
+
+    await this.recomputeQueue.add("recompute", {
+      studentId: row.studentId,
+      subjectId: row.subjectId,
+      classArmId: row.classArmId,
+      termId: row.termId,
+    });
+    return result;
+  }
+
+  /**
+   * Same flag SubjectTermResultService.recomputeForStudentSubjectTerm sets
+   * (worker) — flagged, not silently regenerated, so an Admin decides when
+   * to reissue a report a parent may already have seen.
+   */
+  private async flagReportCardsForRegeneration(
+    client: Tx | PrismaService,
+    studentId: string,
+    termId: string,
+    reason: string,
+  ): Promise<number> {
+    const { count } = await client.termReportCard.updateMany({
+      where: { studentId, termId, status: { in: [TermReportCardStatus.READY, TermReportCardStatus.PUBLISHED] } },
+      data: { needsRegeneration: true, staleReason: reason, staleSince: new Date() },
+    });
+    return count;
+  }
+
+  async findForStudent(studentId: string, filters: { academicSessionId?: string; termId?: string }) {
+    const [rows, exemptions] = await Promise.all([
+      this.prisma.studentSubjectEnrollment.findMany({
+        where: { studentId, academicSessionId: filters.academicSessionId, termId: filters.termId },
+        include: { subject: true },
+        orderBy: { createdAt: "asc" },
+      }),
+      this.prisma.studentSubjectExemption.findMany({ where: { studentId }, select: { subjectId: true } }),
+    ]);
+    const exemptSubjectIds = new Set(exemptions.map((e) => e.subjectId));
+    // `exempt` = dropped AND excused from a compulsory subject (so the UI can
+    // tell an exemption from an ordinary dropped elective).
+    return rows.map((row) => ({
+      ...row,
+      exempt: row.status === EnrollmentStatus.DROPPED && exemptSubjectIds.has(row.subjectId),
+    }));
   }
 
   // Same visibility rule as the student profile page itself
@@ -478,5 +656,12 @@ export class StudentSubjectEnrollmentController {
   @Audited("StudentSubjectEnrollment", "studentSubjectEnrollment")
   drop(@Param("id") id: string) {
     return this.service.drop(id);
+  }
+
+  @Patch(":id/restore")
+  @CheckPolicies((ability) => ability.can("manage", "StudentSubjectEnrollment"))
+  @Audited("StudentSubjectEnrollment", "studentSubjectEnrollment")
+  restore(@Param("id") id: string) {
+    return this.service.restore(id);
   }
 }

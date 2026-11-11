@@ -30,7 +30,17 @@ interface EnrollmentRow {
   id: string;
   subjectId: string;
   status: "ACTIVE" | "DROPPED";
+  // Dropped from a COMPULSORY subject — a per-student exemption the
+  // compulsory auto-enroll won't undo (StudentSubjectExemption).
+  exempt: boolean;
   subject: { name: string; code: string };
+}
+interface DropResult {
+  exempted: boolean;
+  reportCardsFlagged: number;
+}
+interface RestoreResult {
+  reportCardsFlagged: number;
 }
 interface DepartmentOption {
   department: { name: string };
@@ -47,6 +57,10 @@ const STATUS_VARIANT: Record<EnrollmentRow["status"], BadgeVariant> = {
 // so it's excluded from the "opt into a subject" picker below; the backend
 // is still the single source of truth for that rule (DEPARTMENT mismatches
 // surface as a plain error banner here rather than being pre-filtered).
+//
+// Drop works on any ACTIVE row; dropping a COMPULSORY subject records a
+// per-student exemption so it stays dropped. Restore reverses either kind.
+// Both flag the term's already-generated report cards for regeneration.
 export function StudentSubjectEnrollmentManager() {
   const [classArms, setClassArms] = useState<ClassArmOption[]>([]);
   const [classArmId, setClassArmId] = useState("");
@@ -59,6 +73,7 @@ export function StudentSubjectEnrollmentManager() {
   const [subjectsToEnroll, setSubjectsToEnroll] = useState<string[]>([]);
   const [enrolling, setEnrolling] = useState(false);
   const [droppingId, setDroppingId] = useState<string | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -184,17 +199,48 @@ export function StudentSubjectEnrollmentManager() {
     }
   }
 
-  async function drop(id: string) {
+  function reportNote(count: number): string {
+    if (count === 0) return "";
+    return ` ${count} existing report card${count === 1 ? " is" : "s are"} now marked for regeneration.`;
+  }
+
+  async function drop(row: EnrollmentRow) {
     setError(null);
     setSuccess(null);
-    setDroppingId(id);
+    setDroppingId(row.id);
     try {
-      await apiFetch(`/student-subject-enrollments/${id}/drop`, { method: "PATCH", auth: true });
+      const result = await apiFetch<DropResult>(`/student-subject-enrollments/${row.id}/drop`, {
+        method: "PATCH",
+        auth: true,
+      });
+      setSuccess(
+        `Dropped ${row.subject.name}.` +
+          (result.exempted ? " It's compulsory, so the student is now exempt and it won't be re-added automatically." : "") +
+          reportNote(result.reportCardsFlagged),
+      );
       loadEnrollments();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to drop subject enrollment");
     } finally {
       setDroppingId(null);
+    }
+  }
+
+  async function restore(row: EnrollmentRow) {
+    setError(null);
+    setSuccess(null);
+    setRestoringId(row.id);
+    try {
+      const result = await apiFetch<RestoreResult>(`/student-subject-enrollments/${row.id}/restore`, {
+        method: "PATCH",
+        auth: true,
+      });
+      setSuccess(`Restored ${row.subject.name}.` + reportNote(result.reportCardsFlagged));
+      loadEnrollments();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to restore subject enrollment");
+    } finally {
+      setRestoringId(null);
     }
   }
 
@@ -270,18 +316,31 @@ export function StudentSubjectEnrollmentManager() {
                       {row.subject.name} <span className="font-mono text-muted">({row.subject.code})</span>
                     </td>
                     <td className="py-2.5 pr-4">
-                      <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
+                      <span className="inline-flex flex-wrap gap-1.5">
+                        <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
+                        {row.exempt && <Badge variant="warning">EXEMPT</Badge>}
+                      </span>
                     </td>
                     <td className="py-2.5">
-                      {row.status === "ACTIVE" && (
+                      {row.status === "ACTIVE" ? (
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           disabled={droppingId === row.id}
-                          onClick={() => drop(row.id)}
+                          onClick={() => drop(row)}
                         >
                           {droppingId === row.id ? "Dropping…" : "Drop"}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={restoringId === row.id}
+                          onClick={() => restore(row)}
+                        >
+                          {restoringId === row.id ? "Restoring…" : "Restore"}
                         </Button>
                       )}
                     </td>

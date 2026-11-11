@@ -4,19 +4,30 @@ import type { CreateEnrollmentDto } from "./dto/student-subject-enrollment.dto";
 import type { RequestUser } from "../auth/jwt.strategy";
 
 function buildPrismaMock() {
-  return {
+  const prisma = {
     classArm: { findUniqueOrThrow: jest.fn() },
     classSubject: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
     classSubjectTermStatus: { findUnique: jest.fn() },
     classSubjectLevelStatus: { findUnique: jest.fn() },
     studentDepartment: { findUnique: jest.fn() },
     studentProfile: { findMany: jest.fn(), findUnique: jest.fn() },
-    studentSubjectEnrollment: { upsert: jest.fn(), findMany: jest.fn() },
+    studentSubjectEnrollment: { upsert: jest.fn(), findMany: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    studentSubjectExemption: {
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    subjectTermResult: { deleteMany: jest.fn() },
+    termReportCard: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     staffProfile: { findUnique: jest.fn() },
     staffAssignment: { findMany: jest.fn(), count: jest.fn() },
     parentProfile: { findUnique: jest.fn() },
     term: { findFirst: jest.fn() },
+    $transaction: jest.fn(),
   };
+  // Interactive transaction: run the callback against the same mock.
+  prisma.$transaction.mockImplementation((fn: (tx: typeof prisma) => unknown) => fn(prisma));
+  return prisma;
 }
 
 function buildTxMock() {
@@ -27,6 +38,7 @@ function buildTxMock() {
     classSubjectTermStatus: { findUnique: jest.fn() },
     classSubjectLevelStatus: { findUnique: jest.fn() },
     studentSubjectEnrollment: { upsert: jest.fn(), findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+    studentSubjectExemption: { findMany: jest.fn().mockResolvedValue([]) },
     subjectTermResult: { deleteMany: jest.fn() },
   };
 }
@@ -202,6 +214,27 @@ describe("StudentSubjectEnrollmentService.syncCompulsoryEnrollmentsOnClassAssign
 
     expect(tx.studentSubjectEnrollment.upsert).not.toHaveBeenCalled();
   });
+
+  it("skips a COMPULSORY subject the student is exempted from (StudentSubjectExemption)", async () => {
+    tx.classSubject.findMany.mockResolvedValue([
+      { id: "cs-1", subjectId: "subj-crs", type: SubjectType.COMPULSORY, subject: { isActive: true } },
+      { id: "cs-2", subjectId: "subj-maths", type: SubjectType.COMPULSORY, subject: { isActive: true } },
+    ]);
+    tx.studentSubjectExemption.findMany.mockResolvedValue([{ subjectId: "subj-crs" }]);
+
+    await service.syncCompulsoryEnrollmentsOnClassAssignment(tx as never, {
+      studentId: "student-1",
+      classArmId: "arm-1",
+    });
+
+    expect(tx.studentSubjectExemption.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { studentId: "student-1" } }),
+    );
+    expect(tx.studentSubjectEnrollment.upsert).toHaveBeenCalledTimes(1);
+    expect(tx.studentSubjectEnrollment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ subjectId: "subj-maths" }) }),
+    );
+  });
 });
 
 // Regression: JSS 1's CCA/Yoruba/French report-card bug — a ClassSubject
@@ -323,6 +356,24 @@ describe("StudentSubjectEnrollmentService.syncEnrollmentsForClassSubject", () =>
 
     expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledTimes(2);
     expect(recomputeQueue.add).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips a student exempted from this subject, without touching the others", async () => {
+    prisma.studentProfile.findMany.mockResolvedValue([
+      STUDENT,
+      { id: "student-2", currentClass: { id: "arm-1", classLevelId: "level-1", academicSessionId: "session-1" } },
+    ]);
+    prisma.studentSubjectExemption.findMany.mockResolvedValue([{ studentId: "student-1" }]);
+
+    await service.syncEnrollmentsForClassSubject("cs-1");
+
+    expect(prisma.studentSubjectExemption.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { subjectId: "subj-cca" } }),
+    );
+    expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ studentId: "student-2" }) }),
+    );
   });
 });
 
@@ -541,5 +592,198 @@ describe("StudentSubjectEnrollmentService.findForStudentAsUser", () => {
     await expect(service.findForStudentAsUser("student-1", {}, parentUser)).rejects.toThrow(
       /insufficient permissions/i,
     );
+  });
+});
+
+describe("StudentSubjectEnrollmentService.drop / restore (per-student compulsory exemption)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let classSubjectTermStatus: ReturnType<typeof buildClassSubjectTermStatusMock>;
+  let classSubjectLevelStatus: ReturnType<typeof buildClassSubjectLevelStatusMock>;
+  let recomputeQueue: ReturnType<typeof buildRecomputeQueueMock>;
+  let service: StudentSubjectEnrollmentService;
+
+  const ROW = {
+    id: "enr-1",
+    studentId: "student-1",
+    subjectId: "subj-crs",
+    classArmId: "arm-1",
+    academicSessionId: "session-1",
+    termId: "term-1",
+    status: EnrollmentStatus.ACTIVE,
+  };
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    classSubjectTermStatus = buildClassSubjectTermStatusMock();
+    classSubjectLevelStatus = buildClassSubjectLevelStatusMock();
+    recomputeQueue = buildRecomputeQueueMock();
+    service = new StudentSubjectEnrollmentService(
+      prisma as never,
+      classSubjectTermStatus as never,
+      classSubjectLevelStatus as never,
+      recomputeQueue as never,
+    );
+    prisma.studentSubjectEnrollment.findUnique.mockResolvedValue({
+      ...ROW,
+      classArm: CLASS_ARM,
+      subject: { childSubjects: [] },
+    });
+    prisma.studentSubjectEnrollment.update.mockImplementation(({ data }) => Promise.resolve({ ...ROW, ...data }));
+  });
+
+  describe("drop", () => {
+    it("records an exemption when the dropped subject is COMPULSORY", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.COMPULSORY });
+
+      const result = await service.drop("enr-1");
+
+      expect(prisma.studentSubjectEnrollment.update).toHaveBeenCalledWith({
+        where: { id: "enr-1" },
+        data: { status: EnrollmentStatus.DROPPED },
+      });
+      expect(prisma.studentSubjectExemption.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: { studentId: "student-1", subjectId: "subj-crs" } }),
+      );
+      expect(result.exempted).toBe(true);
+    });
+
+    it("doesn't record an exemption for a GENERAL subject", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.GENERAL });
+
+      const result = await service.drop("enr-1");
+
+      expect(prisma.studentSubjectExemption.upsert).not.toHaveBeenCalled();
+      expect(result.exempted).toBe(false);
+    });
+
+    it("flags the term's generated report cards for regeneration and reports how many", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.COMPULSORY });
+      prisma.termReportCard.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.drop("enr-1");
+
+      expect(prisma.termReportCard.updateMany).toHaveBeenCalledWith({
+        where: { studentId: "student-1", termId: "term-1", status: { in: ["READY", "PUBLISHED"] } },
+        data: expect.objectContaining({ needsRegeneration: true, staleReason: "Subject dropped" }),
+      });
+      expect(result.reportCardsFlagged).toBe(1);
+    });
+
+    it("deletes the subject's (and a group's children's) term results so the full-term report stops listing it", async () => {
+      prisma.studentSubjectEnrollment.findUnique.mockResolvedValue({
+        ...ROW,
+        subjectId: "subj-eng",
+        classArm: CLASS_ARM,
+        subject: { childSubjects: [{ id: "subj-essay" }, { id: "subj-comp" }] },
+      });
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.COMPULSORY });
+
+      await service.drop("enr-1");
+
+      expect(prisma.subjectTermResult.deleteMany).toHaveBeenCalledWith({
+        where: { studentId: "student-1", termId: "term-1", subjectId: { in: ["subj-eng", "subj-essay", "subj-comp"] } },
+      });
+    });
+
+    it("is a no-op for an already-dropped enrollment", async () => {
+      prisma.studentSubjectEnrollment.findUnique.mockResolvedValue({
+        ...ROW,
+        status: EnrollmentStatus.DROPPED,
+        classArm: CLASS_ARM,
+        subject: { childSubjects: [] },
+      });
+
+      await service.drop("enr-1");
+
+      expect(prisma.studentSubjectEnrollment.update).not.toHaveBeenCalled();
+      expect(prisma.termReportCard.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("throws NotFoundException for an unknown enrollment", async () => {
+      prisma.studentSubjectEnrollment.findUnique.mockResolvedValue(null);
+
+      await expect(service.drop("missing")).rejects.toThrow(/not found/i);
+    });
+  });
+
+  describe("restore", () => {
+    beforeEach(() => {
+      prisma.studentSubjectEnrollment.findUnique.mockResolvedValue({
+        ...ROW,
+        status: EnrollmentStatus.DROPPED,
+        classArm: CLASS_ARM,
+      });
+    });
+
+    it("reactivates a COMPULSORY subject, removes the exemption, flags reports and queues a recompute", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.COMPULSORY });
+      prisma.termReportCard.updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.restore("enr-1");
+
+      expect(prisma.studentSubjectExemption.deleteMany).toHaveBeenCalledWith({
+        where: { studentId: "student-1", subjectId: "subj-crs" },
+      });
+      expect(prisma.studentSubjectEnrollment.update).toHaveBeenCalledWith({
+        where: { id: "enr-1" },
+        data: { status: EnrollmentStatus.ACTIVE },
+      });
+      expect(prisma.termReportCard.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ staleReason: "Subject restored" }) }),
+      );
+      expect(recomputeQueue.add).toHaveBeenCalledWith("recompute", {
+        studentId: "student-1",
+        subjectId: "subj-crs",
+        classArmId: "arm-1",
+        termId: "term-1",
+      });
+      expect(result.reportCardsFlagged).toBe(1);
+    });
+
+    it("still honours the per-term/per-level applicability gates for a COMPULSORY subject", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.COMPULSORY });
+      classSubjectLevelStatus.assertActiveForClassLevel.mockRejectedValue(new Error("disabled for this class level"));
+
+      await expect(service.restore("enr-1")).rejects.toThrow(/disabled/);
+      expect(prisma.studentSubjectEnrollment.update).not.toHaveBeenCalled();
+      expect(prisma.studentSubjectExemption.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("routes a GENERAL subject through enroll() and flags reports", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue({ type: SubjectType.GENERAL, departmentId: null });
+      prisma.classArm.findUniqueOrThrow.mockResolvedValue(CLASS_ARM);
+      prisma.studentSubjectEnrollment.upsert.mockResolvedValue({ ...ROW, status: EnrollmentStatus.ACTIVE });
+
+      await service.restore("enr-1");
+
+      expect(prisma.studentSubjectEnrollment.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: { status: EnrollmentStatus.ACTIVE, classArmId: "arm-1" } }),
+      );
+      expect(prisma.studentSubjectExemption.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.termReportCard.updateMany).toHaveBeenCalled();
+    });
+
+    it("rejects when the subject is no longer assigned to the class", async () => {
+      prisma.classSubject.findUnique.mockResolvedValue(null);
+
+      await expect(service.restore("enr-1")).rejects.toThrow(/no longer assigned/i);
+    });
+  });
+
+  it("findForStudent marks a dropped enrollment with an exemption as exempt (and only that one)", async () => {
+    prisma.studentSubjectEnrollment.findMany.mockResolvedValue([
+      { ...ROW, status: EnrollmentStatus.DROPPED },
+      { ...ROW, id: "enr-2", subjectId: "subj-art", status: EnrollmentStatus.DROPPED },
+      { ...ROW, id: "enr-3", subjectId: "subj-maths" },
+    ]);
+    prisma.studentSubjectExemption.findMany.mockResolvedValue([{ subjectId: "subj-crs" }]);
+
+    const rows = await service.findForStudent("student-1", {});
+
+    expect(rows.map((r) => [r.id, r.exempt])).toEqual([
+      ["enr-1", true],
+      ["enr-2", false],
+      ["enr-3", false],
+    ]);
   });
 });

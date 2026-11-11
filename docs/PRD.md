@@ -195,6 +195,7 @@ All account creation other than direct Student record creation goes through this
 - `DEPARTMENT`: only students whose `StudentDepartment` matches `Subject.departmentId` may enroll; only valid for `ClassLevel.category = SSS`.
 
 - **`StudentSubjectEnrollment`** — id, studentId, subjectId, classArmId, academicSessionId, termId, status (active/dropped). Auto-created for COMPULSORY subjects on class enrollment; explicit for GENERAL/DEPARTMENT.
+- **`StudentSubjectExemption`** — id, studentId, subjectId. Per-student opt-out of a COMPULSORY subject (e.g. a student excused from CRS): created when Admin drops a compulsory enrollment, removed when it's restored. Compulsory auto-enrollment skips an exempted student+subject. Not term-scoped — it follows the student across terms and class changes until restored.
 - **`ClassSubjectLevelStatus`** (added 2026-09-04) — id, classSubjectId, classLevelId, isActive (default true), disabledAt, disabledByUserId. `ClassSubject` assigns a subject to an entire class group (e.g. `NURSERY`, which covers every `ClassLevel` in it — "Nursery 1" and "Nursery 2" alike); this table lets one specific `ClassLevel` opt out of that category-wide assignment (e.g. a subject offered in Nursery 2 but not Nursery 1) without splitting the category or duplicating the `ClassSubject` row. Absence of a row means the subject is still active for that `ClassLevel` — same sparse, disable-only shape as the per-term equivalent below. Respected everywhere a class's subject list is resolved: score entry, enrollment (auto and opt-in), subject pickers, broadsheets, and both class-timetable and exam-timetable generation.
 - **`ClassSubjectTermStatus`** — id, classSubjectId, subjectId, termId, isActive (default true), disabledAt, disabledByUserId. Lets Admin disable a subject (or one child of a grouped subject) for one class group in one term only, without touching the session-independent `ClassSubject` assignment or any other term.
 
@@ -458,6 +459,7 @@ Enforcement: NestJS `@Roles()` + `@RequirePermission()` decorators backed by CAS
 - FR2.3: Admin assigns subjects to class levels per session via `ClassSubject`; system auto-enrolls students in COMPULSORY subjects on class assignment.
 - FR2.4: DEPARTMENT-type subjects are only assignable/enrollable for SSS-category class levels and only to students in the matching department; system rejects mismatched enrollment attempts.
 - FR2.5: Students/Admin manage GENERAL subject opt-in within an enrollment window set by Admin.
+- FR2.6: Admin can drop any enrollment (dropping a COMPULSORY one records a `StudentSubjectExemption`) and restore a dropped one. Either action flags the student's already-generated report cards for that term as needing regeneration, and dropping removes that subject's term results so it no longer appears on the full-term report.
 
 ### 6.3 Staff & Assignments
 

@@ -459,6 +459,7 @@ model StudentProfile {
   positions               StudentPosition[]
   departmentHistory       StudentDepartment[]
   subjectEnrollments      StudentSubjectEnrollment[]
+  subjectExemptions       StudentSubjectExemption[]
   scoreEntries            ScoreEntry[]
   subjectTermResults      SubjectTermResult[]
   skillRatings            SkillRating[]
@@ -592,6 +593,7 @@ model Subject {
 
   classSubjects            ClassSubject[]
   enrollments              StudentSubjectEnrollment[]
+  studentExemptions        StudentSubjectExemption[]
   groupWeightsAsGroup      SubjectGroupWeight[]       @relation("GroupWeightGroup")
   groupWeightAsChild       SubjectGroupWeight[]       @relation("GroupWeightChild")
   staffAssignments         StaffAssignment[]
@@ -781,6 +783,28 @@ model StudentSubjectEnrollment {
 
   @@unique([studentId, subjectId, academicSessionId, termId])
   @@map("student_subject_enrollments")
+}
+
+// Per-student opt-out of a COMPULSORY subject (e.g. a student excused from
+// CRS). Sparse — absence of a row means "not exempt". Created by
+// StudentSubjectEnrollmentService.drop when the dropped enrollment's subject
+// is COMPULSORY for the student's class category; removed by restore().
+// Every compulsory auto-enroll path (syncCompulsoryEnrollmentsOnClassAssignment,
+// syncEnrollmentsForClassSubject — and so syncAllCompulsoryEnrollmentsForCurrentTerm)
+// must skip an exempted student+subject, otherwise it silently reactivates
+// the dropped enrollment on the next profile save, ClassSubject edit or new
+// term. Deliberately not scoped to a term/session: it follows the student
+// across terms and class changes until restored.
+model StudentSubjectExemption {
+  id        String         @id @default(uuid())
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([studentId, subjectId])
+  @@map("student_subject_exemptions")
 }
 
 // ---------------------------------------------------------------------------
