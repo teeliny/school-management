@@ -23,7 +23,7 @@ interface TermReportCardItem {
   termId: string;
   reportType: ReportType;
   status: ReportStatus;
-  pdfUrl: string | null;
+  hasPdf: boolean;
   overallScore: string | null;
   overallGrade: string | null;
   needsRegeneration: boolean;
@@ -126,6 +126,7 @@ export function ReportCardList({
   const [actionError, setActionError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState<Record<string, boolean>>({});
   const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
+  const [openingPdf, setOpeningPdf] = useState<Record<string, boolean>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmPublishAll, setConfirmPublishAll] = useState(false);
@@ -193,6 +194,29 @@ export function ReportCardList({
       setActionError(err instanceof ApiError ? err.message : "Failed to publish report cards");
     } finally {
       setPublishingAll(false);
+    }
+  }
+
+  // The list carries no download link — a fresh short-lived one is signed
+  // only now, on click (GET /term-report-cards/:id/pdf-url). The tab is
+  // opened synchronously inside the click and pointed at the PDF once the
+  // link arrives: Safari (incl. the iOS-12-era devices this app supports)
+  // blocks a window.open that happens after an await. If the popup is
+  // blocked anyway, fall back to navigating this tab.
+  async function viewPdf(id: string) {
+    const tab = window.open("", "_blank");
+    if (tab) tab.opener = null;
+    setOpeningPdf((s) => ({ ...s, [id]: true }));
+    setActionError(null);
+    try {
+      const { url } = await apiFetch<{ url: string }>(`/term-report-cards/${id}/pdf-url`, { auth: true });
+      if (tab) tab.location.href = url;
+      else window.location.assign(url);
+    } catch (err) {
+      tab?.close();
+      setActionError(err instanceof ApiError ? err.message : "Failed to open report card PDF");
+    } finally {
+      setOpeningPdf((s) => ({ ...s, [id]: false }));
     }
   }
 
@@ -339,11 +363,15 @@ export function ReportCardList({
               </td>
               <td className="py-2.5">
                 <div className="flex justify-end gap-1.5">
-                  {card.pdfUrl && (
-                    <Button type="button" variant="outline" size="sm" asChild>
-                      <a href={card.pdfUrl} target="_blank" rel="noreferrer">
-                        View PDF
-                      </a>
+                  {card.hasPdf && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={openingPdf[card.id]}
+                      onClick={() => viewPdf(card.id)}
+                    >
+                      {openingPdf[card.id] ? "Opening…" : "View PDF"}
                     </Button>
                   )}
                   {canManage && card.needsRegeneration && (

@@ -5,8 +5,10 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Inject,
   Injectable,
   Logger,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -24,7 +26,7 @@ import {
   TermReportCardType,
   StudentStatus,
 } from "@prisma/client";
-import { formatPersonName, QUEUE_NAMES, type ReportCardGenerationJob } from "@school/types";
+import { formatPersonName, QUEUE_NAMES, reportCardPdfKey, type ReportCardGenerationJob } from "@school/types";
 import { studentInTermWhere } from "../common/student-status-scope";
 import { PrismaService } from "../prisma/prisma.service";
 import { hashToken } from "../common/crypto/token";
@@ -35,12 +37,19 @@ import { CurrentUser } from "../auth/current-user.decorator";
 import type { RequestUser } from "../auth/jwt.strategy";
 import { StaffAssignmentService } from "../staff-assignments/staff-assignment";
 import { NotificationService } from "../notifications/notification";
+import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
 import { resolvePrincipalHeadteacherCategories } from "../common/class-level-category-scope";
 import { GenerateTermReportCardDto } from "./dto/generate-term-report-card.dto";
 import { GenerateClassReportCardsDto } from "./dto/generate-class-report-cards.dto";
 import { PublishAllReportCardsDto } from "./dto/publish-all-report-cards.dto";
 
+// Signed on demand when the viewer clicks "View PDF" (pdfUrlForUser) and
+// opened straight away, so it only has to survive that one request.
+const PDF_URL_TTL_SECONDS = 5 * 60;
+
 export interface ReportCardListFilters {
+  /** Internal only (pdfUrlForUser) — not exposed as a list query param. */
+  id?: string;
   studentId?: string;
   termId?: string;
   classArmId?: string;
@@ -97,6 +106,7 @@ export class TermReportCardService {
     private readonly staffAssignments: StaffAssignmentService,
     @InjectQueue(QUEUE_NAMES.REPORT_CARD_GENERATION) private readonly reportCardQueue: Queue<ReportCardGenerationJob>,
     private readonly notifications: NotificationService,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
   /** Same "never let a notification failure fail the real write" contract as DiscountRequestService.notifySafely. */
@@ -433,11 +443,40 @@ export class TermReportCardService {
    * parent. Each clause keeps its own status filter (STAFF: any status;
    * PARENT/STUDENT: published-only).
    */
+  /**
+   * The list never carries a download link. TermReportCard.pdfUrl is the
+   * signed URL the worker minted at generation time, which expires after 7
+   * days (viewing an older report used to fail with "ExpiredToken") — so it's
+   * reduced to a `hasPdf` flag here, and a fresh short-lived link is signed
+   * only when someone actually opens a report (pdfUrlForUser).
+   */
   async findForUser(user: RequestUser, filters: ReportCardListFilters) {
-    const { classArmId, studentId, termId, reportType, status, needsRegeneration } = filters;
+    const cards = await this.findVisible(user, filters);
+    return cards.map(({ pdfUrl, ...card }) => ({ ...card, hasPdf: pdfUrl !== null }));
+  }
+
+  /**
+   * Signs a fresh link to one report's PDF, at click time. Goes through the
+   * exact same visibility rules as the list (findVisible, narrowed to this
+   * id), so anyone who can't see the card in their list gets a 404 here too —
+   * including a parent/student whose card isn't PUBLISHED.
+   */
+  async pdfUrlForUser(user: RequestUser, id: string): Promise<{ url: string }> {
+    const [card] = await this.findVisible(user, { id });
+    if (!card?.pdfUrl) throw new NotFoundException("Report card PDF not found");
+    const url = await this.storage.getSignedUrl(
+      reportCardPdfKey(card.studentId, card.termId, card.reportType),
+      PDF_URL_TTL_SECONDS,
+    );
+    return { url };
+  }
+
+  private async findVisible(user: RequestUser, filters: ReportCardListFilters) {
+    const { id, classArmId, studentId, termId, reportType, status, needsRegeneration } = filters;
     // Only the filters actually supplied — an undefined key would still be
     // harmless to Prisma, but keeps the where clause readable in tests/logs.
     const scalarFilters: Prisma.TermReportCardWhereInput = {
+      ...(id ? { id } : {}),
       ...(studentId ? { studentId } : {}),
       ...(termId ? { termId } : {}),
       ...(reportType ? { reportType } : {}),
@@ -537,7 +576,7 @@ export class TermReportCardService {
     // as studentInTermWhere, applied per card since each card has its own
     // term), and lose them from the term they left in onwards. Done in
     // memory because Prisma can't compare a column to a related row's.
-    return cards
+    const visible = cards
       .filter(
         (card) =>
           ownStudentIds.has(card.studentId) ||
@@ -545,6 +584,7 @@ export class TermReportCardService {
           (card.student.inactiveSince !== null && card.student.inactiveSince >= card.term.endDate),
       )
       .map(({ term: _term, ...card }) => withStudentClassArmDisplayName(card));
+    return visible;
   }
 
   async remove(id: string) {
@@ -657,6 +697,11 @@ export class TermReportCardController {
       status: parseEnumQuery(status, TermReportCardStatus, "status"),
       needsRegeneration: needsRegeneration === undefined || needsRegeneration === "" ? undefined : needsRegeneration === "true",
     });
+  }
+
+  @Get(":id/pdf-url")
+  pdfUrl(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.service.pdfUrlForUser(user, id);
   }
 
   @Post("publish-all")

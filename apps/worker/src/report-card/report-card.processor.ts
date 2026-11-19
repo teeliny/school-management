@@ -18,6 +18,7 @@ import {
   findGradeScaleMatch,
   formatPersonName,
   QUEUE_NAMES,
+  reportCardPdfKey,
   type ReportCardGenerationJob,
 } from "@school/types";
 import { isStudentInTerm, studentInTermWhere } from "../common/student-status-scope";
@@ -187,7 +188,7 @@ export class ReportCardProcessor extends WorkerHost {
       qrCodeBuffer,
     });
 
-    const key = `report-cards/${studentId}/${termId}/mid-term.pdf`;
+    const key = reportCardPdfKey(studentId, termId, "MID_TERM");
     await this.storage.put(key, pdfBuffer, "application/pdf");
     const pdfUrl = await this.storage.getSignedUrl(key, SIGNED_URL_TTL_SECONDS);
 
@@ -462,7 +463,7 @@ export class ReportCardProcessor extends WorkerHost {
       qrCodeBuffer,
     });
 
-    const key = `report-cards/${studentId}/${termId}/full-term.pdf`;
+    const key = reportCardPdfKey(studentId, termId, "FULL_TERM");
     await this.storage.put(key, pdfBuffer, "application/pdf");
     const pdfUrl = await this.storage.getSignedUrl(key, SIGNED_URL_TTL_SECONDS);
 

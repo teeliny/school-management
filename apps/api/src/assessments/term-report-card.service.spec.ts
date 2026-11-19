@@ -1,3 +1,4 @@
+import { NotFoundException } from "@nestjs/common";
 import { TermReportCardStatus, TermReportCardType } from "@prisma/client";
 import { TermReportCardService } from "./term-report-card";
 import type { RequestUser } from "../auth/jwt.strategy";
@@ -35,6 +36,10 @@ function buildNotificationsMock() {
   return { notify: jest.fn() };
 }
 
+function buildStorageMock() {
+  return { getSignedUrl: jest.fn(async (key: string) => `https://signed.example/${key}?fresh`) };
+}
+
 describe("TermReportCardService.generateFullTerm (PRD FR4.7 — Admin-initiated)", () => {
   let prisma: ReturnType<typeof buildPrismaMock>;
   let reportCardQueue: ReturnType<typeof buildQueueMock>;
@@ -48,6 +53,7 @@ describe("TermReportCardService.generateFullTerm (PRD FR4.7 — Admin-initiated)
       buildStaffAssignmentsMock() as never,
       reportCardQueue as never,
       buildNotificationsMock() as never,
+      buildStorageMock() as never,
     );
   });
 
@@ -86,6 +92,7 @@ describe("TermReportCardService.publish (mid-term gate — scores-only, no comme
       buildStaffAssignmentsMock() as never,
       buildQueueMock() as never,
       buildNotificationsMock() as never,
+      buildStorageMock() as never,
     );
   });
 
@@ -145,6 +152,7 @@ describe("TermReportCardService.publish — FULL_TERM completeness gate (PRD FR4
       buildStaffAssignmentsMock() as never,
       buildQueueMock() as never,
       notifications as never,
+      buildStorageMock() as never,
     );
     prisma.termReportCard.findUniqueOrThrow.mockResolvedValue({
       id: "rc-1",
@@ -257,6 +265,7 @@ describe("TermReportCardService.classReadiness / generateForClass", () => {
       buildStaffAssignmentsMock() as never,
       reportCardQueue as never,
       buildNotificationsMock() as never,
+      buildStorageMock() as never,
     );
     prisma.term.findUniqueOrThrow.mockResolvedValue(TERM);
     prisma.studentProfile.findMany.mockResolvedValue([STUDENT_A, STUDENT_B]);
@@ -328,6 +337,7 @@ describe("TermReportCardService.findForUser (PRD §5 visibility)", () => {
       staffAssignments as never,
       buildQueueMock() as never,
       buildNotificationsMock() as never,
+      buildStorageMock() as never,
     );
   });
 
@@ -501,6 +511,7 @@ describe("TermReportCardService.publishAll (Report Cards page \"Publish all\")",
       buildStaffAssignmentsMock() as never,
       buildQueueMock() as never,
       notifications as never,
+      buildStorageMock() as never,
     );
     prisma.term.findUniqueOrThrow.mockResolvedValue({ id: "term-1", academicSessionId: "session-1", endDate: END_DATE });
   });
@@ -572,6 +583,7 @@ describe("TermReportCardService.findForUser — type/status/needs-regeneration f
       buildStaffAssignmentsMock() as never,
       buildQueueMock() as never,
       buildNotificationsMock() as never,
+      buildStorageMock() as never,
     );
     prisma.termReportCard.findMany.mockResolvedValue([]);
 
@@ -585,5 +597,62 @@ describe("TermReportCardService.findForUser — type/status/needs-regeneration f
         where: { termId: "term-1", reportType: "MID_TERM", status: "READY", needsRegeneration: true },
       }),
     );
+  });
+});
+
+describe("TermReportCardService — PDF links signed on demand", () => {
+  const student = { admissionNumber: "A1", user: { firstName: "Ada", lastName: "Okoye" }, currentClass: null };
+  const admin = { id: "admin-1", roles: ["ADMIN"], assignmentTypes: [] };
+
+  function build() {
+    const prisma = buildPrismaMock();
+    const storage = buildStorageMock();
+    const service = new TermReportCardService(
+      prisma as never,
+      buildStaffAssignmentsMock() as never,
+      buildQueueMock() as never,
+      buildNotificationsMock() as never,
+      storage as never,
+    );
+    return { prisma, storage, service };
+  }
+
+  it("lists cards with a hasPdf flag and no download link, without signing anything", async () => {
+    const { prisma, storage, service } = build();
+    prisma.termReportCard.findMany.mockResolvedValue([
+      { id: "rc-1", studentId: "s1", termId: "t1", reportType: TermReportCardType.MID_TERM, pdfUrl: "https://stale", student },
+      { id: "rc-2", studentId: "s2", termId: "t1", reportType: TermReportCardType.FULL_TERM, pdfUrl: null, student },
+    ]);
+
+    const cards = await service.findForUser(admin, {});
+
+    expect(cards.map((c) => c.hasPdf)).toEqual([true, false]);
+    expect(cards.every((c) => !("pdfUrl" in c))).toBe(true);
+    expect(storage.getSignedUrl).not.toHaveBeenCalled();
+  });
+
+  it("signs a fresh link from the card's storage key, scoped to that one visible card", async () => {
+    const { prisma, storage, service } = build();
+    prisma.termReportCard.findMany.mockResolvedValue([
+      { id: "rc-1", studentId: "s1", termId: "t1", reportType: TermReportCardType.MID_TERM, pdfUrl: "https://stale", student },
+    ]);
+
+    const result = await service.pdfUrlForUser(admin, "rc-1");
+
+    expect(result).toEqual({ url: "https://signed.example/report-cards/s1/t1/mid-term.pdf?fresh" });
+    expect(storage.getSignedUrl).toHaveBeenCalledWith("report-cards/s1/t1/mid-term.pdf", 300);
+    expect(prisma.termReportCard.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: "rc-1" }) }));
+  });
+
+  it("404s when the card isn't visible to the caller or has no PDF yet", async () => {
+    const { prisma, storage, service } = build();
+    prisma.termReportCard.findMany.mockResolvedValueOnce([]);
+    await expect(service.pdfUrlForUser(admin, "rc-hidden")).rejects.toBeInstanceOf(NotFoundException);
+
+    prisma.termReportCard.findMany.mockResolvedValueOnce([
+      { id: "rc-2", studentId: "s2", termId: "t1", reportType: TermReportCardType.FULL_TERM, pdfUrl: null, student },
+    ]);
+    await expect(service.pdfUrlForUser(admin, "rc-2")).rejects.toBeInstanceOf(NotFoundException);
+    expect(storage.getSignedUrl).not.toHaveBeenCalled();
   });
 });
