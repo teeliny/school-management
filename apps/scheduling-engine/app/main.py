@@ -51,6 +51,10 @@ class SolveRequest(BaseModel):
     spreadPapersAcrossDays: bool = False
     breakAfterPaper: int = 0
     breakDurationMinutes: int = 0
+    # {prefix}_MIN_PAPERS_PER_DAY / _MAX_DAILY_PAPER_DIFFERENCE: hard per-class
+    # daily paper-count limits (0 / None = off).
+    minPapersPerDay: int = 0
+    maxDailyPaperDifference: int | None = None
 
     # INVIGILATION-specific shape (BUILD_PLAN.md §9 Step 4).
     invigilationMode: str = "CLASS_TEACHER"
@@ -151,6 +155,8 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             spread_papers_across_days=payload.spreadPapersAcrossDays,
             break_after_paper=payload.breakAfterPaper,
             break_duration_minutes=payload.breakDurationMinutes,
+            min_papers_per_day=payload.minPapersPerDay,
+            max_daily_paper_difference=payload.maxDailyPaperDifference,
         )
     elif payload.scope == "INVIGILATION":
         body = await asyncio.to_thread(

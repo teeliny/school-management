@@ -234,6 +234,8 @@ interface ExamSubjectPayload {
   lastDaysOnly: boolean;
   // {prefix}_FIRST_PAPER_SUBJECTS: always the day's first paper.
   firstPaper: boolean;
+  // {prefix}_AFTERNOON_SUBJECTS: the day's last paper, never its first.
+  afternoon: boolean;
   // {prefix}_SUBJECT_ALLOWED_DAYS: the weekdays this paper should be sat on
   // (soft — another day when none in the exam period can take it); null =
   // any exam day.
@@ -253,6 +255,8 @@ interface ExamClassArmPayload {
   // every Basic class, Nursery 1 & 2 — sit shared subjects on the same day
   // and paper position where the other rules allow.
   alignmentGroup: string | null;
+  // "ClassLevel Arm", for the engine's error messages only.
+  label: string;
 }
 
 interface InvigilationExamPayload {
@@ -702,11 +706,11 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const examClassArms = request.classArmId
       ? await this.prisma.classArm.findMany({
           where: { id: request.classArmId, classLevel: { category: { in: sittingCategories } } },
-          select: { id: true, classLevelId: true, classLevel: { select: { category: true, name: true } } },
+          select: { id: true, name: true, classLevelId: true, classLevel: { select: { category: true, name: true } } },
         })
       : await this.prisma.classArm.findMany({
           where: { academicSessionId: component.term.academicSessionId, classLevel: { category: { in: sittingCategories } } },
-          select: { id: true, classLevelId: true, classLevel: { select: { category: true, name: true } } },
+          select: { id: true, name: true, classLevelId: true, classLevel: { select: { category: true, name: true } } },
         });
     const classArmIds = examClassArms.map((a) => a.id);
 
@@ -721,6 +725,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     let lastDaysSubjectNames = new Set<string>();
     let collapsedGroupSubjects: CollapsedGroupSubject[] = [];
     let firstPaperSubjects: CollapsedGroupSubject[] = [];
+    let afternoonSubjects: CollapsedGroupSubject[] = [];
     const examAllowedDaysBySubject = new Map<string, SubjectDayRestriction[]>();
     const subjectPayloadsByLevel = new Map<string, ExamSubjectPayload[]>();
     const subjectPayloadsForLevel = async (
@@ -737,6 +742,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           collapsedGroupNamesForClassLevel(collapsedGroupSubjects, classLevelName),
         );
         const firstPaperNames = collapsedGroupNamesForClassLevel(firstPaperSubjects, classLevelName);
+        const afternoonNames = collapsedGroupNamesForClassLevel(afternoonSubjects, classLevelName);
         payloads = requiredSubjects.map((s) => ({
           subjectId: s.id,
           requiresCalculation: s.requiresCalculation,
@@ -750,6 +756,9 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
           firstPaper:
             firstPaperNames.has(normalizeSubjectName(s.name)) ||
             (s.concurrencyGroupName !== null && firstPaperNames.has(normalizeSubjectName(s.concurrencyGroupName))),
+          afternoon:
+            afternoonNames.has(normalizeSubjectName(s.name)) ||
+            (s.concurrencyGroupName !== null && afternoonNames.has(normalizeSubjectName(s.concurrencyGroupName))),
           allowedDays:
             allowedDaysForClassLevel(examAllowedDaysBySubject.get(normalizeSubjectName(s.name)) ?? [], classLevelName) ?? null,
         }));
@@ -809,6 +818,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // the first of whichever day they land on, e.g. Basic's Mathematics/
     // English/VAT/QAT, Nursery's Literacy/Numeracy.
     firstPaperSubjects = parseCollapsedGroupSubjects(getGroup(`${prefix}_FIRST_PAPER_SUBJECTS`));
+    // {prefix}_AFTERNOON_SUBJECTS (group-scoped): same format — papers that
+    // are the last of their day and never the first (it always has an earlier one),
+    // e.g. the early years/Basic Music paper on Tuesday afternoon.
+    afternoonSubjects = parseCollapsedGroupSubjects(getGroup(`${prefix}_AFTERNOON_SUBJECTS`));
     // {prefix}_SUBJECT_ALLOWED_DAYS (group-scoped): CLASS_TIMETABLE's
     // SUBJECT_ALLOWED_DAYS format ("MUSIC:TUESDAY[@ClassLevel,...]") applied to
     // exam days — the paper goes on an exam date of those weekdays when one
@@ -827,6 +840,16 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // break of that length after the day's Nth paper; unset/0 = no break.
     const breakAfterPaper = Number(getGroup(`${prefix}_BREAK_AFTER_PAPER`) ?? 0) || 0;
     const breakDurationMinutes = Number(getGroup(`${prefix}_BREAK_DURATION_MINUTES`) ?? 0) || 0;
+    // {prefix}_MIN_PAPERS_PER_DAY / _MAX_DAILY_PAPER_DIFFERENCE (group-scoped
+    // integers): HARD limits on each class's daily paper count — at least N
+    // papers every exam day, and its busiest day at most N papers above its
+    // quietest (1 = e.g. 3s and 2s, never a 3 and a 1). Unset = no limit.
+    const minPapersPerDay = Number(getGroup(`${prefix}_MIN_PAPERS_PER_DAY`) ?? 0) || 0;
+    const maxDailyPaperDifferenceRaw = getGroup(`${prefix}_MAX_DAILY_PAPER_DIFFERENCE`);
+    const maxDailyPaperDifference =
+      maxDailyPaperDifferenceRaw === undefined || maxDailyPaperDifferenceRaw === null || Number.isNaN(Number(maxDailyPaperDifferenceRaw))
+        ? null
+        : Number(maxDailyPaperDifferenceRaw);
 
     // Optional: when set, the number of papers a day holds also follows from
     // the start-end window and the paper durations (not just the count cap).
@@ -842,6 +865,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         subjects: await subjectPayloadsForLevel(arm.classLevel.category, arm.classLevelId, arm.classLevel.name),
         existingByDate: existingByClassArm[arm.id] ?? {},
         alignmentGroup: arrangement.unified ? null : arm.classLevel.category,
+        label: `${arm.classLevel.name} ${arm.name}`,
       })),
     );
 
@@ -857,6 +881,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       spreadPapersAcrossDays,
       breakAfterPaper,
       breakDurationMinutes,
+      minPapersPerDay,
+      maxDailyPaperDifference,
       maxSubjectsPerDay: parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`)),
       calculationSubjectDurationMinutes:
         parameters.calculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_CALCULATION_SUBJECT_DURATION_MINUTES`)),

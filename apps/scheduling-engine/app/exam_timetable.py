@@ -36,6 +36,10 @@ class ExamSubjectPayload(BaseModel):
     # {EXAM,MID_TERM}_FIRST_PAPER_SUBJECTS: always the first paper of
     # whichever day it lands on — so no two of them share a day.
     firstPaper: bool = False
+    # {EXAM,MID_TERM}_AFTERNOON_SUBJECTS: the LAST paper of whichever day it
+    # lands on, and never its first — that day always has an earlier
+    # (morning) paper too.
+    afternoon: bool = False
     # {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS: weekday names ("TUESDAY") this
     # paper should be sat on; None = any exam day. Soft (OFF_WEEKDAY_PENALTY):
     # when the exam period has no such weekday, or it can't take the paper,
@@ -65,6 +69,8 @@ class ExamClassArmPayload(BaseModel):
     # position wherever the other rules allow (ALIGN_PENALTY). None = solved
     # with no reference to any other arm.
     alignmentGroup: str | None = None
+    # Human-readable "ClassLevel Arm" for error messages only.
+    label: str | None = None
 
 
 SOLVE_TIME_LIMIT_SECONDS = 20.0
@@ -119,6 +125,74 @@ def _spread_terms(model: cp_model.CpModel, loads: list[Any], max_load: int, name
     return terms
 
 
+class _DailyLimits:
+    """Hard per-class daily paper-count limits ({prefix}_MIN_PAPERS_PER_DAY, _MAX_DAILY_PAPER_DIFFERENCE)."""
+
+    def __init__(self, min_per_day: int, max_difference: int | None):
+        self.min_per_day = max(0, min_per_day)
+        self.max_difference = max_difference if max_difference is not None and max_difference >= 0 else None
+
+    @property
+    def active(self) -> bool:
+        return self.min_per_day > 0 or self.max_difference is not None
+
+
+def _add_daily_limits(model: cp_model.CpModel, loads: list[Any], max_load: int, daily: _DailyLimits, name: str) -> None:
+    """Each day's load >= min_per_day, and busiest - quietest <= max_difference. `loads` as in _spread_terms."""
+    if not daily.active:
+        return
+    if daily.min_per_day > 0:
+        for load in loads:
+            if not isinstance(load, int):
+                model.add(load >= daily.min_per_day)
+    if daily.max_difference is not None and len(loads) > 1:
+        busiest = model.new_int_var(0, max_load, f"hard_busiest_{name}")
+        quietest = model.new_int_var(0, max_load, f"hard_quietest_{name}")
+        for load in loads:
+            model.add(busiest >= load)
+            model.add(quietest <= load)
+        model.add(busiest - quietest <= daily.max_difference)
+
+
+def _check_capacity(
+    class_arms: list[ExamClassArmPayload],
+    days: list[str],
+    max_per_day: int,
+    daily: _DailyLimits,
+    unified: bool,
+) -> str | None:
+    """
+    Whether each class's paper count (a bundle = one paper, plus papers
+    already on the exam days) fits `days` at max_per_day — and, with the hard
+    daily limits, at least min_per_day a day. One check per ClassLevel on a
+    unified sitting (its arms share papers), per arm otherwise.
+    """
+    day_count = len(days)
+    seen_levels: set[str] = set()
+    for arm in class_arms:
+        who = arm.label or arm.classArmId
+        if unified:
+            level_key = arm.classLevelId or arm.classArmId
+            if level_key in seen_levels:
+                continue
+            seen_levels.add(level_key)
+            who = who.rsplit(" ", 1)[0] if arm.label and " " in arm.label else who
+        papers = len({s.concurrencyGroupId or s.subjectId for s in arm.subjects})
+        papers += sum(e.count for d, e in arm.existingByDate.items() if d in days)
+        if papers > day_count * max_per_day:
+            needed = -(-papers // max_per_day)
+            return (
+                f"{who} has {papers} papers but {day_count} exam days x {max_per_day} papers/day only holds "
+                f"{day_count * max_per_day} — it needs at least {needed} exam days, or a higher papers-per-day limit"
+            )
+        if daily.min_per_day > 0 and papers < day_count * daily.min_per_day:
+            return (
+                f"{who} has only {papers} papers, fewer than {daily.min_per_day} a day over {day_count} exam days "
+                f"— shorten the exam period or lower MIN_PAPERS_PER_DAY"
+            )
+    return None
+
+
 def solve_exam_timetable(
     request_id: str,
     callback_token: str,
@@ -137,8 +211,18 @@ def solve_exam_timetable(
     break_after_paper: int = 0,
     break_duration_minutes: int = 0,
     spread_papers_across_days: bool = False,
+    min_papers_per_day: int = 0,
+    max_daily_paper_difference: int | None = None,
 ) -> dict[str, Any]:
     window_minutes = _window_minutes(exam_day_start_time, exam_day_end_time)
+    # {prefix}_MIN_PAPERS_PER_DAY / _MAX_DAILY_PAPER_DIFFERENCE: HARD limits on
+    # each class's daily paper count (unlike SPREAD_PAPERS_ACROSS_DAYS, which
+    # only nudges). Checked up front so an impossible paper count fails with
+    # the class and the arithmetic named, not a bare "no feasible timetable".
+    daily = _DailyLimits(min_papers_per_day, max_daily_paper_difference)
+    capacity_error = _check_capacity(class_arms, days, max_subjects_per_day, daily, unified)
+    if capacity_error:
+        return {"callbackToken": callback_token, "error": f"{capacity_error} (requestId={request_id})"}
     # {prefix}_BREAK_AFTER_PAPER/_DURATION_MINUTES: a break of N minutes after
     # the day's Nth paper. 0 for either disables it.
     exam_break = (break_after_paper, break_duration_minutes) if break_after_paper > 0 and break_duration_minutes > 0 else None
@@ -158,6 +242,7 @@ def solve_exam_timetable(
             last_days_window,
             exam_break,
             spread_papers_across_days,
+            daily,
         )
         if isinstance(rows, str):
             return {"callbackToken": callback_token, "error": f"{rows} (requestId={request_id})"}
@@ -184,11 +269,12 @@ def solve_exam_timetable(
             exam_break,
             spread_papers_across_days,
             reference,
+            daily,
         )
         if rows is None:
             return {
                 "callbackToken": callback_token,
-                "error": f"No feasible exam timetable found for class arm {arm.classArmId} (requestId={request_id})",
+                "error": f"No feasible exam timetable found for class arm {arm.label or arm.classArmId} (requestId={request_id})",
             }
         generated_rows.extend(rows)
         if reference is not None:
@@ -214,14 +300,24 @@ def _order_day(subjects: list[ExamSubjectPayload], reference_positions: dict[str
     A day's paper order: a FIRST_PAPER_SUBJECTS paper opens the day; a paper
     the alignment reference sat on this same day keeps the reference's
     position where that's free (so shared papers start together across the
-    group); the rest fill the remaining positions calculation-first. Always
-    positions 0..n-1, so a short day's free slots stay at its end.
+    group); the rest fill the remaining positions calculation-first. An
+    AFTERNOON_SUBJECTS paper takes the day's last position(s) — never the
+    first; the solver guarantees an earlier paper exists. Always positions
+    0..n-1, so a short day's free slots stay at its end.
     """
     count = len(subjects)
     remaining = sorted(subjects, key=lambda s: (0 if s.firstPaper else 1, 0 if s.requiresCalculation else 1))
     slots: list[ExamSubjectPayload | None] = [None] * count
     if remaining and remaining[0].firstPaper:
         slots[0] = remaining.pop(0)
+    position = count - 1
+    for subject in [s for s in remaining if s.afternoon]:
+        while position > 0 and slots[position] is not None:
+            position -= 1
+        if position <= 0:
+            break
+        slots[position] = subject
+        remaining.remove(subject)
     for subject in list(remaining):
         position = reference_positions.get(subject.subjectId)
         if position is not None and position < count and slots[position] is None:
@@ -245,6 +341,7 @@ def _solve_class_arm(
     exam_break: tuple[int, int] | None,
     spread: bool = False,
     reference: dict[str, tuple[str, int]] | None = None,
+    daily: _DailyLimits | None = None,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
     day_count = len(days)
@@ -341,6 +438,24 @@ def _solve_class_arm(
         if len(first_vars) > 1:
             model.add(sum(first_vars) <= 1)
 
+    # AFTERNOON_SUBJECTS: a day holding one needs at least one other (non-
+    # afternoon) paper to open it — existing papers on the day count, since
+    # they're already sitting in some slot ahead of it.
+    for day_idx, day in enumerate(days):
+        existing = arm.existingByDate.get(day)
+        existing_count = existing.count if existing else 0
+        seen_day_groups: set[str] = set()
+        afternoon_vars = []
+        opener_vars = []
+        for (sid, d), v in assign.items():
+            key = group_key(subject_by_id[sid])
+            if d != day_idx or key in seen_day_groups:
+                continue
+            seen_day_groups.add(key)
+            (afternoon_vars if any(m.afternoon for m in groups[key]) else opener_vars).append(v)
+        for v in afternoon_vars:
+            model.add(sum(opener_vars) + existing_count >= v)
+
     # SPREAD_CALCULATION_SUBJECTS: at most one calculation-subject exam per
     # day, counting existing load too — same per-group dedupe as above.
     if spread_calc:
@@ -431,6 +546,8 @@ def _solve_class_arm(
         objective_terms.extend(day_idx * v for (sid, day_idx), v in assign.items() if sid == representative)
     if spread:
         objective_terms.extend(_spread_terms(model, day_loads, max_subjects_per_day, arm.classArmId))
+    if daily:
+        _add_daily_limits(model, day_loads, max_subjects_per_day, daily, arm.classArmId)
     for key, members in groups.items():
         representative = members[0].subjectId
         objective_terms.extend(
@@ -505,6 +622,7 @@ def _solve_unified(
     last_days_window: int,
     exam_break: tuple[int, int] | None,
     spread: bool = False,
+    daily: _DailyLimits | None = None,
 ) -> list[dict[str, Any]] | str:
     """
     One combined model for a whole sitting (examArrangementFor's `unified`
@@ -562,12 +680,14 @@ def _solve_unified(
             # FIRST_PAPER_SUBJECTS only ever get slot 0 — which also caps them
             # at one per day, since a slot holds one paper per level.
             first_paper = any(m.firstPaper for m in groups[key])
+            # AFTERNOON_SUBJECTS never get slot 0.
+            afternoon = not first_paper and any(m.afternoon for m in groups[key])
             for d in range(day_count):
                 if d in blocked_days[level_id]:
                     continue
                 if last_days_only and d < day_count - last_days_window:
                     continue
-                for k in range(1 if first_paper else slots_per_day):
+                for k in range(1 if afternoon else 0, 1 if first_paper else slots_per_day):
                     x[(level_id, key, d, k)] = model.new_bool_var(f"x_{level_id}_{key}_{d}_{k}")
 
     def is_calc(level_id: str, key: str) -> bool:
@@ -630,6 +750,30 @@ def _solve_unified(
                 day_vars = [v for slot in slot_loads for v in slot]
                 loads.append(sum(day_vars) if day_vars else 0)
             objective_terms.extend(_spread_terms(model, loads, slots_per_day, level_id))
+
+    # AFTERNOON_SUBJECTS: nothing of the same level sits in a later slot of
+    # that day (slot 0 is already excluded above).
+    for (lv, g, d, k), v in x.items():
+        if not any(m.afternoon for m in level_groups[lv][g]) or any(m.firstPaper for m in level_groups[lv][g]):
+            continue
+        later = [w for (lv2, g2, d2, k2), w in x.items() if lv2 == lv and d2 == d and k2 > k and g2 != g]
+        if later:
+            model.add(sum(later) == 0).only_enforce_if(v)
+
+    # MIN_PAPERS_PER_DAY / MAX_DAILY_PAPER_DIFFERENCE (hard). A day already
+    # holding this level's papers (blocked_days) counts at that existing load.
+    if daily and daily.active:
+        for level_id in level_groups:
+            hard_loads: list[Any] = []
+            for d in range(day_count):
+                day_vars = [v for (lv, _g, dd, _k), v in x.items() if lv == level_id and dd == d]
+                if day_vars:
+                    hard_loads.append(sum(day_vars))
+                else:
+                    hard_loads.append(
+                        max((e.count for a in arms_by_level[level_id] if (e := a.existingByDate.get(days[d]))), default=0)
+                    )
+            _add_daily_limits(model, hard_loads, slots_per_day, daily, f"u_{level_id}")
 
     # CALCULATION_SUBJECTS_MORNING: a calculation paper belongs in the day's
     # first slot (soft, so a day with two calculation papers — only possible

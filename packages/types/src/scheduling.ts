@@ -396,6 +396,11 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   // day. {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS (group-scoped, not seeded) —
   // SUBJECT_ALLOWED_DAYS' "SubjectName:DAY[@ClassLevel,...]" format applied to
   // exam dates, as a strong preference (another day if none can take it).
+  // {EXAM,MID_TERM}_AFTERNOON_SUBJECTS (group-scoped, not seeded) — same
+  // format: always the day's last paper, never its first. {EXAM,MID_TERM}_MIN_PAPERS_PER_DAY /
+  // _MAX_DAILY_PAPER_DIFFERENCE (group-scoped integers, not seeded): HARD
+  // per-class limits — at least N papers every exam day, busiest day at most
+  // N above the quietest.
   // Spread each class's papers over every exam day (at least one a day, free
   // slots at the end of the day) instead of packing the earliest days full —
   // the early-years/Basic section, where class levels sit very different
