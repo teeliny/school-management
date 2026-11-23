@@ -406,6 +406,9 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   // {EXAM,MID_TERM}_ALIGN_CLASS_LEVELS (group-scoped boolean, not seeded,
   // unified sittings): every ClassLevel of a category sits each shared paper
   // in the same slot (hard).
+  // {EXAM,MID_TERM}_SUBJECT_ALLOWED_DAYS_FIRST_ONLY (group-scoped boolean, not
+  // seeded): a _SUBJECT_ALLOWED_DAYS weekday means the exam period's first
+  // such date only.
   // Spread each class's papers over every exam day (at least one a day, free
   // slots at the end of the day) instead of packing the earliest days full —
   // the early-years/Basic section, where class levels sit very different

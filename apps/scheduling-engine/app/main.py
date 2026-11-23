@@ -58,6 +58,7 @@ class SolveRequest(BaseModel):
     # {prefix}_FRONT_LOAD_PAPERS / _ALIGN_CLASS_LEVELS — see exam_timetable.
     frontLoadPapers: bool = False
     alignClassLevels: bool = False
+    allowedDaysFirstOnly: bool = False
 
     # INVIGILATION-specific shape (BUILD_PLAN.md §9 Step 4).
     invigilationMode: str = "CLASS_TEACHER"
@@ -162,6 +163,7 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             max_daily_paper_difference=payload.maxDailyPaperDifference,
             front_load_papers=payload.frontLoadPapers,
             align_class_levels=payload.alignClassLevels,
+            allowed_days_first_only=payload.allowedDaysFirstOnly,
         )
     elif payload.scope == "INVIGILATION":
         body = await asyncio.to_thread(

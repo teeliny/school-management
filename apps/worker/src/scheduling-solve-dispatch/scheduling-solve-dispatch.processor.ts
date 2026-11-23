@@ -859,6 +859,10 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     // every ClassLevel of a category sits each paper it shares with the
     // others in the same slot — all JSS classes together, all SSS together.
     const alignClassLevels = getGroup(`${prefix}_ALIGN_CLASS_LEVELS`) === true;
+    // {prefix}_SUBJECT_ALLOWED_DAYS_FIRST_ONLY (group-scoped boolean): a
+    // _SUBJECT_ALLOWED_DAYS weekday means the exam period's FIRST such date —
+    // "MUSIC:TUESDAY" = the first Tuesday only (still soft, like the pin).
+    const allowedDaysFirstOnly = getGroup(`${prefix}_SUBJECT_ALLOWED_DAYS_FIRST_ONLY`) === true;
 
     // Optional: when set, the number of papers a day holds also follows from
     // the start-end window and the paper durations (not just the count cap).
@@ -894,6 +898,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       maxDailyPaperDifference,
       frontLoadPapers,
       alignClassLevels,
+      allowedDaysFirstOnly,
       maxSubjectsPerDay: parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`)),
       calculationSubjectDurationMinutes:
         parameters.calculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_CALCULATION_SUBJECT_DURATION_MINUTES`)),

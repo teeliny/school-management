@@ -99,10 +99,26 @@ ALIGN_PENALTY = 500
 _WEEKDAY_NAMES = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
 
 
-def _day_allowed(members: list[ExamSubjectPayload], day: str) -> bool:
-    """Whether every member of a bundle may sit on `day` ("YYYY-MM-DD") under its allowedDays."""
+def _day_allowed(members: list[ExamSubjectPayload], day: str, first_dates: set[str] | None = None) -> bool:
+    """
+    Whether every member of a bundle may sit on `day` ("YYYY-MM-DD") under its
+    allowedDays. With `first_dates` ({prefix}_SUBJECT_ALLOWED_DAYS_FIRST_ONLY),
+    a pinned paper also needs `day` to be the exam period's first date of
+    that weekday — "MUSIC:TUESDAY" then means the first Tuesday only.
+    """
     weekday = _WEEKDAY_NAMES[date.fromisoformat(day).weekday()]
+    pinned = any(m.allowedDays is not None for m in members)
+    if pinned and first_dates is not None and day not in first_dates:
+        return False
     return all(m.allowedDays is None or weekday in m.allowedDays for m in members)
+
+
+def _first_weekday_dates(days: list[str]) -> set[str]:
+    """The first date of each weekday within the exam period."""
+    seen: dict[int, str] = {}
+    for d in days:
+        seen.setdefault(date.fromisoformat(d).weekday(), d)
+    return set(seen.values())
 
 
 def _spread_terms(model: cp_model.CpModel, loads: list[Any], max_load: int, name: str) -> list[Any]:
@@ -227,6 +243,7 @@ def solve_exam_timetable(
     max_daily_paper_difference: int | None = None,
     front_load_papers: bool = False,
     align_class_levels: bool = False,
+    allowed_days_first_only: bool = False,
 ) -> dict[str, Any]:
     window_minutes = _window_minutes(exam_day_start_time, exam_day_end_time)
     # {prefix}_MIN_PAPERS_PER_DAY / _MAX_DAILY_PAPER_DIFFERENCE: HARD limits on
@@ -234,6 +251,7 @@ def solve_exam_timetable(
     # only nudges). Checked up front so an impossible paper count fails with
     # the class and the arithmetic named, not a bare "no feasible timetable".
     daily = _DailyLimits(min_papers_per_day, max_daily_paper_difference, front_load_papers)
+    first_dates = _first_weekday_dates(days) if allowed_days_first_only else None
     capacity_error = _check_capacity(class_arms, days, max_subjects_per_day, daily, unified)
     if capacity_error:
         return {"callbackToken": callback_token, "error": f"{capacity_error} (requestId={request_id})"}
@@ -258,6 +276,7 @@ def solve_exam_timetable(
             spread_papers_across_days,
             daily,
             align_class_levels,
+            first_dates,
         )
         if isinstance(rows, str):
             return {"callbackToken": callback_token, "error": f"{rows} (requestId={request_id})"}
@@ -285,6 +304,7 @@ def solve_exam_timetable(
             spread_papers_across_days,
             reference,
             daily,
+            first_dates,
         )
         if rows is None:
             return {
@@ -357,6 +377,7 @@ def _solve_class_arm(
     spread: bool = False,
     reference: dict[str, tuple[str, int]] | None = None,
     daily: _DailyLimits | None = None,
+    first_dates: set[str] | None = None,
 ) -> list[dict[str, Any]] | None:
     model = cp_model.CpModel()
     day_count = len(days)
@@ -568,7 +589,7 @@ def _solve_class_arm(
         objective_terms.extend(
             OFF_WEEKDAY_PENALTY * v
             for (sid, day_idx), v in assign.items()
-            if sid == representative and not _day_allowed(members, days[day_idx])
+            if sid == representative and not _day_allowed(members, days[day_idx], first_dates)
         )
     if reference:
         for (sid, day_idx), v in assign.items():
@@ -639,6 +660,7 @@ def _solve_unified(
     spread: bool = False,
     daily: _DailyLimits | None = None,
     align_class_levels: bool = False,
+    first_dates: set[str] | None = None,
 ) -> list[dict[str, Any]] | str:
     """
     One combined model for a whole sitting (examArrangementFor's `unified`
@@ -747,7 +769,7 @@ def _solve_unified(
     # Packing: earlier days first, then earlier slots.
     for (_lv, _g, d, k), v in x.items():
         objective_terms.append((d * slots_per_day + k) * v)
-        if not _day_allowed(level_groups[_lv][_g], days[d]):
+        if not _day_allowed(level_groups[_lv][_g], days[d], first_dates):
             objective_terms.append(OFF_WEEKDAY_PENALTY * v)
 
     # SPREAD_PAPERS_ACROSS_DAYS: every level sits at least one paper a day,
