@@ -401,6 +401,11 @@ export const DEFAULT_SCHEDULING_CONSTRAINTS: DefaultSchedulingConstraint[] = [
   // _MAX_DAILY_PAPER_DIFFERENCE (group-scoped integers, not seeded): HARD
   // per-class limits — at least N papers every exam day, busiest day at most
   // N above the quietest.
+  // {EXAM,MID_TERM}_FRONT_LOAD_PAPERS (group-scoped boolean, not seeded):
+  // daily paper counts never rise from one exam day to the next.
+  // {EXAM,MID_TERM}_ALIGN_CLASS_LEVELS (group-scoped boolean, not seeded,
+  // unified sittings): every ClassLevel of a category sits each shared paper
+  // in the same slot (hard).
   // Spread each class's papers over every exam day (at least one a day, free
   // slots at the end of the day) instead of packing the earliest days full —
   // the early-years/Basic section, where class levels sit very different

@@ -63,7 +63,10 @@ class ExamClassArmPayload(BaseModel):
     assessmentComponentId: str | None = None
     subjects: list[ExamSubjectPayload]
     existingByDate: dict[str, ExistingLoadPayload] = Field(default_factory=dict)
-    # Per-arm (non-unified) sittings only: arms sharing an alignment group
+    # Unified sittings: with align_class_levels, every ClassLevel sharing an
+    # alignment group (its ClassLevelCategory — JSS 1-3, SSS 1-3) sits each
+    # paper they have in common in the same slot (hard).
+    # Per-arm (non-unified) sittings: arms sharing an alignment group
     # (their ClassLevelCategory — all Basic classes, Nursery 1 & 2) sit each
     # subject they have in common on the same day and in the same paper
     # position wherever the other rules allow (ALIGN_PENALTY). None = solved
@@ -128,13 +131,17 @@ def _spread_terms(model: cp_model.CpModel, loads: list[Any], max_load: int, name
 class _DailyLimits:
     """Hard per-class daily paper-count limits ({prefix}_MIN_PAPERS_PER_DAY, _MAX_DAILY_PAPER_DIFFERENCE)."""
 
-    def __init__(self, min_per_day: int, max_difference: int | None):
+    def __init__(self, min_per_day: int, max_difference: int | None, front_load: bool = False):
         self.min_per_day = max(0, min_per_day)
         self.max_difference = max_difference if max_difference is not None and max_difference >= 0 else None
+        # {prefix}_FRONT_LOAD_PAPERS: a class's daily paper count never rises
+        # from one exam day to the next — extra papers go on the earliest days
+        # (e.g. 17 papers over 8 days at most 1 apart = a 3 on day 1, then 2s).
+        self.front_load = front_load
 
     @property
     def active(self) -> bool:
-        return self.min_per_day > 0 or self.max_difference is not None
+        return self.min_per_day > 0 or self.max_difference is not None or self.front_load
 
 
 def _add_daily_limits(model: cp_model.CpModel, loads: list[Any], max_load: int, daily: _DailyLimits, name: str) -> None:
@@ -152,6 +159,11 @@ def _add_daily_limits(model: cp_model.CpModel, loads: list[Any], max_load: int, 
             model.add(busiest >= load)
             model.add(quietest <= load)
         model.add(busiest - quietest <= daily.max_difference)
+    if daily.front_load:
+        for earlier, later in zip(loads, loads[1:]):
+            if isinstance(earlier, int) and isinstance(later, int):
+                continue
+            model.add(earlier >= later)
 
 
 def _check_capacity(
@@ -213,13 +225,15 @@ def solve_exam_timetable(
     spread_papers_across_days: bool = False,
     min_papers_per_day: int = 0,
     max_daily_paper_difference: int | None = None,
+    front_load_papers: bool = False,
+    align_class_levels: bool = False,
 ) -> dict[str, Any]:
     window_minutes = _window_minutes(exam_day_start_time, exam_day_end_time)
     # {prefix}_MIN_PAPERS_PER_DAY / _MAX_DAILY_PAPER_DIFFERENCE: HARD limits on
     # each class's daily paper count (unlike SPREAD_PAPERS_ACROSS_DAYS, which
     # only nudges). Checked up front so an impossible paper count fails with
     # the class and the arithmetic named, not a bare "no feasible timetable".
-    daily = _DailyLimits(min_papers_per_day, max_daily_paper_difference)
+    daily = _DailyLimits(min_papers_per_day, max_daily_paper_difference, front_load_papers)
     capacity_error = _check_capacity(class_arms, days, max_subjects_per_day, daily, unified)
     if capacity_error:
         return {"callbackToken": callback_token, "error": f"{capacity_error} (requestId={request_id})"}
@@ -243,6 +257,7 @@ def solve_exam_timetable(
             exam_break,
             spread_papers_across_days,
             daily,
+            align_class_levels,
         )
         if isinstance(rows, str):
             return {"callbackToken": callback_token, "error": f"{rows} (requestId={request_id})"}
@@ -623,6 +638,7 @@ def _solve_unified(
     exam_break: tuple[int, int] | None,
     spread: bool = False,
     daily: _DailyLimits | None = None,
+    align_class_levels: bool = False,
 ) -> list[dict[str, Any]] | str:
     """
     One combined model for a whole sitting (examArrangementFor's `unified`
@@ -750,6 +766,30 @@ def _solve_unified(
                 day_vars = [v for slot in slot_loads for v in slot]
                 loads.append(sum(day_vars) if day_vars else 0)
             objective_terms.extend(_spread_terms(model, loads, slots_per_day, level_id))
+
+    # ALIGN_CLASS_LEVELS (hard): ClassLevels of one alignment group (their
+    # category) sit every paper (bundle) they share in the identical slot —
+    # all JSS classes write Mathematics together, all SSS classes their
+    # Physics/Accounts/Literature column together. Papers only some levels
+    # have stay free.
+    if align_class_levels:
+        levels_by_group: dict[str, list[str]] = {}
+        for level_id, arms in arms_by_level.items():
+            if arms[0].alignmentGroup:
+                levels_by_group.setdefault(arms[0].alignmentGroup, []).append(level_id)
+        for level_ids in levels_by_group.values():
+            for i, a in enumerate(level_ids):
+                for b in level_ids[i + 1 :]:
+                    for key in set(level_groups[a]) & set(level_groups[b]):
+                        for d in range(day_count):
+                            for k in range(slots_per_day):
+                                va, vb = x.get((a, key, d, k)), x.get((b, key, d, k))
+                                if va is not None and vb is not None:
+                                    model.add(va == vb)
+                                elif va is not None:
+                                    model.add(va == 0)
+                                elif vb is not None:
+                                    model.add(vb == 0)
 
     # AFTERNOON_SUBJECTS: nothing of the same level sits in a later slot of
     # that day (slot 0 is already excluded above).

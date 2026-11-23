@@ -250,10 +250,11 @@ interface ExamClassArmPayload {
   assessmentComponentId: string;
   subjects: ExamSubjectPayload[];
   existingByDate: Record<string, { count: number; hasCalc: boolean }>;
-  // Per-arm sittings only (null for unified ones, which align on their shared
-  // grid instead): arms with the same value — their ClassLevelCategory, i.e.
-  // every Basic class, Nursery 1 & 2 — sit shared subjects on the same day
-  // and paper position where the other rules allow.
+  // The arm's ClassLevelCategory. Per-arm sittings: arms with the same value
+  // (every Basic class, Nursery 1 & 2) sit shared subjects on the same day
+  // and paper position where the other rules allow. Unified sittings: only
+  // read with {prefix}_ALIGN_CLASS_LEVELS, which makes every ClassLevel of
+  // the category sit each shared paper in the same slot (hard).
   alignmentGroup: string | null;
   // "ClassLevel Arm", for the engine's error messages only.
   label: string;
@@ -850,6 +851,14 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       maxDailyPaperDifferenceRaw === undefined || maxDailyPaperDifferenceRaw === null || Number.isNaN(Number(maxDailyPaperDifferenceRaw))
         ? null
         : Number(maxDailyPaperDifferenceRaw);
+    // {prefix}_FRONT_LOAD_PAPERS (group-scoped boolean): a class's daily paper
+    // count never rises from one exam day to the next — extra papers on the
+    // earliest days (JSS: 3 on day 1, then 2s).
+    const frontLoadPapers = getGroup(`${prefix}_FRONT_LOAD_PAPERS`) === true;
+    // {prefix}_ALIGN_CLASS_LEVELS (group-scoped boolean, unified sittings):
+    // every ClassLevel of a category sits each paper it shares with the
+    // others in the same slot — all JSS classes together, all SSS together.
+    const alignClassLevels = getGroup(`${prefix}_ALIGN_CLASS_LEVELS`) === true;
 
     // Optional: when set, the number of papers a day holds also follows from
     // the start-end window and the paper durations (not just the count cap).
@@ -864,7 +873,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
         assessmentComponentId: componentByCategory.get(arm.classLevel.category)!.id,
         subjects: await subjectPayloadsForLevel(arm.classLevel.category, arm.classLevelId, arm.classLevel.name),
         existingByDate: existingByClassArm[arm.id] ?? {},
-        alignmentGroup: arrangement.unified ? null : arm.classLevel.category,
+        alignmentGroup: arm.classLevel.category,
         label: `${arm.classLevel.name} ${arm.name}`,
       })),
     );
@@ -883,6 +892,8 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       breakDurationMinutes,
       minPapersPerDay,
       maxDailyPaperDifference,
+      frontLoadPapers,
+      alignClassLevels,
       maxSubjectsPerDay: parameters.maxSubjectsPerDay ?? Number(getGroup(`${prefix}_MAX_SUBJECTS_PER_DAY`)),
       calculationSubjectDurationMinutes:
         parameters.calculationSubjectDurationMinutes ?? Number(getGroup(`${prefix}_CALCULATION_SUBJECT_DURATION_MINUTES`)),
