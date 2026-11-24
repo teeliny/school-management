@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.class_timetable import GroupPayload, solve_class_timetable
 from app.exam_timetable import ExamClassArmPayload, solve_exam_timetable
-from app.invigilation import InvigilationExamPayload, StaffExistingLoadPayload, solve_invigilation
+from app.invigilation import InvigilationExamPayload, InvigilationVenuePayload, StaffExistingLoadPayload, solve_invigilation
 from app.weekly_duty import WeeklyDutyGroupPayload, solve_weekly_duty
 
 
@@ -63,6 +63,8 @@ class SolveRequest(BaseModel):
     # INVIGILATION-specific shape (BUILD_PLAN.md §9 Step 4).
     invigilationMode: str = "CLASS_TEACHER"
     invigilatorsPerDay: int = 2
+    # HALL_POOL_PER_DAY with venues: where each day's invigilators are posted.
+    invigilationVenues: list[InvigilationVenuePayload] = []
     exams: list[InvigilationExamPayload] = []
     eligibleStaffIds: list[str] = []
     existingLoad: dict[str, StaffExistingLoadPayload] = {}
@@ -175,6 +177,7 @@ async def _solve_and_callback(payload: SolveRequest) -> None:
             eligible_staff_ids=payload.eligibleStaffIds,
             existing_load=payload.existingLoad,
             invigilators_per_day=payload.invigilatorsPerDay,
+            venues=payload.invigilationVenues,
         )
     elif payload.scope == "WEEKLY_DUTY":
         body = await asyncio.to_thread(

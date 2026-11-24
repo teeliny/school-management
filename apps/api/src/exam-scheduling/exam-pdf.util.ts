@@ -153,7 +153,7 @@ function drawGrid(doc: PDFKit.PDFDocument, columns: ExamColumn[], page: ExamGrid
 
 export interface InvigilationPdfDay {
   date: string; // YYYY-MM-DD
-  // Mixed-hall duty — names only, no classes.
+  // Mixed-hall duty — names only (prefixed "Venue — " when posted to venues), no classes.
   hall: string[];
   // Per-class duty — one row per class arm sitting that day.
   classes: { classArm: string; lead: string; assistant: string | null }[];

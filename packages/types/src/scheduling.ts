@@ -70,10 +70,50 @@ export interface ExamArrangement {
   // HALL_POOL_PER_DAY only: global INVIGILATION SchedulingConstraint key
   // holding the pre-defined number of invigilators per day.
   invigilatorsPerDayKey: string | null;
+  // HALL_POOL_PER_DAY only: global INVIGILATION SchedulingConstraint key
+  // holding where the day's invigilators are posted ("Hall:2", "Classroom
+  // 1", ... — see parseInvigilationVenues). When set, it also fixes the
+  // number per day (the sum of the counts), overriding invigilatorsPerDayKey.
+  invigilationVenuesKey: string | null;
 }
+
+/**
+ * Global INVIGILATION constraint (not seeded): string[] of StaffProfile ids
+ * who are never given invigilation duty — e.g. part-time teachers. Applied by
+ * the worker's eligible pool and the API's manual-edit checks alike.
+ */
+export const EXCLUDED_INVIGILATION_STAFF_IDS_KEY = "EXCLUDED_INVIGILATION_STAFF_IDS";
 
 /** Fallback when the invigilatorsPerDayKey constraint row isn't configured. */
 export const DEFAULT_HALL_INVIGILATORS_PER_DAY = 2;
+
+/** One posting in a mixed sitting — `count` invigilators at `name` every exam day. */
+export interface InvigilationVenue {
+  name: string;
+  count: number;
+}
+
+/**
+ * {X}_INVIGILATION_VENUES (INVIGILATION, global — see ExamArrangement's
+ * invigilationVenuesKey): string[] of `"Name"` or `"Name:N"` (N defaults to
+ * 1), in display order, e.g. `["Hall:2", "Classroom 1", ..., "Classroom 7"]`
+ * = 9 invigilators a day, 2 in the hall and 1 per classroom. Students are
+ * mixed across venues, so a posting is a room, never a class arm. Malformed
+ * entries are skipped.
+ */
+export function parseInvigilationVenues(raw: unknown): InvigilationVenue[] {
+  if (!Array.isArray(raw)) return [];
+  const venues: InvigilationVenue[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const match = /^(.+?)(?::(\d+))?$/.exec(entry.trim());
+    if (!match) continue;
+    const name = match[1]!.trim();
+    const count = match[2] === undefined ? 1 : Number(match[2]);
+    if (name && count >= 1) venues.push({ name, count });
+  }
+  return venues;
+}
 
 /**
  * The school's exam arrangement per section and component type:
@@ -99,6 +139,7 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
           invigilation: "ONE_PER_ARM_PER_DAY",
           poolClassTeachersOnly: false,
           invigilatorsPerDayKey: null,
+          invigilationVenuesKey: null,
         }
       : {
           sittingCategories: ["JSS", "SSS"],
@@ -107,6 +148,7 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
           invigilation: "HALL_POOL_PER_DAY",
           poolClassTeachersOnly: false,
           invigilatorsPerDayKey: "JSS_SSS_EXAM_INVIGILATORS_PER_DAY",
+          invigilationVenuesKey: "JSS_SSS_EXAM_INVIGILATION_VENUES",
         };
   }
   if (category === "PRIMARY" && type === "EXAM") {
@@ -117,6 +159,7 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
       invigilation: "HALL_POOL_PER_DAY",
       poolClassTeachersOnly: true,
       invigilatorsPerDayKey: "PRIMARY_EXAM_INVIGILATORS_PER_DAY",
+      invigilationVenuesKey: "PRIMARY_EXAM_INVIGILATION_VENUES",
     };
   }
   // Early years/Basic class-teacher sittings: generated in one run per
@@ -130,6 +173,7 @@ export function examArrangementFor(category: ClassLevelCategory, type: ExamCompo
     invigilation: "CLASS_TEACHER",
     poolClassTeachersOnly: false,
     invigilatorsPerDayKey: null,
+    invigilationVenuesKey: null,
   };
 }
 

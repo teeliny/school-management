@@ -16,7 +16,10 @@ resolved by apps/worker — this service only ever sees the mode it's told):
   invigilators per exam day for the whole sitting, not tied to any paper.
   Load-balanced; a teacher whose own subject is being written that day is
   avoided where possible (soft — a hall sits every subject over the period,
-  so a hard rule would rule out nearly everyone on busy days).
+  so a hard rule would rule out nearly everyone on busy days). With venues
+  ({X}_INVIGILATION_VENUES, e.g. Hall x2 + Classroom 1-7), N is their total
+  and each day's invigilators are then posted to them, rotating so nobody
+  keeps the same post — students are mixed, so a post is a room, not a class.
 
 Staff are a shared, scarce resource across arms/days, so modes 2 and 3 are
 each ONE combined solve, minimizing the maximum per-staff load (existing
@@ -50,6 +53,11 @@ class InvigilationExamPayload(BaseModel):
     classTeacherStaffIds: list[str] = Field(default_factory=list)
 
 
+class InvigilationVenuePayload(BaseModel):
+    name: str
+    count: int = 1
+
+
 class StaffExistingLoadPayload(BaseModel):
     totalCount: int = 0
     # Dates the staff member is already invigilating anything (any earlier,
@@ -66,6 +74,7 @@ def solve_invigilation(
     eligible_staff_ids: list[str],
     existing_load: dict[str, StaffExistingLoadPayload],
     invigilators_per_day: int = 2,
+    venues: list[InvigilationVenuePayload] | None = None,
 ) -> dict[str, Any]:
     if not exams:
         return {"callbackToken": callback_token, "result": {"generatedRows": []}}
@@ -75,7 +84,11 @@ def solve_invigilation(
     elif mode == ONE_PER_ARM_PER_DAY:
         result = _solve_one_per_arm_per_day(exams, eligible_staff_ids, existing_load)
     elif mode == HALL_POOL_PER_DAY:
+        if venues:
+            invigilators_per_day = sum(v.count for v in venues)
         result = _solve_hall_pool(exams, eligible_staff_ids, existing_load, invigilators_per_day)
+        if not isinstance(result, str) and venues:
+            result = _post_to_venues(result, venues)
     else:
         result = f"Unknown invigilation mode {mode!r}"
 
@@ -204,3 +217,29 @@ def _solve_hall_pool(
         return "No feasible hall invigilation roster found"
 
     return [{"date": date, "staffId": staff_id} for (date, staff_id), var in assign.items() if solver.value(var)]
+
+
+def _post_to_venues(rows: list[dict[str, Any]], venues: list[InvigilationVenuePayload]) -> list[dict[str, Any]]:
+    """
+    Posts each day's hall-pool invigilators to the venues (in their declared
+    order), greedily giving each seat to whoever has held that venue least so
+    far — so the hall seats, and each classroom, rotate across the period.
+    Ties go to the fewest postings at earlier venues, then staff id, so the
+    result is deterministic.
+    """
+    held: dict[tuple[str, str], int] = {}
+    by_date: dict[str, list[str]] = {}
+    for row in rows:
+        by_date.setdefault(row["date"], []).append(row["staffId"])
+    posted: list[dict[str, Any]] = []
+    for date in sorted(by_date):
+        free = sorted(by_date[date])
+        for venue in venues:
+            for _ in range(venue.count):
+                if not free:
+                    break
+                staff_id = min(free, key=lambda s: (held.get((s, venue.name), 0), s))
+                free.remove(staff_id)
+                held[(staff_id, venue.name)] = held.get((staff_id, venue.name), 0) + 1
+                posted.append({"date": date, "staffId": staff_id, "venue": venue.name})
+    return posted

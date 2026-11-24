@@ -20,9 +20,11 @@ import {
   computePeriodTime,
   DAYS_OF_WEEK,
   DEFAULT_HALL_INVIGILATORS_PER_DAY,
+  EXCLUDED_INVIGILATION_STAFF_IDS_KEY,
   examArrangementFor,
   normalizeSubjectName,
   parseCollapsedGroupSubjects,
+  parseInvigilationVenues,
   parseSpecialPeriods,
   parseSubjectDayPeriodRequirements,
   parseSubjectDayRestrictions,
@@ -41,6 +43,13 @@ import {
   type SubjectDayPeriodRequirement,
 } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
+
+// Only real AssignmentType values reach Prisma: the EXCLUDED_*_ASSIGNMENT_TYPES
+// constraints are admin-edited JSON, and a role name like "ADMIN"/"SUPER_ADMIN"
+// there would otherwise make the whole query throw (Super-Admin is always
+// excluded separately anyway).
+const ASSIGNMENT_TYPES = new Set<string>(Object.values(AssignmentType));
+const isAssignmentType = (value: string): value is AssignmentType => ASSIGNMENT_TYPES.has(value);
 
 // Creche has no ClassSubject rows (PRD §3.3 class list), so every
 // timetable/schedule generation run excludes it — resolveAllowedCategories
@@ -998,13 +1007,23 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const excludedTypes =
       (globalConstraints.find((c) => c.key === "EXCLUDED_INVIGILATION_ASSIGNMENT_TYPES")?.value as string[] | undefined) ?? [];
     const parameters = (request.parameters ?? {}) as { includeNonTeachingStaff?: boolean; invigilatorsPerDay?: number };
+    // {X}_INVIGILATION_VENUES (mixed sittings): where each day's invigilators
+    // are posted — e.g. JSS/SSS's 2 in the hall + 1 in each of 7 classrooms.
+    // When set it fixes the number per day (the sum of the counts), so the
+    // run-time invigilatorsPerDay parameter and {X}_INVIGILATORS_PER_DAY are
+    // ignored; unset = the plain N-per-day pool, no venues.
+    const invigilationVenues = arrangement.invigilationVenuesKey
+      ? parseInvigilationVenues(globalConstraints.find((c) => c.key === arrangement.invigilationVenuesKey)?.value)
+      : [];
     const invigilatorsPerDay =
-      parameters.invigilatorsPerDay ??
-      Number(
-        (arrangement.invigilatorsPerDayKey &&
-          globalConstraints.find((c) => c.key === arrangement.invigilatorsPerDayKey)?.value) ??
-          DEFAULT_HALL_INVIGILATORS_PER_DAY,
-      );
+      invigilationVenues.length > 0
+        ? invigilationVenues.reduce((sum, v) => sum + v.count, 0)
+        : (parameters.invigilatorsPerDay ??
+          Number(
+            (arrangement.invigilatorsPerDayKey &&
+              globalConstraints.find((c) => c.key === arrangement.invigilatorsPerDayKey)?.value) ??
+              DEFAULT_HALL_INVIGILATORS_PER_DAY,
+          ));
 
     const eligibleStaffIds =
       arrangement.invigilation === "CLASS_TEACHER"
@@ -1057,6 +1076,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       scope: ScheduleScope.INVIGILATION,
       invigilationMode: arrangement.invigilation,
       invigilatorsPerDay,
+      invigilationVenues,
       exams,
       eligibleStaffIds,
       existingLoad,
@@ -1084,7 +1104,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const excludedStaffIds = new Set([
       ...(
         await this.prisma.staffAssignment.findMany({
-          where: { assignmentType: { in: options.excludedTypes as AssignmentType[] }, isActive: true },
+          where: { assignmentType: { in: options.excludedTypes.filter(isAssignmentType) }, isActive: true },
           select: { staffId: true },
         })
       ).map((a) => a.staffId),
@@ -1132,7 +1152,15 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
       },
       select: { id: true },
     });
-    return rows.map((r) => r.id);
+    // Plus EXCLUDED_INVIGILATION_STAFF_IDS: individually excluded staff
+    // (e.g. part-time teachers). Mirrors apps/api's invigilation-eligibility.ts.
+    const individually = await this.prisma.schedulingConstraint.findFirst({
+      where: { scope: ScheduleScope.INVIGILATION, classLevelCategoryGroup: null, key: EXCLUDED_INVIGILATION_STAFF_IDS_KEY, isActive: true },
+    });
+    const individualIds = Array.isArray(individually?.value)
+      ? individually.value.filter((v): v is string => typeof v === "string")
+      : [];
+    return [...new Set([...rows.map((r) => r.id), ...individualIds])];
   }
 
   /** Same active-SUBJECT_TEACHER lookup shape as Step 2's teacher resolution. */
@@ -1297,7 +1325,7 @@ export class SchedulingSolveDispatchProcessor extends WorkerHost {
     const excludedStaffIds = new Set(
       (
         await this.prisma.staffAssignment.findMany({
-          where: { assignmentType: { in: excludedTypes as AssignmentType[] }, isActive: true },
+          where: { assignmentType: { in: excludedTypes.filter(isAssignmentType) }, isActive: true },
           select: { staffId: true },
         })
       ).map((a) => a.staffId),

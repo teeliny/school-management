@@ -28,6 +28,13 @@ import { Audited } from "../audit/audited.decorator";
 import { GenerateDutyRosterDto } from "./dto/generate-duty-roster.dto";
 import { UpsertDutyRosterWeekDto } from "./dto/upsert-duty-roster-week.dto";
 
+// Only real AssignmentType values reach Prisma: the EXCLUDED_*_ASSIGNMENT_TYPES
+// constraints are admin-edited JSON, and a role name like "ADMIN"/"SUPER_ADMIN"
+// there would otherwise make the whole query throw (Super-Admin is always
+// excluded separately anyway).
+const ASSIGNMENT_TYPES = new Set<string>(Object.values(AssignmentType));
+const isAssignmentType = (value: string): value is AssignmentType => ASSIGNMENT_TYPES.has(value);
+
 /**
  * The manual counterpart to the OR-Tools WEEKLY_DUTY solve (BUILD_PLAN.md
  * §9 Step 5) — added per an explicit product decision (2026-09-22) that the
@@ -77,7 +84,7 @@ export class DutyRosterWeekService {
     const excludedStaffIds = new Set(
       (
         await this.prisma.staffAssignment.findMany({
-          where: { assignmentType: { in: excludedTypes as AssignmentType[] }, isActive: true },
+          where: { assignmentType: { in: excludedTypes.filter(isAssignmentType) }, isActive: true },
           select: { staffId: true },
         })
       ).map((a) => a.staffId),

@@ -1122,6 +1122,10 @@ model ExamDayInvigilation {
   date                        DateTime                   @db.Date
   staffId                     String
   staff                       StaffProfile               @relation(fields: [staffId], references: [id])
+  // Where in the mixed sitting this invigilator is posted that day ("Hall",
+  // "Classroom 3"), from the sitting's {X}_INVIGILATION_VENUES constraint.
+  // Null when no venues are configured (a plain N-per-day hall pool).
+  venue                       String?
   generatedBy                 TimetableGeneratedBy       @default(MANUAL)
   approvalStatus              TimetableApprovalStatus    @default(APPROVED)
   approvedByUserId            String?

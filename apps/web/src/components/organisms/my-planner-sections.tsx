@@ -353,7 +353,9 @@ export function MyWardExamSection({
 
 export function MyInvigilationSection({ staffId }: { staffId: string }) {
   const [invigilations, setInvigilations] = useState<InvigilationAssignmentItem[]>([]);
-  const [hallDuties, setHallDuties] = useState<{ id: string; date: string; assessmentComponent: { name: string; classLevelCategory: string } }[]>(
+  const [hallDuties, setHallDuties] = useState<
+    { id: string; date: string; venue: string | null; assessmentComponent: { name: string; classLevelCategory: string } }[]
+  >(
     [],
   );
   useEffect(() => {
@@ -377,7 +379,7 @@ export function MyInvigilationSection({ staffId }: { staffId: string }) {
           // Mixed-hall duty covers every paper in the hall that day.
           ...hallDuties.map((d) => ({
             id: d.id,
-            cells: ["HALL", `All papers (${d.assessmentComponent.name})`, `${d.assessmentComponent.classLevelCategory} hall`, new Date(d.date).toLocaleDateString()],
+            cells: ["HALL", `All papers (${d.assessmentComponent.name})`, d.venue ?? `${d.assessmentComponent.classLevelCategory} hall`, new Date(d.date).toLocaleDateString()],
           })),
         ]}
         emptyMessage="No invigilation duty assigned."

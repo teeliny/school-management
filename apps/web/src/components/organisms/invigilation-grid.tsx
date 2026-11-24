@@ -34,6 +34,8 @@ interface HallDutyItem {
   id: string;
   date: string;
   staffId: string;
+  // Posting within the mixed sitting ("Hall", "Classroom 3"); null = unposted pool.
+  venue: string | null;
   approvalStatus: ApprovalStatus;
   staff: { user: { firstName: string; lastName: string } };
 }
@@ -291,7 +293,11 @@ export function InvigilationGrid({
 
             {day.hall.length > 0 && (
               <div className={cn(day.classes.length > 0 && "mb-3")}>
-                <p className="mb-1.5 text-[11.5px] text-muted">Exam hall invigilators, on duty for every paper in the hall</p>
+                <p className="mb-1.5 text-[11.5px] text-muted">
+                  {day.hall.some((r) => r.venue)
+                    ? "Invigilators by venue, on duty for every paper that day (students are mixed across venues)"
+                    : "Exam hall invigilators, on duty for every paper in the hall"}
+                </p>
                 <div className="flex flex-wrap gap-2">
                   {day.hall.map((row) => (
                     <div
@@ -306,6 +312,7 @@ export function InvigilationGrid({
                           Pending
                         </Badge>
                       )}
+                      {row.venue && <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted">{row.venue}</div>}
                       {canManage ? (
                         <StaffSelect value={row.staffId} options={optionsFor(row)} onChange={(staffId) => saveHallStaff(row, staffId)} />
                       ) : (

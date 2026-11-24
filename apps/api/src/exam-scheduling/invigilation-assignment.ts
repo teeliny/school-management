@@ -274,7 +274,13 @@ export class InvigilationAssignmentService {
       }
       return day;
     };
-    for (const row of hallRows) dayFor(row.date).hall.push(formatPersonName(row.staff.user));
+    // findAll returns each day's postings in venue order (the solver writes
+    // them that way), so a venue-posted roster keeps that order below.
+    for (const row of hallRows) {
+      const name = formatPersonName(row.staff.user);
+      dayFor(row.date).hall.push(row.venue ? `${row.venue} — ${name}` : name);
+    }
+    const hasVenues = hallRows.some((r) => r.venue);
 
     // (date, classArm) -> distinct holder names per role (normally one each).
     const groups = new Map<string, { day: InvigilationPdfDay; classArm: string; lead: Set<string>; assistant: Set<string> }>();
@@ -297,7 +303,7 @@ export class InvigilationAssignmentService {
     }
     const sortedDays = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
     for (const day of sortedDays) {
-      day.hall.sort((a, b) => a.localeCompare(b));
+      if (!hasVenues) day.hall.sort((a, b) => a.localeCompare(b));
       day.classes.sort((a, b) => a.classArm.localeCompare(b.classArm, undefined, { numeric: true }));
     }
 

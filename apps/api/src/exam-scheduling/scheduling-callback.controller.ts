@@ -45,6 +45,8 @@ interface InvigilationGeneratedRow {
   date?: string;
   staffId: string;
   role?: string;
+  // Hall-duty rows only, when the sitting has {X}_INVIGILATION_VENUES.
+  venue?: string | null;
 }
 
 interface WeeklyDutyGeneratedRow {
@@ -389,6 +391,7 @@ export class SchedulingCallbackController {
               assessmentComponentId,
               date,
               staffId: row.staffId,
+              venue: row.venue ?? null,
               generatedBy: TimetableGeneratedBy.AI,
               approvalStatus: TimetableApprovalStatus.PENDING_REVIEW,
               scheduleGenerationRequestId: requestId,
