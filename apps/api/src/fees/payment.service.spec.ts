@@ -899,3 +899,96 @@ describe("PaymentService.buildBulkReceiptsPdf (Bursar bulk print-and-sign flow)"
     });
   });
 });
+
+describe("PaymentService.updatePending (Bursar edits a submission before Super-Admin review)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let storage: ReturnType<typeof buildStorageMock>;
+  let service: PaymentService;
+
+  const pending = (overrides: Record<string, unknown> = {}) => ({
+    id: "payment-1",
+    invoiceId: "invoice-1",
+    amount: 3000,
+    method: "BANK_TRANSFER_MANUAL",
+    status: "PENDING_APPROVAL",
+    recordedByStaffId: "staff-1",
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    (prisma.payment as Record<string, jest.Mock>).updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    ({ service, storage } = buildService(prisma, buildQueueMock()));
+  });
+
+  it("updates the amount of a PENDING_APPROVAL payment, conditional on it still being pending", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ method: "CASH" }));
+
+    await service.updatePending("payment-1", { amount: 2500 }, undefined, BURSAR);
+
+    expect((prisma.payment as Record<string, jest.Mock>).updateMany).toHaveBeenCalledWith({
+      where: { id: "payment-1", status: "PENDING_APPROVAL" },
+      data: { amount: 2500, proofOfPaymentUrl: undefined },
+    });
+    expect(storage.put).not.toHaveBeenCalled();
+  });
+
+  it("replaces the proof file of a manual bank transfer", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending());
+
+    await service.updatePending("payment-1", {}, buildUploadedFile(), BURSAR);
+
+    expect(storage.put).toHaveBeenCalledWith(expect.stringContaining("payment-proofs/invoice-1/"), expect.any(Buffer), "image/png");
+    expect((prisma.payment as Record<string, jest.Mock>).updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { amount: undefined, proofOfPaymentUrl: "https://storage.example.com/signed-url" } }),
+    );
+  });
+
+  it.each(["SUCCESSFUL", "REJECTED", "REVERSED"])("refuses a %s payment", async (status) => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ status }));
+
+    await expect(service.updatePending("payment-1", { amount: 2500 }, undefined, BURSAR)).rejects.toThrow(/PENDING_APPROVAL/);
+    expect((prisma.payment as Record<string, jest.Mock>).updateMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a gateway payment", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ method: "GATEWAY_CARD", status: "PENDING" }));
+
+    await expect(service.updatePending("payment-1", { amount: 2500 }, undefined, BURSAR)).rejects.toThrow();
+  });
+
+  it("refuses a proof file on a CASH payment", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ method: "CASH" }));
+
+    await expect(service.updatePending("payment-1", {}, buildUploadedFile(), BURSAR)).rejects.toThrow(/cash/i);
+  });
+
+  it("refuses a Bursar who didn't record it", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ recordedByStaffId: "staff-2" }));
+
+    await expect(service.updatePending("payment-1", { amount: 2500 }, undefined, BURSAR)).rejects.toThrow(/Only the person who raised/);
+    expect((prisma.payment as Record<string, jest.Mock>).updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets the Super-Admin edit an entry they recorded with no StaffProfile (null recorder)", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ recordedByStaffId: null }));
+
+    await service.updatePending("payment-1", { amount: 2500 }, undefined, SUPER_ADMIN);
+
+    expect((prisma.payment as Record<string, jest.Mock>).updateMany).toHaveBeenCalled();
+  });
+
+  it("refuses a Bursar editing a null-recorder (Super-Admin) entry", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending({ recordedByStaffId: null }));
+
+    await expect(service.updatePending("payment-1", { amount: 2500 }, undefined, BURSAR)).rejects.toThrow(/Only the person who raised/);
+  });
+
+  it("refuses when the Super-Admin reviewed it between the read and the write", async () => {
+    prisma.payment.findUniqueOrThrow.mockResolvedValue(pending());
+    (prisma.payment as Record<string, jest.Mock>).updateMany!.mockResolvedValue({ count: 0 });
+
+    await expect(service.updatePending("payment-1", { amount: 2500 }, undefined, BURSAR)).rejects.toThrow(/already been reviewed/);
+  });
+});

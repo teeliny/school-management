@@ -204,6 +204,7 @@ function FeesPageInner() {
                     isParent={isParent}
                     canManageFees={canManageFees}
                     isSuperAdmin={isSuperAdmin}
+                    viewer={user}
                   />
                 </Card>
               )}

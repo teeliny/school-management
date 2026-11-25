@@ -1,6 +1,7 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { Fragment, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatPersonName } from "@school/types";
 import { apiFetch } from "../../lib/api";
 import { formatCurrency } from "../../lib/currency";
@@ -10,6 +11,9 @@ import { Card, CardHeader } from "../molecules/card";
 import { DonutChart, BarChart } from "../molecules/chart";
 import { StatCard } from "../atoms/stat-card";
 import { Badge } from "../atoms/badge";
+import { canEditFeeRequest } from "../../lib/fee-request-ownership";
+import { EditPendingPaymentForm } from "./edit-pending-payment-form";
+import { EditDiscountRequestForm } from "./edit-discount-request-form";
 
 interface FinanceOverview {
   outstandingSchoolWide: number;
@@ -21,7 +25,9 @@ interface FinanceOverview {
 interface PaymentItem {
   id: string;
   amount: number;
+  method: string;
   status: string;
+  recordedByStaffId: string | null;
   createdAt: string;
   proofOfPaymentUrl: string | null;
   receipt: { receiptNumber: string; serialNumber: string | null; issuedAt: string } | null;
@@ -31,7 +37,10 @@ interface DiscountRequestItem {
   id: string;
   type: "PERCENTAGE" | "FIXED_AMOUNT";
   value: number;
+  reason: string;
   status: string;
+  requestedByStaffId: string | null;
+  feeStructureId: string | null;
   createdAt: string;
   invoice: { student: { admissionNumber: string; user: { firstName: string; lastName: string } } };
 }
@@ -43,10 +52,18 @@ interface DiscountRequestItem {
  * in the controller (PaymentController.approvePayment/
  * DiscountRequestController.approve, manual role checks, not just "manage
  * Payment"/"manage DiscountRequest" CASL grants a Bursar also holds), so a
- * Bursar clicking them would just get a 403 — these render read-only.
+ * Bursar clicking them would just get a 403. Instead each row the viewing
+ * Bursar raised themselves gets an "Edit" (canEditFeeRequest — the same
+ * EditPendingPaymentForm/EditDiscountRequestForm the invoice detail uses),
+ * usable until the Super-Admin reviews it.
  */
 export function BursarDashboard({ user }: { user: CurrentUser }) {
   const { termId } = useCurrentTerm();
+  const queryClient = useQueryClient();
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [editingDiscountRequestId, setEditingDiscountRequestId] = useState<string | null>(null);
+  const refreshPayments = () => queryClient.invalidateQueries({ queryKey: ["payments"] });
+  const refreshDiscountRequests = () => queryClient.invalidateQueries({ queryKey: ["discount-requests"] });
 
   const isBursar = user.assignmentTypes.includes("BURSAR");
 
@@ -139,21 +156,50 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                     <th className="pb-1.5 pr-3">Student</th>
                     <th className="pb-1.5 pr-3">Amount</th>
                     <th className="pb-1.5 pr-3">Submitted</th>
-                    <th className="pb-1.5">Status</th>
+                    <th className="pb-1.5 pr-3">Status</th>
+                    <th className="pb-1.5" />
                   </tr>
                 </thead>
                 <tbody>
                   {pendingPayments.map((p) => (
-                    <tr key={p.id} className="border-t border-border even:bg-card-inset">
+                    <Fragment key={p.id}>
+                    <tr className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3">
                         {formatPersonName(p.invoice.student.user)}
                       </td>
                       <td className="py-1.5 pr-3 font-mono">{formatCurrency(p.amount)}</td>
                       <td className="py-1.5 pr-3 font-mono text-muted">{new Date(p.createdAt).toLocaleDateString()}</td>
-                      <td className="py-1.5">
+                      <td className="py-1.5 pr-3">
                         <Badge variant="warning">{p.status}</Badge>
                       </td>
+                      <td className="py-1.5 text-right">
+                        {canEditFeeRequest(p.recordedByStaffId, user) && (
+                          <button
+                            type="button"
+                            className="text-primary underline"
+                            onClick={() => setEditingPaymentId(editingPaymentId === p.id ? null : p.id)}
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </td>
                     </tr>
+                    {editingPaymentId === p.id && (
+                      <tr>
+                        <td colSpan={5} className="pb-2 pt-1">
+                          <EditPendingPaymentForm
+                            payment={p}
+                            onCancel={() => setEditingPaymentId(null)}
+                            onSaved={() => {
+                              setEditingPaymentId(null);
+                              refreshPayments();
+                            }}
+                            onFailed={refreshPayments}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -177,12 +223,14 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                     <th className="pb-1.5 pr-3">Student</th>
                     <th className="pb-1.5 pr-3">Amount</th>
                     <th className="pb-1.5 pr-3">Status</th>
-                    <th className="pb-1.5">Date</th>
+                    <th className="pb-1.5 pr-3">Date</th>
+                    <th className="pb-1.5" />
                   </tr>
                 </thead>
                 <tbody>
                   {discountRequests.map((d) => (
-                    <tr key={d.id} className="border-t border-border even:bg-card-inset">
+                    <Fragment key={d.id}>
+                    <tr className="border-t border-border even:bg-card-inset">
                       <td className="py-1.5 pr-3">
                         {formatPersonName(d.invoice.student.user)}
                       </td>
@@ -192,8 +240,35 @@ export function BursarDashboard({ user }: { user: CurrentUser }) {
                       <td className="py-1.5 pr-3">
                         <Badge variant="warning">{d.status}</Badge>
                       </td>
-                      <td className="py-1.5 font-mono text-muted">{new Date(d.createdAt).toLocaleDateString()}</td>
+                      <td className="py-1.5 pr-3 font-mono text-muted">{new Date(d.createdAt).toLocaleDateString()}</td>
+                      <td className="py-1.5 text-right">
+                        {canEditFeeRequest(d.requestedByStaffId, user) && (
+                          <button
+                            type="button"
+                            className="text-primary underline"
+                            onClick={() => setEditingDiscountRequestId(editingDiscountRequestId === d.id ? null : d.id)}
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </td>
                     </tr>
+                    {editingDiscountRequestId === d.id && (
+                      <tr>
+                        <td colSpan={5} className="pb-2 pt-1">
+                          <EditDiscountRequestForm
+                            request={d}
+                            onCancel={() => setEditingDiscountRequestId(null)}
+                            onSaved={() => {
+                              setEditingDiscountRequestId(null);
+                              refreshDiscountRequests();
+                            }}
+                            onFailed={refreshDiscountRequests}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

@@ -11,6 +11,7 @@ import { InvoicePaymentsList } from "./invoice-payments-list";
 import { RecordPaymentForm } from "./record-payment-form";
 import { RequestDiscountForm } from "./request-discount-form";
 import { InvoiceDiscountRequestsList } from "./invoice-discount-requests-list";
+import type { FeeRequestViewer } from "../../lib/fee-request-ownership";
 
 type InvoiceStatus = "UNPAID" | "PARTIAL" | "PAID" | "OVERDUE";
 interface InvoiceLineItem {
@@ -51,11 +52,14 @@ export function InvoiceDetail({
   isParent,
   canManageFees,
   isSuperAdmin,
+  viewer,
 }: {
   invoiceId: string;
   isParent: boolean;
   canManageFees: boolean;
   isSuperAdmin?: boolean;
+  /** Who's looking — decides which pending payments/discount requests show "Edit" (only the raiser's own). */
+  viewer?: FeeRequestViewer | null;
 }) {
   const [invoice, setInvoice] = useState<InvoiceDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +209,7 @@ export function InvoiceDetail({
           invoiceId={invoiceId}
           refreshKey={paymentsRefreshKey}
           isSuperAdmin={isSuperAdmin}
+          viewer={viewer}
           onReversed={handleRecorded}
         />
       </div>
@@ -212,7 +217,7 @@ export function InvoiceDetail({
       {canManageFees && (
         <div className="border-t border-border pt-3">
           <p className="mb-2 text-[12px] font-medium uppercase tracking-wide text-muted">Discount requests</p>
-          <InvoiceDiscountRequestsList invoiceId={invoiceId} refreshKey={discountRequestsRefreshKey} />
+          <InvoiceDiscountRequestsList invoiceId={invoiceId} refreshKey={discountRequestsRefreshKey} viewer={viewer} />
         </div>
       )}
     </div>

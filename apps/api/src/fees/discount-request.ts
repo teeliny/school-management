@@ -12,7 +12,9 @@ import { Audited } from "../audit/audited.decorator";
 import { NotificationService } from "../notifications/notification";
 import { RaiseDiscountRequestDto } from "./dto/raise-discount-request.dto";
 import { RejectDiscountRequestDto } from "./dto/reject-discount-request.dto";
+import { UpdateDiscountRequestDto } from "./dto/update-discount-request.dto";
 import { BulkWaiveFeeDto } from "./dto/bulk-waive-fee.dto";
+import { assertIsFeeRequestRaiser } from "./fee-request-ownership";
 
 const DISCOUNT_REQUEST_DETAIL_INCLUDE = {
   invoice: { include: { student: { include: { user: true } } } },
@@ -146,6 +148,48 @@ export class DiscountRequestService {
     }
 
     return { requested, skipped };
+  }
+
+  /**
+   * The raiser correcting their own request before it's reviewed — e.g. a
+   * mis-keyed value or reason (see assertIsFeeRequestRaiser). Only a PENDING request is editable: once
+   * approved the discount is already a line item on the invoice, and a
+   * rejected one is closed (raise a fresh request instead). A fee-waiver
+   * request's value is copied off the billed FEE line by
+   * bulkRaiseFeeWaiver, never typed in, so only its reason may change here.
+   * The write is conditional on status still being PENDING, so an edit
+   * racing a Super-Admin's approve/reject can't land on an already-reviewed
+   * row (approve computes its line item from the row it read).
+   */
+  async update(id: string, dto: UpdateDiscountRequestDto, user: RequestUser) {
+    const existing = await this.prisma.discountRequest.findUniqueOrThrow({ where: { id } });
+    await assertIsFeeRequestRaiser(this.prisma, existing.requestedByStaffId, user, "discount request");
+    if (existing.status !== DiscountRequestStatus.PENDING) {
+      throw new BadRequestException("Only a PENDING discount request can be edited");
+    }
+    if (existing.feeStructureId && (dto.type !== undefined || dto.value !== undefined)) {
+      const typeChanged = dto.type !== undefined && dto.type !== existing.type;
+      const valueChanged = dto.value !== undefined && dto.value !== Number(existing.value);
+      if (typeChanged || valueChanged) {
+        throw new BadRequestException("A fee waiver's amount comes from the billed fee and can't be edited — only its reason can");
+      }
+    }
+
+    const type = dto.type ?? existing.type;
+    const value = dto.value ?? Number(existing.value);
+    if (type === DiscountRequestType.PERCENTAGE && value > 100) {
+      throw new BadRequestException("A percentage discount value cannot exceed 100");
+    }
+
+    const { count } = await this.prisma.discountRequest.updateMany({
+      where: { id, status: DiscountRequestStatus.PENDING },
+      data: existing.feeStructureId ? { reason: dto.reason } : { type: dto.type, value: dto.value, reason: dto.reason },
+    });
+    if (count === 0) {
+      throw new BadRequestException("This discount request has already been reviewed and can no longer be edited");
+    }
+
+    return this.prisma.discountRequest.findUniqueOrThrow({ where: { id }, include: DISCOUNT_REQUEST_DETAIL_INCLUDE });
   }
 
   /**
@@ -316,6 +360,14 @@ export class DiscountRequestController {
   @Audited("DiscountRequest")
   bulkWaiveFee(@Body() dto: BulkWaiveFeeDto, @CurrentUser() user: RequestUser) {
     return this.service.bulkRaiseFeeWaiver(dto, user);
+  }
+
+  /** The raiser's own edit of a still-PENDING request — see DiscountRequestService.update. */
+  @Patch(":id")
+  @CheckPolicies((ability) => ability.can("manage", "DiscountRequest"))
+  @Audited("DiscountRequest", "discountRequest")
+  update(@Param("id") id: string, @Body() dto: UpdateDiscountRequestDto, @CurrentUser() user: RequestUser) {
+    return this.service.update(id, dto, user);
   }
 
   /** Super-Admin-only carve-out — same manual role-check pattern as PaymentController.approvePayment (Bursar's own "manage DiscountRequest" grant would otherwise satisfy any CASL check on this same subject). */

@@ -49,6 +49,8 @@ import { InitiateGatewayCheckoutDto } from "./dto/initiate-gateway-checkout.dto"
 import { SubmitManualBankTransferDto } from "./dto/submit-manual-bank-transfer.dto";
 import { RejectPaymentDto } from "./dto/reject-payment.dto";
 import { ReversePaymentDto } from "./dto/reverse-payment.dto";
+import { UpdatePendingPaymentDto } from "./dto/update-pending-payment.dto";
+import { assertIsFeeRequestRaiser } from "./fee-request-ownership";
 import { PaymentGatewayCredentialsService } from "./gateway/payment-gateway-credentials";
 import { PAYMENT_GATEWAY_ADAPTER } from "./gateway/payment-gateway.tokens";
 import { STORAGE_ADAPTER, type StorageAdapter } from "../storage/storage-adapter";
@@ -62,6 +64,19 @@ const PAYMENT_DETAIL_INCLUDE = {
 const SIGNED_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
 const MAX_PROOF_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_PROOF_MIME_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+
+const proofFileInterceptor = () =>
+  FileInterceptor("file", {
+    storage: memoryStorage(),
+    limits: { fileSize: MAX_PROOF_FILE_SIZE_BYTES },
+    fileFilter: (_req, file, callback) => {
+      if (!ALLOWED_PROOF_MIME_TYPES.includes(file.mimetype)) {
+        callback(new BadRequestException("Proof of payment must be a JPEG, PNG, WebP image, or PDF"), false);
+        return;
+      }
+      callback(null, true);
+    },
+  });
 
 @Injectable()
 export class PaymentService {
@@ -422,6 +437,49 @@ export class PaymentService {
   }
 
   /**
+   * The recorder correcting their own CASH/BANK_TRANSFER_MANUAL submission
+   * before it's reviewed (see assertIsFeeRequestRaiser) — the amount, and for a manual transfer optionally a
+   * replacement proof file. Only PENDING_APPROVAL is editable: once approved
+   * the payment has a receipt and counts toward the invoice (correct it via
+   * reversePayment instead), and a rejected one is closed. The write is
+   * conditional on status still being PENDING_APPROVAL so an edit racing a
+   * Super-Admin's approve/reject can't land on an already-reviewed row.
+   */
+  async updatePending(paymentId: string, dto: UpdatePendingPaymentDto, file: Express.Multer.File | undefined, user: RequestUser) {
+    const payment = await this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    await assertIsFeeRequestRaiser(this.prisma, payment.recordedByStaffId, user, "payment");
+    if (
+      (payment.method !== PaymentMethod.CASH && payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL) ||
+      payment.status !== PaymentStatus.PENDING_APPROVAL
+    ) {
+      throw new BadRequestException("Only a PENDING_APPROVAL cash or manual bank-transfer payment can be edited");
+    }
+    if (file && payment.method !== PaymentMethod.BANK_TRANSFER_MANUAL) {
+      throw new BadRequestException("A cash payment has no proof of payment to replace");
+    }
+    if (dto.amount === undefined && !file) {
+      throw new BadRequestException("Nothing to update");
+    }
+
+    let proofOfPaymentUrl: string | undefined;
+    if (file) {
+      const key = `payment-proofs/${payment.invoiceId}/${Date.now()}-${file.originalname}`;
+      await this.storage.put(key, file.buffer, file.mimetype);
+      proofOfPaymentUrl = await this.storage.getSignedUrl(key, SIGNED_URL_TTL_SECONDS);
+    }
+
+    const { count } = await this.prisma.payment.updateMany({
+      where: { id: paymentId, status: PaymentStatus.PENDING_APPROVAL },
+      data: { amount: dto.amount, proofOfPaymentUrl },
+    });
+    if (count === 0) {
+      throw new BadRequestException("This payment has already been reviewed and can no longer be edited");
+    }
+
+    return this.prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, include: PAYMENT_DETAIL_INCLUDE });
+  }
+
+  /**
    * PRD FR7.3b (extended to also cover CASH — see recordCash's comment):
    * Super-Admin only (enforced in the controller, not here — see
    * PaymentController.approvePayment). Same $transaction shape as
@@ -773,19 +831,7 @@ export class PaymentController {
   }
 
   @Post("bank-transfer")
-  @UseInterceptors(
-    FileInterceptor("file", {
-      storage: memoryStorage(),
-      limits: { fileSize: MAX_PROOF_FILE_SIZE_BYTES },
-      fileFilter: (_req, file, callback) => {
-        if (!ALLOWED_PROOF_MIME_TYPES.includes(file.mimetype)) {
-          callback(new BadRequestException("Proof of payment must be a JPEG, PNG, WebP image, or PDF"), false);
-          return;
-        }
-        callback(null, true);
-      },
-    }),
-  )
+  @UseInterceptors(proofFileInterceptor())
   @CheckPolicies((ability) => ability.can("manage", "Payment"))
   @Audited("Payment", "payment")
   submitManualBankTransfer(
@@ -797,6 +843,20 @@ export class PaymentController {
       throw new BadRequestException("Proof of payment file is required");
     }
     return this.service.submitManualBankTransfer(dto, file, user);
+  }
+
+  /** The recorder's own edit of a still-PENDING_APPROVAL cash/manual-transfer payment — see PaymentService.updatePending. Multipart so a manual transfer can carry a replacement proof `file` (optional). */
+  @Patch(":id")
+  @UseInterceptors(proofFileInterceptor())
+  @CheckPolicies((ability) => ability.can("manage", "Payment"))
+  @Audited("Payment", "payment")
+  updatePending(
+    @Param("id") id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body() dto: UpdatePendingPaymentDto,
+    @CurrentUser() user: RequestUser,
+  ) {
+    return this.service.updatePending(id, dto, file, user);
   }
 
   /** Super-Admin-only carve-out — same manual role-check pattern as identity/ownership-transfer.ts and term-report-card.ts's remove(), not a CASL condition (Bursar's own "manage Payment" grant would otherwise satisfy any CASL check on this same subject). Covers both CASH and BANK_TRANSFER_MANUAL — see PaymentService.approvePayment's comment. */

@@ -225,3 +225,86 @@ describe("DiscountRequestService.findAllForUser (CASL scoping)", () => {
     expect(prisma.discountRequest.findMany).toHaveBeenCalled();
   });
 });
+
+describe("DiscountRequestService.update (Bursar edits a request before Super-Admin review)", () => {
+  let prisma: ReturnType<typeof buildPrismaMock>;
+  let service: DiscountRequestService;
+  let updateMany: jest.Mock;
+
+  const pending = (overrides: Record<string, unknown> = {}) => ({
+    id: "discount-request-1",
+    type: "PERCENTAGE",
+    value: 10,
+    reason: "Sibling discount",
+    status: "PENDING",
+    feeStructureId: null,
+    requestedByStaffId: "staff-1",
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    prisma = buildPrismaMock();
+    prisma.staffProfile.findUnique.mockResolvedValue({ id: "staff-1" });
+    updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    (prisma.discountRequest as Record<string, jest.Mock>).updateMany = updateMany;
+    service = buildService(prisma).service;
+  });
+
+  it("updates type/value/reason, conditional on the request still being PENDING", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending());
+
+    await service.update("discount-request-1", { type: "FIXED_AMOUNT", value: 1500, reason: "Staff child" } as never, BURSAR);
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "discount-request-1", status: "PENDING" },
+      data: { type: "FIXED_AMOUNT", value: 1500, reason: "Staff child" },
+    });
+  });
+
+  it("re-checks the 100% cap against the merged type/value", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending({ type: "FIXED_AMOUNT", value: 1500 }));
+
+    await expect(service.update("discount-request-1", { type: "PERCENTAGE" } as never, BURSAR)).rejects.toThrow(/cannot exceed 100/);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(["APPROVED", "REJECTED"])("refuses a %s request", async (status) => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending({ status }));
+
+    await expect(service.update("discount-request-1", { reason: "x" } as never, BURSAR)).rejects.toThrow(/Only a PENDING/);
+  });
+
+  it("lets a fee waiver's reason change but not its amount", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending({ type: "FIXED_AMOUNT", value: 2000, feeStructureId: "fs-1" }));
+
+    await expect(service.update("discount-request-1", { value: 500 } as never, BURSAR)).rejects.toThrow(/fee waiver/);
+
+    await service.update("discount-request-1", { reason: "Opted out of party" } as never, BURSAR);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "discount-request-1", status: "PENDING" },
+      data: { reason: "Opted out of party" },
+    });
+  });
+
+  it("refuses a Bursar who didn't raise it", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending({ requestedByStaffId: "staff-2" }));
+
+    await expect(service.update("discount-request-1", { reason: "x" } as never, BURSAR)).rejects.toThrow(/Only the person who raised/);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+
+  it("lets the Super-Admin edit a request they raised with no StaffProfile (null requester)", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending({ requestedByStaffId: null }));
+
+    await service.update("discount-request-1", { reason: "x" } as never, SUPER_ADMIN);
+
+    expect(updateMany).toHaveBeenCalled();
+  });
+
+  it("refuses when the Super-Admin reviewed it between the read and the write", async () => {
+    prisma.discountRequest.findUniqueOrThrow.mockResolvedValue(pending());
+    updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.update("discount-request-1", { reason: "x" } as never, BURSAR)).rejects.toThrow(/already been reviewed/);
+  });
+});

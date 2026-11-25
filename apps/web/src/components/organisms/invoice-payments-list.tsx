@@ -9,6 +9,8 @@ import { Button } from "../atoms/button";
 import { Input } from "../atoms/input";
 import { SkeletonTable } from "../molecules/skeleton-table";
 import { EmptyState } from "../molecules/empty-state";
+import { canEditFeeRequest, type FeeRequestViewer } from "../../lib/fee-request-ownership";
+import { EditPendingPaymentForm } from "./edit-pending-payment-form";
 
 type PaymentMethod = "CASH" | "GATEWAY_CARD" | "GATEWAY_TRANSFER" | "GATEWAY_USSD" | "GATEWAY_RESERVED_ACCOUNT" | "BANK_TRANSFER_MANUAL";
 type PaymentStatus = "PENDING" | "PENDING_APPROVAL" | "SUCCESSFUL" | "FAILED" | "REVERSED" | "REJECTED";
@@ -19,6 +21,7 @@ interface PaymentItem {
   status: PaymentStatus;
   createdAt: string;
   proofOfPaymentUrl: string | null;
+  recordedByStaffId: string | null;
   receipt: { receiptNumber: string; pdfUrl: string | null } | null;
 }
 
@@ -51,16 +54,23 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
  * rejects it too; this is just the matching client-side gate). Reversing
  * never edits the payment in place; it marks it REVERSED and the Bursar records a
  * fresh, correct-amount payment separately via RecordPaymentForm.
+ *
+ * "Edit" (EditPendingPaymentForm) is offered on a still-PENDING_APPROVAL
+ * CASH/BANK_TRANSFER_MANUAL payment only to the `viewer` who recorded it
+ * (canEditFeeRequest). The server refuses it once the Super-Admin has
+ * approved/rejected.
  */
 export function InvoicePaymentsList({
   invoiceId,
   refreshKey,
   isSuperAdmin,
+  viewer,
   onReversed,
 }: {
   invoiceId: string;
   refreshKey?: unknown;
   isSuperAdmin?: boolean;
+  viewer?: FeeRequestViewer | null;
   onReversed?: () => void;
 }) {
   const [payments, setPayments] = useState<PaymentItem[] | null>(null);
@@ -68,12 +78,14 @@ export function InvoicePaymentsList({
   const [reversingId, setReversingId] = useState<string | null>(null);
   const [reversalReason, setReversalReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [localRefresh, setLocalRefresh] = useState(0);
 
   useEffect(() => {
     apiFetch<PaymentItem[]>(`/payments?invoiceId=${invoiceId}`, { auth: true })
       .then(setPayments)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load payments"));
-  }, [invoiceId, refreshKey]);
+  }, [invoiceId, refreshKey, localRefresh]);
 
   async function handleReverse(paymentId: string) {
     setError(null);
@@ -90,11 +102,13 @@ export function InvoicePaymentsList({
     }
   }
 
-  if (error) return <p className="text-sm text-danger">{error}</p>;
+  if (error && !payments) return <p className="text-sm text-danger">{error}</p>;
   if (!payments) return <SkeletonTable rows={2} columns={5} />;
   if (payments.length === 0) return <EmptyState icon={Wallet} title="No payments recorded against this invoice yet" />;
 
   return (
+    <>
+    {error && <p className="mb-2 text-sm text-danger">{error}</p>}
     <table className="w-full text-left text-[12.5px]">
       <thead>
         <tr className="border-b border-border text-muted">
@@ -127,11 +141,26 @@ export function InvoicePaymentsList({
                   </a>
                 )}
                 {payment.receipt && !payment.receipt.pdfUrl && <span className="text-muted">Receipt generating…</span>}
+                {payment.status === "PENDING_APPROVAL" &&
+                  (payment.method === "CASH" || payment.method === "BANK_TRANSFER_MANUAL") &&
+                  canEditFeeRequest(payment.recordedByStaffId, viewer) && (
+                    <button
+                      type="button"
+                      className="text-primary underline"
+                      onClick={() => {
+                        setReversingId(null);
+                        setEditingId(editingId === payment.id ? null : payment.id);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  )}
                 {isSuperAdmin && payment.status === "SUCCESSFUL" && (payment.method === "CASH" || payment.method === "BANK_TRANSFER_MANUAL") && (
                   <button
                     type="button"
                     className="text-danger underline"
                     onClick={() => {
+                      setEditingId(null);
                       setReversingId(reversingId === payment.id ? null : payment.id);
                       setReversalReason("");
                     }}
@@ -141,6 +170,21 @@ export function InvoicePaymentsList({
                 )}
               </td>
             </tr>
+            {editingId === payment.id && (
+              <tr className="border-b border-border/60 last:border-none">
+                <td colSpan={5} className="py-2">
+                  <EditPendingPaymentForm
+                    payment={payment}
+                    onCancel={() => setEditingId(null)}
+                    onSaved={() => {
+                      setEditingId(null);
+                      setLocalRefresh((k) => k + 1);
+                    }}
+                    onFailed={() => setLocalRefresh((k) => k + 1)}
+                  />
+                </td>
+              </tr>
+            )}
             {reversingId === payment.id && (
               <tr className="border-b border-border/60 last:border-none">
                 <td colSpan={5} className="py-2">
@@ -171,5 +215,6 @@ export function InvoicePaymentsList({
         ))}
       </tbody>
     </table>
+    </>
   );
 }
