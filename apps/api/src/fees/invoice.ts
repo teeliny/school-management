@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Injectable, Param, Post, Query, UseGuards, ForbiddenException } from "@nestjs/common";
+import { Body, Controller, Get, Injectable, Param, ParseUUIDPipe, Post, Query, UseGuards, ForbiddenException } from "@nestjs/common";
 import { InvoiceStatus, Prisma, StudentStatus } from "@prisma/client";
 import { computeOutstandingBalance, groupToCategories, type ClassLevelCategoryGroup } from "@school/types";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,41 +18,58 @@ const INVOICE_DETAIL_INCLUDE = {
   term: true,
 } satisfies Prisma.InvoiceInclude;
 
+export interface InvoicePlanEntry {
+  studentId: string;
+  admissionNumber: string;
+  firstName: string;
+  lastName: string;
+  className: string | null;
+  status: "PENDING" | "ALREADY_INVOICED" | "NO_APPLICABLE_FEES";
+  lines: { feeStructureId: string; name: string; amount: Prisma.Decimal; isMandatory: boolean }[];
+  totalAmount: number;
+}
+
 @Injectable()
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * PRD FR7.2: one Invoice + its FEE-type InvoiceLineItems per ACTIVE
-   * student in scope, skipping a student who already has an Invoice for
-   * this term (the `@@unique([studentId, termId])` is the backstop) or has
-   * zero applicable FeeStructure rows. Each student's create runs in its
-   * own short transaction rather than one giant transaction wrapping the
-   * whole batch — keeps this safely re-runnable (already-invoiced students
-   * are skipped) if it's interrupted partway through a large school-wide
-   * run, same "safe to re-run" precedent as setup-school.ts/seed-demo-data.ts,
-   * and avoids Prisma's interactive-transaction timeout on a big batch.
+   * The single source of truth for "what would generate() bill, and to
+   * whom" — generate() writes exactly this plan, preview() returns it
+   * read-only, so the Bursar's preview can never drift from what's actually
+   * billed. Per ACTIVE student in scope, one of:
+   * - PENDING: will get an invoice with `lines` (mandatory fees for their
+   *   class level, plus optional fees they've opted into via an un-invoiced
+   *   FeeStructureStudentAssignment).
+   * - ALREADY_INVOICED: already has this term's REGULAR invoice (skipped).
+   * - NO_APPLICABLE_FEES: nothing applies to them (skipped).
    */
-  async generate(dto: GenerateInvoicesDto) {
-    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: dto.termId } });
+  async plan(termId: string, classLevelId?: string): Promise<InvoicePlanEntry[]> {
+    const term = await this.prisma.term.findUniqueOrThrow({ where: { id: termId } });
 
     const students = await this.prisma.studentProfile.findMany({
       where: {
         status: StudentStatus.ACTIVE,
         currentClass: {
           academicSessionId: term.academicSessionId,
-          ...(dto.classLevelId ? { classLevelId: dto.classLevelId } : {}),
+          ...(classLevelId ? { classLevelId } : {}),
         },
       },
-      select: { id: true, currentClass: { select: { classLevelId: true } } },
+      select: {
+        id: true,
+        admissionNumber: true,
+        user: { select: { firstName: true, lastName: true } },
+        currentClass: { select: { classLevelId: true, name: true, classLevel: { select: { name: true } } } },
+      },
     });
 
     // classLevels: zero rows = school-wide, one or more = scoped to those
     // class levels (FeeStructureClassLevel join, replacing the old single
     // nullable classLevelId column).
     const feeStructures = await this.prisma.feeStructure.findMany({
-      where: { termId: dto.termId },
+      where: { termId },
       include: { classLevels: true },
+      orderBy: { createdAt: "asc" },
     });
 
     // One batch lookup instead of a findUnique per student (BUILD_PLAN.md
@@ -63,7 +80,7 @@ export class InvoiceService {
     const alreadyInvoicedStudentIds = new Set(
       (
         await this.prisma.invoice.findMany({
-          where: { termId: dto.termId, source: "REGULAR", studentId: { in: students.map((s) => s.id) } },
+          where: { termId, source: "REGULAR", studentId: { in: students.map((s) => s.id) } },
           select: { studentId: true },
         })
       ).map((invoice) => invoice.studentId),
@@ -85,14 +102,16 @@ export class InvoiceService {
       optedInFeeStructureIdsByStudent.set(assignment.studentId, set);
     }
 
-    let created = 0;
-    let alreadyInvoiced = 0;
-    let noApplicableFees = 0;
-
-    for (const student of students) {
+    return students.map((student) => {
+      const base = {
+        studentId: student.id,
+        admissionNumber: student.admissionNumber,
+        firstName: student.user.firstName,
+        lastName: student.user.lastName,
+        className: student.currentClass ? `${student.currentClass.classLevel.name} ${student.currentClass.name}` : null,
+      };
       if (alreadyInvoicedStudentIds.has(student.id)) {
-        alreadyInvoiced++;
-        continue;
+        return { ...base, status: "ALREADY_INVOICED" as const, lines: [], totalAmount: 0 };
       }
 
       const studentClassLevelId = student.currentClass?.classLevelId;
@@ -106,24 +125,83 @@ export class InvoiceService {
         return fs.isMandatory || optedInFeeStructureIds.has(fs.id);
       });
       if (applicable.length === 0) {
+        return { ...base, status: "NO_APPLICABLE_FEES" as const, lines: [], totalAmount: 0 };
+      }
+
+      const lines = applicable.map((fs) => ({ feeStructureId: fs.id, name: fs.name, amount: fs.amount, isMandatory: fs.isMandatory }));
+      const totalAmount = applicable.reduce((sum, fs) => sum + Number(fs.amount), 0);
+      return { ...base, status: "PENDING" as const, lines, totalAmount };
+    });
+  }
+
+  /**
+   * Read-only dry run of generate() for the same scope (see plan()) — lets
+   * the Bursar see who's still to be invoiced and confirm each student's
+   * fee lines before committing. Sorted for display: PENDING first, then by
+   * class and name.
+   */
+  async preview(termId: string, classLevelId?: string) {
+    const entries = await this.plan(termId, classLevelId);
+    const statusOrder = { PENDING: 0, NO_APPLICABLE_FEES: 1, ALREADY_INVOICED: 2 } as const;
+    entries.sort(
+      (a, b) =>
+        statusOrder[a.status] - statusOrder[b.status] ||
+        (a.className ?? "").localeCompare(b.className ?? "", undefined, { numeric: true }) ||
+        a.lastName.localeCompare(b.lastName) ||
+        a.firstName.localeCompare(b.firstName),
+    );
+    return {
+      students: entries.map((entry) => ({ ...entry, lines: entry.lines.map((line) => ({ ...line, amount: Number(line.amount) })) })),
+      summary: {
+        pending: entries.filter((e) => e.status === "PENDING").length,
+        alreadyInvoiced: entries.filter((e) => e.status === "ALREADY_INVOICED").length,
+        noApplicableFees: entries.filter((e) => e.status === "NO_APPLICABLE_FEES").length,
+        pendingTotalAmount: entries.reduce((sum, e) => sum + e.totalAmount, 0),
+      },
+    };
+  }
+
+  /**
+   * PRD FR7.2: one Invoice + its FEE-type InvoiceLineItems per PENDING
+   * student in plan() — skipping a student who already has a REGULAR
+   * Invoice for this term (the partial unique index is the backstop) or has
+   * zero applicable FeeStructure rows. Each student's create runs in its
+   * own short transaction rather than one giant transaction wrapping the
+   * whole batch — keeps this safely re-runnable (already-invoiced students
+   * are skipped) if it's interrupted partway through a large school-wide
+   * run, same "safe to re-run" precedent as setup-school.ts/seed-demo-data.ts,
+   * and avoids Prisma's interactive-transaction timeout on a big batch.
+   */
+  async generate(dto: GenerateInvoicesDto) {
+    const entries = await this.plan(dto.termId, dto.classLevelId);
+
+    let created = 0;
+    let alreadyInvoiced = 0;
+    let noApplicableFees = 0;
+
+    for (const entry of entries) {
+      if (entry.status === "ALREADY_INVOICED") {
+        alreadyInvoiced++;
+        continue;
+      }
+      if (entry.status === "NO_APPLICABLE_FEES") {
         noApplicableFees++;
         continue;
       }
 
-      const totalAmount = applicable.reduce((sum, fs) => sum + Number(fs.amount), 0);
-      const applicableOptionalIds = applicable.filter((fs) => !fs.isMandatory).map((fs) => fs.id);
+      const applicableOptionalIds = entry.lines.filter((line) => !line.isMandatory).map((line) => line.feeStructureId);
 
       await this.prisma.$transaction(async (tx) => {
         const invoice = await tx.invoice.create({
-          data: { studentId: student.id, termId: dto.termId, totalAmount, dueDate: dto.dueDate },
+          data: { studentId: entry.studentId, termId: dto.termId, totalAmount: entry.totalAmount, dueDate: dto.dueDate },
         });
         await tx.invoiceLineItem.createMany({
-          data: applicable.map((fs) => ({
+          data: entry.lines.map((line) => ({
             invoiceId: invoice.id,
-            feeStructureId: fs.id,
+            feeStructureId: line.feeStructureId,
             type: "FEE",
-            amount: fs.amount,
-            description: fs.name,
+            amount: line.amount,
+            description: line.name,
           })),
         });
         // Mark the opted-in assignments as billed so a later term-wide
@@ -131,7 +209,7 @@ export class InvoiceService {
         // them a second time.
         if (applicableOptionalIds.length) {
           await tx.feeStructureStudentAssignment.updateMany({
-            where: { studentId: student.id, feeStructureId: { in: applicableOptionalIds } },
+            where: { studentId: entry.studentId, feeStructureId: { in: applicableOptionalIds } },
             data: { invoiceId: invoice.id },
           });
         }
@@ -325,6 +403,13 @@ export class InvoiceController {
   @Audited("Invoice")
   generate(@Body() dto: GenerateInvoicesDto) {
     return this.service.generate(dto);
+  }
+
+  /** Read-only dry run of generate() — see InvoiceService.preview. Declared before `:id` so "preview" isn't taken as an invoice id. */
+  @Get("preview")
+  @CheckPolicies((ability) => ability.can("manage", "Invoice"))
+  preview(@Query("termId", ParseUUIDPipe) termId: string, @Query("classLevelId", new ParseUUIDPipe({ optional: true })) classLevelId?: string) {
+    return this.service.preview(termId, classLevelId);
   }
 
   @Get()
