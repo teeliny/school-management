@@ -14,7 +14,12 @@ const OPTIONAL_FEE_STRUCTURE = {
 
 const STUDENT = { id: "student-1", status: "ACTIVE", currentClass: { classLevelId: "level-1" } };
 
-const REGULAR_INVOICE = { id: "regular-invoice-1", dueDate: new Date("2026-09-30") };
+// Relative to now, not a fixed date: computeInvoiceStatus compares dueDate
+// against the real clock, so a hard-coded date silently flips an UNPAID
+// expectation to OVERDUE once it passes (this spec broke exactly that way).
+const FUTURE_DUE_DATE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+const REGULAR_INVOICE = { id: "regular-invoice-1", dueDate: FUTURE_DUE_DATE };
 
 function buildPrismaMock() {
   const tx = {
@@ -147,7 +152,7 @@ describe("FeeStructureStudentAssignmentService.create", () => {
     prisma.__setOpenSupplementaryInvoice({
       id: "supplementary-invoice-1",
       totalAmount: 3000,
-      dueDate: new Date("2026-09-30"),
+      dueDate: FUTURE_DUE_DATE,
       lineItems: [{ type: "FEE", amount: 3000 }],
       payments: [],
     });
